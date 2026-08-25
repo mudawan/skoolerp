@@ -2235,7 +2235,7 @@ export const VouchersView: React.FC = () => {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 animate-in slide-in-from-bottom-5 duration-200">
+        <div className="fixed bottom-5 right-5 z-[9999] animate-in slide-in-from-bottom-5 duration-200">
           <div
             className={`px-4 py-3 rounded-xl shadow-xl border text-xs font-bold flex items-center gap-2.5 max-w-sm ${
               toastMessage.type === 'success'
