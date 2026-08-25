@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { BarChart3, BookOpen, Building2, Download, FileSpreadsheet, History, Printer, Users } from 'lucide-react';
@@ -97,13 +98,10 @@ export const ReportsView: React.FC = () => {
         `${r.pct}%`,
       ]);
 
-      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-      const link = document.createElement('a');
-      link.setAttribute('href', encodeURI(csvContent));
-      link.setAttribute('download', `Class_Fee_Summary_${activeMonth}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      downloadCsv(
+        `Class_Fee_Summary_${activeMonth}.csv`,
+        [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
+      );
     } else if (reportType === 'outstanding') {
       const headers = [
         'Registration No.',
@@ -132,13 +130,10 @@ export const ReportsView: React.FC = () => {
         r.totalOutstanding,
       ]);
 
-      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-      const link = document.createElement('a');
-      link.setAttribute('href', encodeURI(csvContent));
-      link.setAttribute('download', `Student_Outstanding_Balances_${activeMonth}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      downloadCsv(
+        `Student_Outstanding_Balances_${activeMonth}.csv`,
+        [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
+      );
     }
   };
 

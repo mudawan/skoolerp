@@ -13,11 +13,13 @@ import {
   User,
 } from '../types';
 
+export const HASHED_DEMO_PASSWORD = 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f';
+
 export const SEEDED_USERS: User[] = [
   {
     id: 'usr-admin',
     username: 'admin',
-    password: 'password123',
+    password: HASHED_DEMO_PASSWORD,
     name: 'Admin',
     role: 'Admin',
     email: 'admin@skooleracademy.edu.pk',
@@ -43,7 +45,7 @@ export const SEEDED_USERS: User[] = [
   {
     id: 'usr-accountant',
     username: 'accountant',
-    password: 'password123',
+    password: HASHED_DEMO_PASSWORD,
     name: '(Accountant)',
     role: 'Accountant',
     email: 'accountant@skooleracademy.edu.pk',
@@ -67,7 +69,7 @@ export const SEEDED_USERS: User[] = [
   {
     id: 'usr-viewer',
     username: 'viewer',
-    password: 'password123',
+    password: HASHED_DEMO_PASSWORD,
     name: '(Auditor/Viewer)',
     role: 'Viewer',
     email: 'viewer@skooleracademy.edu.pk',

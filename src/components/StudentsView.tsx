@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, StudentStatus } from '../types';
 import { formatCurrency, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { StudentFormModal } from './StudentFormModal';
@@ -58,6 +59,7 @@ interface PreviewRow {
   isValid: boolean;
   isDuplicate: boolean;
   hasCaution?: boolean;
+  classUnresolved?: boolean;
   validationMessage: string;
 }
 
@@ -295,14 +297,10 @@ export const StudentsView: React.FC = () => {
       ].join(',');
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Skooler_Student_Directory_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(
+      `Skooler_Student_Directory_${new Date().toISOString().split('T')[0]}.csv`,
+      [headers.join(','), ...rows].join('\n')
+    );
   };
 
   // Copy student list to clipboard
@@ -445,25 +443,6 @@ export const StudentsView: React.FC = () => {
           return;
         }
 
-        const parseCsvLine = (line: string): string[] => {
-          const result: string[] = [];
-          let insideQuotes = false;
-          let current = '';
-          for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-              insideQuotes = !insideQuotes;
-            } else if (char === ',' && !insideQuotes) {
-              result.push(current.trim());
-              current = '';
-            } else {
-              current += char;
-            }
-          }
-          result.push(current.trim());
-          return result.map((col) => col.replace(/^"(.*)"$/, '$1').trim());
-        };
-
         const parsedList: PreviewRow[] = [];
         const seenRegInFile = new Set<string>();
 
@@ -523,6 +502,7 @@ export const StudentsView: React.FC = () => {
           let isValid = true;
           let isDuplicate = false;
           let hasCaution = false;
+          let classUnresolved = false;
           let validationMessage = 'Valid';
 
           if (!name.trim()) {
@@ -550,8 +530,9 @@ export const StudentsView: React.FC = () => {
           }
 
           if (isValid && !matchedClass) {
-            hasCaution = true;
-            validationMessage = `Class "${rawClassName || 'None'}" not found, assigned ${classes[0]?.name || 'default'}`;
+            isValid = false;
+            classUnresolved = true;
+            validationMessage = `Class "${trimmedRawClass || 'None'}" not found - assign the correct class below`;
           }
 
           parsedList.push({
@@ -562,7 +543,7 @@ export const StudentsView: React.FC = () => {
             admissionDate: admissionDate || undefined,
             firstBillingMonth,
             rawClassName,
-            classId: matchedClass ? matchedClass.id : classes[0]?.id || '',
+            classId: matchedClass ? matchedClass.id : '',
             gender,
             dob,
             bFormNo,
@@ -579,6 +560,7 @@ export const StudentsView: React.FC = () => {
             isValid,
             isDuplicate,
             hasCaution,
+            classUnresolved,
             validationMessage,
           });
         }
@@ -650,6 +632,9 @@ export const StudentsView: React.FC = () => {
             ...r,
             classId: newClassId,
             hasCaution: false,
+            classUnresolved: !selectedCls,
+            isValid: selectedCls ? true : r.isValid,
+            selected: selectedCls ? true : r.selected,
             validationMessage: selectedCls ? `Assigned to ${selectedCls.name}` : 'Valid',
           };
         }
@@ -716,13 +701,7 @@ export const StudentsView: React.FC = () => {
 REG-1007,Ali Raza,2024-03-01,2024-03,Class 1,Male,2017-05-12,37405-1234567-1,+92 300 1234567,"House 12, Sector F-8, Islamabad",Raza Ahmed,37405-1234567-1,+92 300 1234567,Saima Raza,37405-7654321-1,+92 301 7654321,500
 REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321-2,+92 300 7654321,"House 45, Street 9, Rawalpindi",Fatima Ullah,37405-7654321-2,+92 300 7654321,Noreen Fatima,37405-9988776-2,+92 301 1234567,0`;
 
-    const encodedUri = encodeURI('data:text/csv;charset=utf-8,' + sampleCsv);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', 'Skooler_Sample_Student_Import.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv('Skooler_Sample_Student_Import.csv', sampleCsv);
   };
 
   return (
@@ -1626,11 +1605,12 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                             <select
                               value={r.classId}
                               onChange={(e) => handleUpdatePreviewClass(r.id, e.target.value)}
-                              disabled={!r.isValid || r.isDuplicate}
+                              disabled={(!r.isValid && !r.classUnresolved) || r.isDuplicate}
                               className={`bg-white border rounded px-2 py-1 text-xs font-semibold focus:ring-1 focus:ring-teal-500 cursor-pointer disabled:opacity-50 ${
-                                r.hasCaution ? 'border-amber-400 text-amber-900 bg-amber-50/30' : 'border-slate-300 text-slate-800'
+                                r.hasCaution || r.classUnresolved ? 'border-amber-400 text-amber-900 bg-amber-50/30' : 'border-slate-300 text-slate-800'
                               }`}
                             >
+                              <option value="">{r.classUnresolved ? '-- Class not found --' : '-- Select --'}</option>
                               {classes.map((c) => (
                                 <option key={c.id} value={c.id}>
                                   {c.name}

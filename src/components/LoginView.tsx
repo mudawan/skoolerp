@@ -30,8 +30,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     setErrorMsg(null);
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = login(identifier, password);
+    setTimeout(async () => {
+      const res = await login(identifier, password);
       setIsLoading(false);
       if (!res.success) {
         setErrorMsg(res.error || 'Authentication failed. Please verify your credentials.');

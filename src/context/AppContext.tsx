@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
+import { normalizePaymentMode } from '../utils/paymentMode';
+import { MIN_PASSWORD_LENGTH, sha256Hex, verifyPassword } from '../utils/passwords';
 import {
   BankAccount,
   CleanupResult,
@@ -41,6 +43,7 @@ import {
 } from '../data/seedData';
 import {
   calculateStudentVoucherPreview,
+  getCurrentMonthString,
   getNextMonthString,
   getPreviousMonthString,
   roundBusFareUp,
@@ -62,17 +65,18 @@ interface AppContextType {
   currentUser: User;
   isAuthenticated: boolean;
   users: User[];
-  login: (usernameOrEmail: string, password: string) => { success: boolean; error?: string; user?: User };
+  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string; user?: User }>;
   logout: () => void;
   switchRole: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
-  addUser: (userData: Omit<User, 'id'>) => { success: boolean; error?: string };
-  updateUser: (id: string, updates: Partial<User>) => { success: boolean; error?: string };
+  addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => { success: boolean; error?: string };
 
   // Active Month
   activeMonth: string;
   setActiveMonth: (month: string) => void;
+  beforeMonthChange: { current: ((nextMonth: string) => boolean) | null };
 
   // Classes
   classes: SchoolClass[];
@@ -355,7 +359,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return SEEDED_USERS[0]; // Default fallback
   });
 
-  const [activeMonth, setActiveMonth] = useState<string>('2026-08');
+  const [activeMonth, setActiveMonth] = useState<string>(getCurrentMonthString());
+
+  // Views can register a pre-change guard (returns true when it intercepted
+  // the switch, e.g. to confirm unsaved edits) that HeaderBar consults.
+  const beforeMonthChange = useRef<((nextMonth: string) => boolean) | null>(null);
 
   // Policy Settings State
   const [priorMonthRule, setPriorMonthRuleState] = useState<PriorMonthVoucherRule>(() => {
@@ -639,8 +647,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     bankAccounts,
   ]);
 
+  useEffect(() => {
+    if (!users.some((u) => u.id === currentUser.id)) {
+      const fallback = users.find((u) => u.role === 'Admin') || SEEDED_USERS[0];
+      setCurrentUser(fallback);
+      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(fallback));
+    }
+  }, [users, currentUser]);
+
   // Auth & Roles
-  const login = (usernameOrEmail: string, password: string): { success: boolean; error?: string; user?: User } => {
+  const login = async (
+    usernameOrEmail: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string; user?: User }> => {
     const trimmed = usernameOrEmail.trim().toLowerCase();
     if (!trimmed) {
       return { success: false, error: 'Please enter your username or registered email address.' };
@@ -662,32 +681,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Password validation - match against stored user password or standard demo passwords
-    const validPassword = matchedUser.password || 'password123';
-    const isPasswordValid =
-      password === validPassword ||
-      password === 'password123' ||
-      password === `${matchedUser.username}123` ||
-      password === matchedUser.username;
-
-    if (!isPasswordValid) {
+    const verification = await verifyPassword(password, matchedUser.password);
+    if (!verification.ok) {
       return {
         success: false,
         error: 'Invalid password. Please check your credentials and try again.',
       };
     }
 
-    const updatedUser: User = {
-      ...matchedUser,
-      lastLogin: new Date().toISOString(),
-    };
+    let authedUser: User = { ...matchedUser, lastLogin: new Date().toISOString() };
+    if (verification.legacyPlaintext) {
+      authedUser = { ...authedUser, password: await sha256Hex(password) };
+      setUsers((prev) =>
+        prev.map((u) => (u.id === matchedUser.id ? { ...u, password: authedUser.password } : u))
+      );
+    }
 
-    setUsers((prev) => prev.map((u) => (u.id === matchedUser.id ? updatedUser : u)));
-    setCurrentUser(updatedUser);
+    setCurrentUser(authedUser);
     setIsAuthenticated(true);
-    localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(updatedUser));
+    localStorage.setItem(
+      `${STORAGE_KEY}_auth_session`,
+      JSON.stringify({ ...authedUser, password: undefined })
+    );
 
-    return { success: true, user: updatedUser };
+    return { success: true, user: authedUser };
   };
 
   const logout = () => {
@@ -706,21 +723,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const hasPermission = (permission: string) => {
-    return currentUser?.permissions?.includes(permission) ?? true;
+    return currentUser.permissions?.includes(permission) ?? true;
   };
 
-  const addUser = (userData: Omit<User, 'id'>) => {
+  const addUser = async (userData: Omit<User, 'id'>): Promise<{ success: boolean; error?: string }> => {
     if (!userData.username.trim()) return { success: false, error: 'Username is required.' };
     if (users.some((u) => u.username.toLowerCase() === userData.username.trim().toLowerCase())) {
       return { success: false, error: 'A user with this username already exists.' };
     }
+    const plainPassword = userData.password?.trim() || '';
+    if (plainPassword.length < MIN_PASSWORD_LENGTH) {
+      return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+    }
+    const hashedPassword = await sha256Hex(plainPassword);
 
     const newUser: User = {
       ...userData,
       id: `usr-${Date.now()}`,
       username: userData.username.trim(),
       name: userData.name.trim() || userData.username.trim(),
-      password: userData.password || 'password123',
+      password: hashedPassword,
       permissions: userData.permissions || (
         userData.role === 'Admin'
           ? SEEDED_USERS[0].permissions
@@ -734,7 +756,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const updateUser = (id: string, updates: Partial<User>) => {
+  const updateUser = async (id: string, updates: Partial<User>): Promise<{ success: boolean; error?: string }> => {
     if (updates.username) {
       const exists = users.some(
         (u) => u.id !== id && u.username.toLowerCase() === updates.username?.trim().toLowerCase()
@@ -742,12 +764,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (exists) return { success: false, error: 'Username is already taken by another user.' };
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...updates } : u)));
+    let finalUpdates = updates;
+    if (updates.password !== undefined) {
+      const plainPassword = updates.password.trim();
+      if (plainPassword.length < MIN_PASSWORD_LENGTH) {
+        return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+      }
+      finalUpdates = { ...updates, password: await sha256Hex(plainPassword) };
+    }
+
+    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...finalUpdates } : u)));
     if (currentUser.id === id) {
-      const updatedCurrent = { ...currentUser, ...updates };
+      const updatedCurrent = { ...currentUser, ...finalUpdates };
       setCurrentUser(updatedCurrent);
       if (isAuthenticated) {
-        localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(updatedCurrent));
+        localStorage.setItem(
+          `${STORAGE_KEY}_auth_session`,
+          JSON.stringify({ ...updatedCurrent, password: undefined })
+        );
       }
     }
     return { success: true };
@@ -823,11 +857,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteClass = (id: string) => {
-    const enrolledStudents = students.filter((s) => s.classId === id && s.status === 'Active');
+    const enrolledStudents = students.filter((s) => s.classId === id);
     if (enrolledStudents.length > 0) {
       return {
         success: false,
-        error: `Cannot delete class. ${enrolledStudents.length} active students are currently enrolled. Reassign them first.`,
+        error: `Cannot delete class. ${enrolledStudents.length} student record(s) still reference it (including inactive ones). Reassign them first.`,
       };
     }
     setClasses((prev) => prev.filter((c) => c.id !== id));
@@ -1068,13 +1102,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteFamily = (id: string) => {
-    const fam = families.find((f) => f.id === id);
-    if (fam && fam.memberStudentIds.length > 0) {
-      return {
-        success: false,
-        error: `Cannot delete family. It currently has ${fam.memberStudentIds.length} linked student members. Remove student members first.`,
-      };
-    }
     setFamilies((prev) => prev.filter((f) => f.id !== id));
     setStudents((prev) =>
       prev.map((s) => (s.familyId === id ? { ...s, familyId: undefined } : s))
@@ -1164,7 +1191,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteBus = (id: string) => {
     const activeAssignments = transportAssignments.filter(
-      (a) => a.busId === id && a.active && students.some((s) => s.id === a.studentId)
+      (a) => a.busId === id && students.some((s) => s.id === a.studentId && s.status === 'Active')
     );
     if (activeAssignments.length > 0) {
       return {
@@ -1172,6 +1199,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete bus. ${activeAssignments.length} active student transport assignments refer to this bus.`,
       };
     }
+    setTransportAssignments((prev) => prev.filter((a) => a.busId !== id));
     setBuses((prev) => prev.filter((b) => b.id !== id));
     return { success: true };
   };
@@ -1246,7 +1274,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteStop = (id: string) => {
     const activeAssignments = transportAssignments.filter(
-      (a) => a.stopId === id && a.active && students.some((s) => s.id === a.studentId)
+      (a) => a.stopId === id && students.some((s) => s.id === a.studentId && s.status === 'Active')
     );
     if (activeAssignments.length > 0) {
       return {
@@ -1254,6 +1282,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete bus stop. ${activeAssignments.length} active student transport assignments refer to this stop.`,
       };
     }
+    setTransportAssignments((prev) => prev.filter((a) => a.stopId !== id));
     setStops((prev) => prev.filter((s) => s.id !== id));
     return { success: true };
   };
@@ -1420,18 +1449,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const maxDays = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0).getDate();
     const clampedDays = Math.min(Math.max(daysCharged, 0), maxDays);
 
-    let count = 0;
+    const matchedCount = transportAssignments.filter((a) => a.month === targetMonth).length;
     setTransportAssignments((prev) =>
-      prev.map((a) => {
-        if (a.month === targetMonth) {
-          count++;
-          return { ...a, daysCharged: clampedDays };
-        }
-        return a;
-      })
+      prev.map((a) => (a.month === targetMonth ? { ...a, daysCharged: clampedDays } : a))
     );
 
-    return { success: true, updatedCount: count };
+    return { success: true, updatedCount: matchedCount };
   };
 
   // Fee Particular Templates
@@ -1866,6 +1889,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
+    if (voucher.status === 'Reversed') {
+      return { success: false, error: 'This voucher is reversed and cannot be modified.' };
+    }
+    if (voucher.status === 'Carried') {
+      return {
+        success: false,
+        error: `Voucher ${voucher.voucherNo} was carried forward and is locked. Edit the following month's voucher instead.`,
+      };
+    }
 
     const cleanParticulars = updatedParticulars.map((p) => ({
       ...p,
@@ -1919,6 +1951,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
+    if (voucher.status === 'Reversed') {
+      return { success: false, error: 'This voucher has been reversed and cannot accept payments.' };
+    }
+    if (voucher.status === 'Carried') {
+      const [cy, cm] = voucher.month.split('-').map(Number);
+      const nextMonth = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`;
+      return {
+        success: false,
+        error: `Voucher ${voucher.voucherNo} was carried forward. Its balance moved to the ${nextMonth} voucher — record this payment against that voucher instead.`,
+      };
+    }
     if (amount <= 0) return { success: false, error: 'Payment amount must be greater than zero.' };
 
     let cleanParticulars = voucher.particulars;
@@ -2040,13 +2083,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let matchedStudent = students.find((s) => s.id === row.studentId);
 
       if (row.voucherId) {
-        voucher = vouchers.find((v) => v.id === row.voucherId && v.status !== 'Reversed');
-        if (voucher && !matchedStudent) {
-          matchedStudent = students.find((s) => s.id === voucher.studentId);
+        const byId = vouchers.find(
+          (v) => v.id === row.voucherId && v.status !== 'Reversed' && v.status !== 'Carried'
+        );
+        voucher = byId;
+        if (byId && !matchedStudent) {
+          matchedStudent = students.find((s) => s.id === byId.studentId);
         }
       } else if (row.studentId) {
         voucher = vouchers.find(
-          (v) => v.studentId === row.studentId && v.month === month && v.status !== 'Reversed'
+          (v) =>
+            v.studentId === row.studentId &&
+            v.month === month &&
+            v.status !== 'Reversed' &&
+            v.status !== 'Carried'
         );
       } else {
         const cleanReg = (row.regNo || row.identifier || '').trim().toLowerCase();
@@ -2057,8 +2107,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
 
         if (matchedStudent) {
+          const ms = matchedStudent;
           voucher = vouchers.find(
-            (v) => v.studentId === matchedStudent.id && v.month === month && v.status !== 'Reversed'
+            (v) =>
+              v.studentId === ms.id &&
+              v.month === month &&
+              v.status !== 'Reversed' &&
+              v.status !== 'Carried'
           );
         }
       }
@@ -2066,9 +2121,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!voucher) {
         const regDisplay = row.regNo || row.identifier || (matchedStudent ? matchedStudent.regNo : 'Unknown');
         if (matchedStudent) {
-          errors.push(
-            `Row ${idx + 1}: No active fee voucher found for student ${matchedStudent.name} (Reg # ${regDisplay}) in month ${month}.`
+          const ms = matchedStudent;
+          const inactive = vouchers.find(
+            (v) =>
+              v.studentId === ms.id &&
+              v.month === month &&
+              (v.status === 'Carried' || v.status === 'Reversed')
           );
+          if (inactive && inactive.status === 'Carried') {
+            errors.push(
+              `Row ${idx + 1}: Skipped. Voucher ${inactive.voucherNo} was carried forward — its balance moved to the next month. Record this payment against the following month's voucher.`
+            );
+          } else if (inactive && inactive.status === 'Reversed') {
+            errors.push(
+              `Row ${idx + 1}: Skipped. Voucher ${inactive.voucherNo} is reversed and cannot accept payments.`
+            );
+          } else {
+            errors.push(
+              `Row ${idx + 1}: No active fee voucher found for student ${matchedStudent.name} (Reg # ${regDisplay}) in month ${month}.`
+            );
+          }
         } else {
           errors.push(
             `Row ${idx + 1}: No student found matching Reg # "${regDisplay}".`
@@ -2082,10 +2154,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return;
       }
 
-      const mode: PaymentTransaction['paymentMode'] =
-        (row.paymentMode as any) === 'BankTransfer' || (row.paymentMode as any) === 'Cheque' || (row.paymentMode as any) === 'Online'
-          ? (row.paymentMode as any)
-          : 'BankTransfer';
+      const rawModeInput = (row.paymentMode || '').trim();
+      const normalizedMode = normalizePaymentMode(rawModeInput);
+      if (rawModeInput && !normalizedMode) {
+        errors.push(
+          `Row ${idx + 1}: Invalid payment mode "${rawModeInput}". Allowed: Cash, BankTransfer, Cheque, Online.`
+        );
+        return;
+      }
+      const mode: PaymentTransaction['paymentMode'] = normalizedMode || 'BankTransfer';
 
       const currentPaid = updatedVouchersMap.get(voucher.id)?.paid ?? voucher.amountPaid;
       const newPaid = currentPaid + row.amount;
@@ -2168,6 +2245,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const voucher = baseList.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
 
+    if (voucher.status === 'Reversed') {
+      return { success: false, error: `Voucher ${voucher.voucherNo} is reversed and cannot be carried forward.` };
+    }
     if (voucher.status === 'Paid' || voucher.status === 'Carried') {
       return { success: false, error: `Voucher is already in '${voucher.status}' status.` };
     }
@@ -2676,7 +2756,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions(INITIAL_TRANSACTIONS);
     setInstitute(INITIAL_INSTITUTE);
     setBankAccounts(INITIAL_BANK_ACCOUNTS);
-    setActiveMonth('2026-08');
+    setActiveMonth(getCurrentMonthString());
   };
 
   // Selection-based database cleanup with cascading integrity awareness
@@ -2849,6 +2929,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteUser,
         activeMonth,
         setActiveMonth,
+        beforeMonthChange,
         classes,
         addClass,
         updateClass,

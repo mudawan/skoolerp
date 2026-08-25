@@ -2,6 +2,8 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import { normalizePaymentMode } from '../utils/paymentMode';
+import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
@@ -155,7 +157,9 @@ export const CollectionsView: React.FC = () => {
   const filteredCollections = sortedCollections;
 
   // Available vouchers for collection
-  const availableVouchers = vouchers.filter((v) => v.status !== 'Reversed');
+  const availableVouchers = vouchers.filter(
+    (v) => v.status !== 'Reversed' && v.status !== 'Carried'
+  );
   const selectedVoucher = availableVouchers.find((v) => v.id === selectedVoucherId);
   const selectedStudent = selectedVoucher ? students.find((s) => s.id === selectedVoucher.studentId) : undefined;
   const selectedClass = selectedVoucher ? classes.find((c) => c.id === selectedVoucher.classId) : undefined;
@@ -284,26 +288,6 @@ export const CollectionsView: React.FC = () => {
           return;
         }
 
-        // Quote-aware CSV parser
-        const parseCsvLine = (line: string): string[] => {
-          const result: string[] = [];
-          let insideQuotes = false;
-          let current = '';
-          for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-              insideQuotes = !insideQuotes;
-            } else if (char === ',' && !insideQuotes) {
-              result.push(current.trim().replace(/^"|"$/g, ''));
-              current = '';
-            } else {
-              current += char;
-            }
-          }
-          result.push(current.trim().replace(/^"|"$/g, ''));
-          return result;
-        };
-
         const normalizeDate = (rawDate: string): string => {
           if (!rawDate || !rawDate.trim()) {
             return new Date().toISOString().split('T')[0];
@@ -428,6 +412,9 @@ export const CollectionsView: React.FC = () => {
           } else if (amount <= 0) {
             isValid = false;
             errorMsg = 'Amount must be > 0';
+          } else if (rawMode && !normalizePaymentMode(rawMode)) {
+            isValid = false;
+            errorMsg = `Invalid payment mode "${rawMode}" (use Cash, BankTransfer, Cheque, Online)`;
           }
 
           const isDuplicate = cleanReg ? seenRegNos.has(cleanReg) : false;
@@ -440,7 +427,7 @@ export const CollectionsView: React.FC = () => {
             regNo: rawReg || (student?.regNo ?? 'N/A'),
             amount,
             date: rowDate,
-            paymentMode: rawMode || 'BankTransfer',
+            paymentMode: normalizePaymentMode(rawMode) || rawMode || 'BankTransfer',
             refNo: rawRef,
             studentId: student?.id,
             studentName: student?.name,
@@ -550,13 +537,7 @@ export const CollectionsView: React.FC = () => {
       }
     }
 
-    const encodedUri = encodeURI('data:text/csv;charset=utf-8,' + sampleContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Skooler_Bulk_Collection_Sample_${activeMonth}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(`Skooler_Bulk_Collection_Sample_${activeMonth}.csv`, sampleContent);
   };
 
   // CSV Export & Copy for Fee Collections & Payment Ledger

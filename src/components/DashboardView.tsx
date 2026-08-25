@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatMonthName, getPreviousMonthString } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getPreviousMonthString, getRecentMonthsEndingAt } from '../utils/feeMath';
 import { ActiveTab } from '../types';
 import {
   AlertTriangle,
@@ -72,14 +72,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
   const prevMonthStatus = getMonthClosureStatus(prevMonthStr);
 
   // 6-Month Fee Collection Trend Data
-  const monthList = [
-    '2026-03',
-    '2026-04',
-    '2026-05',
-    '2026-06',
-    '2026-07',
-    '2026-08',
-  ];
+  const monthList = getRecentMonthsEndingAt(activeMonth, 6);
 
   const trendData = monthList.map((m) => {
     const vchs = vouchers.filter((v) => v.month === m && v.status !== 'Reversed');
