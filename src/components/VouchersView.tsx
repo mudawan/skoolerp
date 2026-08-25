@@ -14,7 +14,10 @@ import {
   ArrowUp,
   ArrowUpDown,
   Calendar,
+  Check,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Coins,
   CornerDownRight,
@@ -94,6 +97,7 @@ export const VouchersView: React.FC = () => {
   const [dueDateInput, setDueDateInput] = useState(`${activeMonth}-15`);
   const [lateFeeInput, setLateFeeInput] = useState(defaultLateFeeRate || 500);
   const [selectedGenStudentIds, setSelectedGenStudentIds] = useState<string[]>([]);
+  const [isParamsCollapsed, setIsParamsCollapsed] = useState(false);
 
   // Automatically sync generator targetMonth and default dueDate when working month in header changes
   useEffect(() => {
@@ -1096,139 +1100,194 @@ export const VouchersView: React.FC = () => {
 
       {/* Generator Wizard Modal */}
       {showGeneratorModal && previewsData && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-5 my-8">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">
-                  Voucher Generation Wizard ({formatMonthName(targetMonth)})
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Preview breakdown before committing vouchers to database.
-                </p>
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-5 shadow-2xl space-y-3.5 my-auto max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-teal-50 text-teal-700 border border-teal-200/80">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <span>Voucher Generation Wizard</span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">
+                      {formatMonthName(targetMonth)}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Review student particulars, set due date & fine rate, and generate vouchers.
+                  </p>
+                </div>
               </div>
-              <button
-                onClick={() => setShowGeneratorModal(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsParamsCollapsed((prev) => !prev)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer"
+                  title={isParamsCollapsed ? 'Expand generator settings' : 'Collapse generator settings'}
+                >
+                  {isParamsCollapsed ? (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Expand Settings</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Hide Settings</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGeneratorModal(false)}
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Month Closure Gate Blocking Alert */}
             {previewsData.monthClosureBlocked && (
-              <div className="p-4 bg-rose-50 border-l-4 border-rose-500 rounded-xl text-xs text-rose-900 space-y-1">
-                <div className="flex items-center gap-2 font-bold text-rose-800">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                  Month Closure Gate Active
-                </div>
-                <p>{previewsData.closureMessage}</p>
-              </div>
-            )}
-
-            {/* Controls Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Target Month</label>
-                <select
-                  value={targetMonth}
-                  onChange={(e) => handleUpdatePreview(scope, scopeClassId, e.target.value)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold"
-                >
-                  {availableTargetMonths.map((m) => (
-                    <option key={m} value={m}>
-                      {formatMonthName(m)} ({m})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Scope</label>
-                <select
-                  value={scope}
-                  onChange={(e) => handleUpdatePreview(e.target.value as any, scopeClassId, targetMonth)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold"
-                >
-                  <option value="all">All Active Students</option>
-                  <option value="class">Single Class Only</option>
-                </select>
-              </div>
-
-              {scope === 'class' && (
+              <div className="px-3.5 py-2.5 bg-rose-50 border-l-4 border-rose-500 rounded-xl text-xs text-rose-900 flex items-start gap-2 shrink-0">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Select Class</label>
-                  <select
-                    value={scopeClassId}
-                    onChange={(e) => handleUpdatePreview(scope, e.target.value, targetMonth)}
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold"
-                  >
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            {/* Policy Informational Alerts */}
-            {previewsData.previews.some((p) => p.isBeforeFirstBillingMonth) && (
-              <div className="p-3 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-700 flex items-start gap-2.5">
-                <Calendar className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">First Fee Billing Month:</span> Some students have a First Fee Billing Month after {formatMonthName(targetMonth)} and are excluded from generation for this month.
+                  <span className="font-bold text-rose-800">Month Closure Gate Active: </span>
+                  <span>{previewsData.closureMessage}</span>
                 </div>
               </div>
             )}
 
-            {previewsData.previews.some((p) => p.isBlockedByPriorRule) && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2.5">
-                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Strict Chronological Policy Active:</span> Generating prior month vouchers is strictly blocked for student(s) with existing future vouchers (e.g. August 2026 voucher exists). You can adjust this policy under <strong>Settings → Prior Month Policy</strong>.
+            {/* Parameters & Configuration Toolbar (Collapsible) */}
+            {!isParamsCollapsed && (
+              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Target Month</label>
+                    <select
+                      value={targetMonth}
+                      onChange={(e) => handleUpdatePreview(scope, scopeClassId, e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      {availableTargetMonths.map((m) => (
+                        <option key={m} value={m}>
+                          {formatMonthName(m)} ({m})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Scope</label>
+                    <select
+                      value={scope}
+                      onChange={(e) => handleUpdatePreview(e.target.value as any, scopeClassId, targetMonth)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value="all">All Active Students</option>
+                      <option value="class">Single Class Only</option>
+                    </select>
+                  </div>
+
+                  {scope === 'class' ? (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Class</label>
+                      <select
+                        value={scopeClassId}
+                        onChange={(e) => handleUpdatePreview(scope, e.target.value, targetMonth)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      >
+                        {classes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Due Date</label>
+                    <input
+                      type="date"
+                      value={dueDateInput}
+                      onChange={(e) => setDueDateInput(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className={scope === 'class' ? '' : 'col-span-2 sm:col-span-1'}>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Late Fine (Rs.)</label>
+                    <input
+                      type="number"
+                      step="50"
+                      value={lateFeeInput}
+                      onChange={(e) => setLateFeeInput(Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    />
+                  </div>
                 </div>
+
+                {/* Integrated Policy & Exclusions Sub-Bar */}
+                {(previewsData.previews.some((p) => p.isBeforeFirstBillingMonth) ||
+                  previewsData.previews.some((p) => p.isBlockedByPriorRule) ||
+                  previewsData.previews.some((p) => p.isBlockedBySkippedRule) ||
+                  (priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers)) ||
+                  (skippedMonthRule === 'warning' && previewsData.previews.some((p) => p.hasSkippedMonths && !p.isAlreadyGenerated)) ||
+                  (priorMonthRule === 'recalculate' && previewsData.previews.some((p) => p.hasFutureVouchers))) && (
+                  <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-slate-600">
+                    {previewsData.previews.some((p) => p.isBeforeFirstBillingMonth) && (
+                      <div className="inline-flex items-center gap-1.5 text-slate-600">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span>
+                          <strong className="text-slate-700">First Billing Month:</strong> Students with a start month after {formatMonthName(targetMonth)} are excluded.
+                        </span>
+                      </div>
+                    )}
+
+                    {previewsData.previews.some((p) => p.isBlockedByPriorRule) && (
+                      <div className="inline-flex items-center gap-1.5 text-rose-700 font-medium">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <span>Chronological rule: students with future vouchers blocked.</span>
+                      </div>
+                    )}
+
+                    {previewsData.previews.some((p) => p.isBlockedBySkippedRule) && (
+                      <div className="inline-flex items-center gap-1.5 text-rose-700 font-medium">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <span>Sequential rule: students with skipped months blocked.</span>
+                      </div>
+                    )}
+
+                    {priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
+                      <div className="inline-flex items-center gap-1.5 text-amber-800 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Future vouchers exist (confirmation will be prompted).</span>
+                      </div>
+                    )}
+
+                    {skippedMonthRule === 'warning' && previewsData.previews.some((p) => p.hasSkippedMonths && !p.isAlreadyGenerated) && (
+                      <div className="inline-flex items-center gap-1.5 text-amber-800 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Skipped month warning: unbilled intermediate months exist.</span>
+                      </div>
+                    )}
+
+                    {priorMonthRule === 'recalculate' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
+                      <div className="inline-flex items-center gap-1.5 text-indigo-700 font-medium">
+                        <RefreshCw className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span>Subsequent voucher arrears will update automatically.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
-            {previewsData.previews.some((p) => p.isBlockedBySkippedRule) && (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2.5">
-                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Strict Sequential Policy Active:</span> Generating vouchers is strictly blocked for student(s) with skipped intermediate billing months (e.g. September 2026 was skipped). You can adjust this policy under <strong>Settings → Skipped Month Policy</strong>.
-                </div>
-              </div>
-            )}
-
-            {priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Sequential Month Warning Active:</span> Some students have future month vouchers generated. A consequence alert will ask for your confirmation before committing.
-                </div>
-              </div>
-            )}
-
-            {skippedMonthRule === 'warning' && previewsData.previews.some((p) => p.hasSkippedMonths && !p.isAlreadyGenerated) && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Skipped Month Warning Active:</span> Some students have unbilled intermediate prior months skipped. A warning alert will ask for your confirmation before committing.
-                </div>
-              </div>
-            )}
-
-            {priorMonthRule === 'recalculate' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
-              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 flex items-start gap-2.5">
-                <RefreshCw className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold">Auto-Recalculate Arrears Active:</span> Generating prior month vouchers will automatically recalculate and update subsequent future month voucher arrears.
-                </div>
-              </div>
-            )}
-
-            {/* Previews Table */}
+            {/* Previews Table & Metric Bar */}
             {(() => {
               const eligiblePreviews = previewsData.previews.filter(
                 (p) => !p.isAlreadyGenerated && !p.isBlockedByPriorRule && !p.isBlockedBySkippedRule && !p.isBeforeFirstBillingMonth
@@ -1237,41 +1296,68 @@ export const VouchersView: React.FC = () => {
                 eligiblePreviews.length > 0 &&
                 eligiblePreviews.every((p) => selectedGenStudentIds.includes(p.student.id));
 
+              const selectedTotalNetDue = previewsData.previews
+                .filter((p) => selectedGenStudentIds.includes(p.student.id))
+                .reduce((sum, p) => sum + p.netDue, 0);
+
+              const alreadyGenCount = previewsData.previews.filter((p) => p.isAlreadyGenerated).length;
+              const blockedCount = previewsData.previews.filter(
+                (p) => p.isBlockedByPriorRule || p.isBlockedBySkippedRule || p.isBeforeFirstBillingMonth
+              ).length;
+
               return (
-                <div className="space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-slate-800 text-xs">
-                        Pre-Generation Breakdown ({previewsData.previews.length} Student Preview Rows):
-                      </h4>
-                      <span className="text-[11px] font-semibold bg-teal-50 text-teal-700 px-2.5 py-0.5 rounded-full border border-teal-200/60">
-                        Selected: {selectedGenStudentIds.length} of {eligiblePreviews.length} ready
-                      </span>
+                <div className="flex flex-col flex-1 min-h-0 space-y-2">
+                  {/* Summary Metrics & Selection Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                      <div className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] shadow-2xs">
+                        <span className="text-slate-500 font-semibold">Total Students:</span>
+                        <span className="font-bold text-slate-800">{previewsData.previews.length}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80 text-[11px] shadow-2xs">
+                        <span className="text-emerald-700 font-semibold">Selected:</span>
+                        <span className="font-bold text-emerald-800">{selectedGenStudentIds.length}</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 text-[11px] shadow-2xs">
+                        <span className="text-teal-700 font-semibold">Est. Net Due:</span>
+                        <span className="font-bold text-teal-800 font-mono">{formatCurrency(selectedTotalNetDue)}</span>
+                      </div>
+                      {alreadyGenCount > 0 && (
+                        <div className="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] shadow-2xs">
+                          <span className="text-slate-500 font-semibold">Already Issued:</span>
+                          <span className="font-bold text-slate-700">{alreadyGenCount}</span>
+                        </div>
+                      )}
+                      {blockedCount > 0 && (
+                        <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 text-[11px] shadow-2xs">
+                          <span className="text-rose-700 font-semibold">Excluded / Blocked:</span>
+                          <span className="font-bold text-rose-800">{blockedCount}</span>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={handleSelectAllGen}
-                        className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 font-bold rounded-lg text-[11px] border border-teal-200 transition cursor-pointer"
+                        onClick={isAllEligibleSelected ? handleSelectNoneGen : handleSelectAllGen}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-semibold text-xs shadow-2xs transition cursor-pointer"
                       >
-                        Select All Active
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSelectNoneGen}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-[11px] border border-slate-200 transition cursor-pointer"
-                      >
-                        Select None
+                        <Check className="w-3.5 h-3.5 text-teal-600" />
+                        <span>{isAllEligibleSelected ? 'Deselect All' : `Select All Ready (${eligiblePreviews.length})`}</span>
                       </button>
                     </div>
                   </div>
 
-                  <div className="max-h-72 w-full overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl bg-white shadow-inner block">
+                  {/* Compact Table */}
+                  <div
+                    className={`w-full overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl bg-white shadow-2xs block flex-1 transition-all ${
+                      isParamsCollapsed ? 'max-h-[66vh] sm:max-h-[70vh]' : 'max-h-[50vh] sm:max-h-[54vh]'
+                    }`}
+                  >
                     <table className="w-full min-w-[750px] border-collapse text-left text-[11px] text-slate-700">
-                      <thead className="bg-slate-100 font-bold text-slate-700 border-b border-slate-200 sticky top-0 z-10 shadow-xs">
+                      <thead className="bg-slate-50 font-bold text-slate-700 border-b border-slate-200 sticky top-0 z-10 shadow-xs">
                         <tr>
-                          <th className="p-2 w-8 text-center whitespace-nowrap bg-slate-100">
+                          <th className="py-2 px-2.5 w-8 text-center whitespace-nowrap bg-slate-50">
                             <input
                               type="checkbox"
                               checked={isAllEligibleSelected}
@@ -1280,16 +1366,16 @@ export const VouchersView: React.FC = () => {
                               title="Select / Deselect all eligible active students"
                             />
                           </th>
-                          <th className="p-2 w-20 whitespace-nowrap bg-slate-100">Reg #</th>
-                          <th className="p-2 min-w-[160px] whitespace-nowrap bg-slate-100">Student Name</th>
-                          <th className="p-2 whitespace-nowrap bg-slate-100">Class</th>
+                          <th className="py-2 px-2.5 w-20 whitespace-nowrap bg-slate-50">Reg #</th>
+                          <th className="py-2 px-2.5 min-w-[160px] whitespace-nowrap bg-slate-50">Student Name</th>
+                          <th className="py-2 px-2.5 whitespace-nowrap bg-slate-50">Class</th>
                           {globalTemplates.map((tpl) => (
-                            <th key={tpl.id} className="p-2 text-right whitespace-nowrap bg-slate-100 min-w-[90px]">
+                            <th key={tpl.id} className="py-2 px-2.5 text-right whitespace-nowrap bg-slate-50 min-w-[90px]">
                               {tpl.label}
                             </th>
                           ))}
-                          <th className="p-2 text-right font-bold whitespace-nowrap bg-slate-100 min-w-[100px]">Net Due</th>
-                          <th className="p-2 text-center whitespace-nowrap bg-slate-100 min-w-[140px]">Status</th>
+                          <th className="py-2 px-2.5 text-right font-bold whitespace-nowrap bg-slate-50 min-w-[100px]">Net Due</th>
+                          <th className="py-2 px-2.5 text-center whitespace-nowrap bg-slate-50 min-w-[140px]">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1309,7 +1395,7 @@ export const VouchersView: React.FC = () => {
                                   : 'hover:bg-slate-50'
                               }`}
                             >
-                              <td className="p-2 text-center">
+                              <td className="py-1.5 px-2.5 text-center">
                                 <input
                                   type="checkbox"
                                   disabled={p.isAlreadyGenerated || p.isBlockedByPriorRule || p.isBlockedBySkippedRule || p.isBeforeFirstBillingMonth}
@@ -1318,23 +1404,23 @@ export const VouchersView: React.FC = () => {
                                   className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30"
                                 />
                               </td>
-                              <td className="p-2 font-mono font-semibold text-teal-700 text-[11px]">
+                              <td className="py-1.5 px-2.5 font-mono font-semibold text-teal-700 text-[11px]">
                                 {p.student.regNo || '-'}
                               </td>
-                              <td className="p-2">
+                              <td className="py-1.5 px-2.5">
                                 <div className="flex items-center gap-1.5">
                                   <StudentAvatar photoUrl={p.student.photoUrl} name={p.student.name} size="xs" />
                                   <span className="font-bold text-slate-900 whitespace-nowrap">{p.student.name}</span>
                                 </div>
                               </td>
-                              <td className="p-2 text-slate-600 whitespace-nowrap">{p.schoolClass?.name}</td>
+                              <td className="py-1.5 px-2.5 text-slate-600 whitespace-nowrap">{p.schoolClass?.name}</td>
                               {globalTemplates.map((tpl) => {
                                 const part = p.particulars.find((item) => item.kind === tpl.kind);
                                 const amt = part ? part.amount : 0;
                                 return (
                                   <td
                                     key={tpl.id}
-                                    className={`p-2 text-right font-mono whitespace-nowrap ${
+                                    className={`py-1.5 px-2.5 text-right font-mono whitespace-nowrap ${
                                       amt < 0
                                         ? 'text-emerald-700 font-semibold'
                                         : tpl.kind === 'PreviousBalance' && amt > 0
@@ -1346,18 +1432,18 @@ export const VouchersView: React.FC = () => {
                                   </td>
                                 );
                               })}
-                              <td className="p-2 text-right font-bold text-slate-900 whitespace-nowrap">
+                              <td className="py-1.5 px-2.5 text-right font-bold text-slate-900 whitespace-nowrap">
                                 {formatCurrency(p.netDue)}
                               </td>
-                              <td className="p-2 text-center">
+                              <td className="py-1.5 px-2.5 text-center">
                                 {p.isAlreadyGenerated ? (
                                   <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                    Already Generated
+                                    Already Issued
                                   </span>
                                 ) : p.isBeforeFirstBillingMonth ? (
                                   <span
                                     title={p.firstBillingMonthBlockReason}
-                                    className="bg-slate-100 text-slate-700 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1 border border-slate-200"
+                                    className="bg-slate-100 text-slate-700 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1 border border-slate-200"
                                   >
                                     <Calendar className="w-3 h-3 text-slate-500" />
                                     Starts {p.student.firstBillingMonth ? formatMonthName(p.student.firstBillingMonth) : 'Later'}
@@ -1365,7 +1451,7 @@ export const VouchersView: React.FC = () => {
                                 ) : p.isBlockedByPriorRule ? (
                                   <span
                                     title={p.blockReason}
-                                    className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1"
+                                    className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1"
                                   >
                                     <ShieldAlert className="w-3 h-3 text-rose-600" />
                                     Blocked: Future Exists
@@ -1373,7 +1459,7 @@ export const VouchersView: React.FC = () => {
                                 ) : p.isBlockedBySkippedRule ? (
                                   <span
                                     title={p.skippedBlockReason}
-                                    className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1"
+                                    className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1"
                                   >
                                     <ShieldAlert className="w-3 h-3 text-rose-600" />
                                     Blocked: Month Skipped
@@ -1381,24 +1467,24 @@ export const VouchersView: React.FC = () => {
                                 ) : p.hasSkippedMonths && skippedMonthRule === 'warning' ? (
                                   <span
                                     title={`Skipped: ${p.skippedMonths?.map(formatMonthName).join(', ')}`}
-                                    className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1"
+                                    className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1"
                                   >
                                     <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                    Skipped Month Warning
+                                    Skipped Warning
                                   </span>
                                 ) : p.hasFutureVouchers && priorMonthRule === 'warning' ? (
-                                  <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1">
+                                  <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1">
                                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                                     Warning Mode
                                   </span>
                                 ) : p.hasFutureVouchers && priorMonthRule === 'recalculate' ? (
-                                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center justify-center gap-1">
+                                  <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1">
                                     <RefreshCw className="w-3 h-3 text-indigo-600" />
                                     Auto-Recalculate
                                   </span>
                                 ) : isSelected ? (
                                   <span className="bg-teal-100 text-teal-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                    Selected
+                                    Ready
                                   </span>
                                 ) : (
                                   <span className="bg-amber-50 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded">
@@ -1416,44 +1502,22 @@ export const VouchersView: React.FC = () => {
               );
             })()}
 
-            {/* Commit Form Inputs */}
-            <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-200 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Voucher Due Date</label>
-                <input
-                  type="date"
-                  value={dueDateInput}
-                  onChange={(e) => setDueDateInput(e.target.value)}
-                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Late Payment Fine Rate (Rs.)</label>
-                <input
-                  type="number"
-                  step="50"
-                  value={lateFeeInput}
-                  onChange={(e) => setLateFeeInput(Number(e.target.value))}
-                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-bold"
-                />
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
+            {/* Action Footer */}
+            <div className="flex items-center justify-between pt-2.5 border-t border-slate-200 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowGeneratorModal(false)}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs"
+                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
               >
                 Cancel
               </button>
               <button
                 disabled={previewsData.monthClosureBlocked || selectedGenStudentIds.length === 0}
                 onClick={handleCommitGeneration}
-                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer text-xs disabled:opacity-40"
+                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
               >
-                Commit & Generate ({selectedGenStudentIds.length}) Vouchers
+                <Check className="w-4 h-4" />
+                <span>Commit & Generate ({selectedGenStudentIds.length}) Vouchers</span>
               </button>
             </div>
           </div>

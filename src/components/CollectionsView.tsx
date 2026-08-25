@@ -388,13 +388,13 @@ export const CollectionsView: React.FC = () => {
 
           const studentClass = student ? classes.find((c) => c.id === student.classId) : undefined;
 
-          // Find active voucher in the active working month
-          const voucher = student
-            ? vouchers.find((v) => v.studentId === student.id && v.month === activeMonth && v.status !== 'Reversed')
+          // Find voucher in the active working month
+          const targetVoucher = student
+            ? vouchers.find((v) => v.studentId === student.id && v.month === activeMonth)
             : undefined;
 
-          const alreadyPaid = voucher?.amountPaid || 0;
-          const netDue = voucher?.netDue || 0;
+          const alreadyPaid = targetVoucher?.amountPaid || 0;
+          const netDue = targetVoucher?.netDue || 0;
           const remainingBalance = Math.max(0, netDue - alreadyPaid);
 
           let isValid = true;
@@ -406,9 +406,15 @@ export const CollectionsView: React.FC = () => {
           } else if (!student) {
             isValid = false;
             errorMsg = `No student found with Reg # "${rawReg}"`;
-          } else if (!voucher) {
+          } else if (!targetVoucher) {
             isValid = false;
-            errorMsg = `No active voucher for ${activeMonth}`;
+            errorMsg = `No voucher issued for ${formatMonthName(activeMonth)}`;
+          } else if (targetVoucher.status === 'Carried') {
+            isValid = false;
+            errorMsg = `Voucher carried forward`;
+          } else if (targetVoucher.status === 'Reversed') {
+            isValid = false;
+            errorMsg = `Voucher reversed (cannot collect)`;
           } else if (amount <= 0) {
             isValid = false;
             errorMsg = 'Amount must be > 0';
@@ -432,8 +438,8 @@ export const CollectionsView: React.FC = () => {
             studentId: student?.id,
             studentName: student?.name,
             className: studentClass?.name,
-            voucherId: voucher?.id,
-            voucherNo: voucher?.voucherNo,
+            voucherId: targetVoucher?.id,
+            voucherNo: targetVoucher?.voucherNo,
             netDue,
             alreadyPaid,
             remainingBalance,
@@ -1625,20 +1631,8 @@ export const CollectionsView: React.FC = () => {
             )}
 
             {/* Modal Footer */}
-            <div className="flex justify-between items-center border-t border-slate-200 pt-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowBulkModal(false);
-                  setBulkPreviewRows([]);
-                  setBulkImportStatus({ message: null, error: null });
-                }}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
-              >
-                {bulkPreviewRows.length > 0 ? 'Cancel' : 'Close'}
-              </button>
-
-              {bulkPreviewRows.length > 0 && (
+            {bulkPreviewRows.length > 0 && (
+              <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
                 <button
                   type="button"
                   disabled={bulkPreviewRows.filter((r) => r.selected && r.isValid).length === 0}
@@ -1648,8 +1642,8 @@ export const CollectionsView: React.FC = () => {
                   <Check className="w-4 h-4" />
                   Confirm & Record {bulkPreviewRows.filter((r) => r.selected && r.isValid).length} Selected Collection(s)
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -1657,19 +1657,8 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
               </div>
             )}
 
-            <div className="flex justify-between items-center border-t border-slate-200 pt-3 shrink-0">
-              <button
-                onClick={() => {
-                  setShowImportModal(false);
-                  setPreviewRows([]);
-                  setImportStatus({ message: null, error: null });
-                }}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
-              >
-                {previewRows.length > 0 ? 'Cancel' : 'Close'}
-              </button>
-
-              {previewRows.length > 0 && (
+            {previewRows.length > 0 && (
+              <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
                 <button
                   onClick={handleConfirmImport}
                   disabled={previewRows.filter((r) => r.selected && r.isValid).length === 0}
@@ -1678,8 +1667,8 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                   <Check className="w-4 h-4" />
                   Confirm & Import {previewRows.filter((r) => r.selected && r.isValid).length} Selected Student(s)
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}

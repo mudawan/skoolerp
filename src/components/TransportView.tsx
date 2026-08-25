@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
-import { calculateTransportFee, formatCurrency, getDaysInMonth, roundBusFareUp } from '../utils/feeMath';
+import { calculateTransportFee, formatCurrency, formatMonthName, getDaysInMonth, roundBusFareUp } from '../utils/feeMath';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
-import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Info, Check, ChevronsUpDown, ChevronDown, Upload, FileSpreadsheet, Download, GripVertical } from 'lucide-react';
+import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, AlertTriangle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Info, Check, ChevronsUpDown, ChevronDown, Upload, FileSpreadsheet, Download, GripVertical } from 'lucide-react';
 
 export const TransportView: React.FC = () => {
   const {
@@ -80,19 +80,13 @@ export const TransportView: React.FC = () => {
 
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [bulkPreviewRows, setBulkPreviewRows] = useState<BulkTransportPreviewRow[]>([]);
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'invalid' | 'duplicates' | 'updates'>('all');
   const [bulkImportStatus, setBulkImportStatus] = useState<{ message: string | null; error: string | null }>({
     message: null,
     error: null,
   });
   const [isBulkDragging, setIsBulkDragging] = useState(false);
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
-  const [csvTargetMonth, setCsvTargetMonth] = useState<string>(activeMonth);
-  const [csvDefaultDays, setCsvDefaultDays] = useState<number>(totalDaysInMonth);
-
-  useEffect(() => {
-    setCsvTargetMonth(activeMonth);
-    setCsvDefaultDays(globalMonthDays);
-  }, [activeMonth, globalMonthDays]);
 
   // Deletion Confirmation States
   const [busToDelete, setBusToDelete] = useState<TransportBus | null>(null);
@@ -472,8 +466,6 @@ export const TransportView: React.FC = () => {
     setBulkCsvFile(null);
     setBulkPreviewRows([]);
     setBulkImportStatus({ message: null, error: null });
-    setCsvTargetMonth(activeMonth);
-    setCsvDefaultDays(globalMonthDays);
     setShowBulkCsvModal(true);
   };
 
@@ -482,7 +474,7 @@ export const TransportView: React.FC = () => {
     const sampleBus = buses[0]?.busNumber || 'BUS-01';
     const sampleStop1 = stops[0]?.name || 'Saddar';
     const sampleStop2 = stops[1]?.name || stops[0]?.name || 'G-10 Markaz';
-    const targetMonth = csvTargetMonth || activeMonth;
+    const targetMonth = activeMonth;
     const sampleMonthDays = getDaysInMonth(targetMonth);
 
     const headers = ['RegNo', 'BusNumber', 'StopName', 'TripType', 'DaysAvailed', 'Discount'];
@@ -544,7 +536,7 @@ export const TransportView: React.FC = () => {
           return;
         }
 
-        const targetMonth = csvTargetMonth || activeMonth;
+        const targetMonth = activeMonth;
         const targetMonthDays = getDaysInMonth(targetMonth);
         const parsedRows: BulkTransportPreviewRow[] = [];
         const seenRegNos = new Set<string>();
@@ -643,8 +635,8 @@ export const TransportView: React.FC = () => {
             tripType = 'OneWay';
           }
 
-          // 5. Days Availed
-          let daysCharged = csvDefaultDays;
+          // 5. Days Availed (assume default active days full month unless specified in CSV)
+          let daysCharged = targetMonthDays;
           if (rawDays.trim()) {
             const numDays = parseInt(rawDays.trim(), 10);
             if (!isNaN(numDays)) {
@@ -800,7 +792,7 @@ export const TransportView: React.FC = () => {
       return;
     }
 
-    const targetMonth = csvTargetMonth || activeMonth;
+    const targetMonth = activeMonth;
     const assignmentsToSave = validSelected.map((r) => ({
       ...(r.existingAsgn ? { id: r.existingAsgn.id } : {}),
       studentId: r.student!.id,
@@ -2685,422 +2677,426 @@ export const TransportView: React.FC = () => {
 
       {/* Bulk Transport Assignments CSV Import Modal */}
       {showBulkCsvModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-fadeIn">
-          <div className={`bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden transition-all duration-200 my-8 w-full ${
-            bulkPreviewRows.length > 0 ? 'max-w-5xl' : 'max-w-xl'
-          }`}>
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div
+            className={`bg-white rounded-2xl ${
+              bulkPreviewRows.length > 0 ? 'max-w-5xl' : 'max-w-md'
+            } w-full p-6 shadow-2xl space-y-5 transition-all max-h-[90vh] flex flex-col`}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-50/80 border-b border-slate-200">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-teal-100 flex items-center justify-center text-teal-700">
-                  <FileSpreadsheet className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-sm md:text-base">
-                    Import Student Transport Assignments via CSV
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Bulk assign fleet buses, bus stop fares, and active days for target month <strong className="text-teal-700 font-bold">{csvTargetMonth || activeMonth}</strong>
-                  </p>
-                </div>
-              </div>
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Upload className="w-5 h-5 text-teal-600" />
+                {bulkPreviewRows.length > 0
+                  ? 'Preview & Verify Transport Assignments'
+                  : 'Import Transport Assignments from CSV'}
+              </h3>
               <button
                 onClick={() => {
                   setShowBulkCsvModal(false);
                   handleClearBulkCsv();
                 }}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-200/60 transition cursor-pointer"
-                title="Close"
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-5">
-              {/* Feedback messages */}
-              {bulkImportStatus.error && (
-                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-800 animate-fadeIn">
-                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">{bulkImportStatus.error}</div>
-                </div>
-              )}
+            {bulkPreviewRows.length === 0 ? (
+              <div className="space-y-4 text-xs text-slate-600">
+                <p>
+                  Upload a CSV file with student transport assignments for <strong>{formatMonthName(activeMonth)}</strong>. First row must contain column headers.
+                </p>
 
-              {bulkImportStatus.message && (
-                <div className="p-3.5 rounded-xl bg-teal-50 border border-teal-200 flex items-start gap-2.5 text-xs text-teal-800 animate-fadeIn">
-                  <CheckCircle className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-                  <div className="flex-1">{bulkImportStatus.message}</div>
-                </div>
-              )}
-
-              {/* State 1: Upload Dropzone & Setup */}
-              {bulkPreviewRows.length === 0 ? (
-                <div className="space-y-4">
-                  {/* Target Month & Default Active Days Settings */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs">
-                    <div>
-                      <label className="block text-slate-600 font-bold mb-1">
-                        Target Fee Month
-                      </label>
-                      <input
-                        type="month"
-                        value={csvTargetMonth}
-                        onChange={(e) => {
-                          setCsvTargetMonth(e.target.value);
-                          const days = getDaysInMonth(e.target.value);
-                          setCsvDefaultDays(days);
-                        }}
-                        className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-slate-800 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-600 font-bold mb-1">
-                        Default Active Days (if omitted in CSV)
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min="0"
-                          max={getDaysInMonth(csvTargetMonth)}
-                          value={csvDefaultDays}
-                          onChange={(e) => setCsvDefaultDays(Number(e.target.value) || 0)}
-                          className="w-20 bg-white border border-slate-300 rounded-xl px-3 py-1.5 font-bold text-center text-slate-800 text-xs focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                        />
-                        <span className="text-slate-500 text-[11px]">
-                          / {getDaysInMonth(csvTargetMonth)} days max
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Drag & Drop File Zone */}
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setIsBulkDragging(true);
-                    }}
-                    onDragLeave={() => setIsBulkDragging(false)}
-                    onDrop={handleBulkCsvDrop}
-                    onClick={() => bulkFileInputRef.current?.click()}
-                    className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-150 ${
-                      isBulkDragging
-                        ? 'border-teal-500 bg-teal-50/60 scale-[1.01]'
-                        : 'border-slate-300 hover:border-teal-400 bg-slate-50/50 hover:bg-teal-50/20'
-                    }`}
-                  >
-                    <input
-                      ref={bulkFileInputRef}
-                      type="file"
-                      accept=".csv,text/csv"
-                      onChange={handleBulkCsvFileInputChange}
-                      className="hidden"
-                    />
-                    <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center mx-auto mb-3 border border-teal-100 shadow-2xs">
-                      <Upload className="w-6 h-6" />
-                    </div>
-                    <h4 className="font-bold text-slate-900 text-sm">
-                      Click to browse or drag & drop CSV file
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                      Upload your transport assignments spreadsheet with student registration numbers, buses, and stops.
-                    </p>
-                  </div>
-
-                  {/* Sample Format & Template Download */}
-                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-700">Supported CSV Columns:</span>
-                      <button
-                        type="button"
-                        onClick={handleDownloadSampleTransportCsv}
-                        className="flex items-center gap-1 text-teal-700 hover:text-teal-800 font-bold hover:underline cursor-pointer text-xs"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download Sample CSV</span>
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-[11px]">
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-teal-700">RegNo *</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">e.g. REG-1001</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-slate-800">BusNumber</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">e.g. BUS-01</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-slate-800">StopName</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">e.g. Saddar</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-slate-800">TripType</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">RoundTrip / OneWay</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-slate-800">DaysAvailed</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">e.g. 31 or 22</p>
-                      </div>
-                      <div className="bg-white p-2 rounded-lg border border-slate-200">
-                        <span className="font-bold text-slate-800">Discount</span>
-                        <p className="text-[10px] text-slate-500 font-sans mt-0.5">e.g. 0 or 200</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* State 2: Verification Preview Table */
-                <div className="space-y-4">
-                  {/* Summary Metric Cards */}
-                  {(() => {
-                    const validSelected = bulkPreviewRows.filter(
-                      (r) => r.selected && r.isValid && !r.isDuplicateInCsv
-                    );
-                    const totalEstFee = validSelected.reduce((sum, r) => sum + r.effectiveFare, 0);
-                    const updateCount = validSelected.filter((r) => !!r.existingAsgn).length;
-                    const newCount = validSelected.filter((r) => !r.existingAsgn).length;
-                    const errorCount = bulkPreviewRows.filter((r) => !r.isValid || r.isDuplicateInCsv).length;
-
-                    return (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-                          <span className="text-slate-500">Total Rows</span>
-                          <p className="text-lg font-bold text-slate-900 mt-0.5">
-                            {bulkPreviewRows.length}
-                          </p>
-                        </div>
-                        <div className="bg-teal-50 p-3 rounded-xl border border-teal-200 text-xs">
-                          <span className="text-teal-700 font-bold">Ready to Assign</span>
-                          <p className="text-lg font-bold text-teal-900 mt-0.5">
-                            {validSelected.length}{' '}
-                            <span className="text-xs font-normal text-teal-700">
-                              ({newCount} new, {updateCount} updates)
-                            </span>
-                          </p>
-                        </div>
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-                          <span className="text-slate-500">Est. Transport Revenue</span>
-                          <p className="text-lg font-bold text-slate-900 mt-0.5">
-                            {formatCurrency(totalEstFee)}
-                          </p>
-                        </div>
-                        <div className={`p-3 rounded-xl border text-xs ${
-                          errorCount > 0
-                            ? 'bg-rose-50 border-rose-200 text-rose-900'
-                            : 'bg-slate-50 border-slate-200 text-slate-500'
-                        }`}>
-                          <span className="font-bold">Errors / Unmatched</span>
-                          <p className="text-lg font-bold mt-0.5">
-                            {errorCount}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Actions Bar above Table */}
-                  <div className="flex items-center justify-between text-xs pt-1">
-                    <button
-                      type="button"
-                      onClick={handleToggleSelectAllValid}
-                      className="flex items-center gap-1.5 font-bold text-teal-700 hover:text-teal-800 cursor-pointer"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Toggle Select All Valid</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleClearBulkCsv}
-                      className="text-slate-500 hover:text-rose-600 font-semibold cursor-pointer transition"
-                    >
-                      Clear & Upload Another CSV
-                    </button>
-                  </div>
-
-                  {/* Preview Table */}
-                  <div className="max-h-[380px] overflow-y-auto border border-slate-200 rounded-2xl overflow-x-auto shadow-2xs">
-                    <table className="w-full text-left text-xs min-w-[750px]">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px] sticky top-0 z-10 whitespace-nowrap">
-                        <tr>
-                          <th className="p-3 w-10 text-center">
-                            <input
-                              type="checkbox"
-                              checked={
-                                bulkPreviewRows.filter((r) => r.isValid && !r.isDuplicateInCsv).length > 0 &&
-                                bulkPreviewRows.filter((r) => r.isValid && !r.isDuplicateInCsv).every((r) => r.selected)
-                              }
-                              onChange={handleToggleSelectAllValid}
-                              className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
-                            />
-                          </th>
-                          <th className="p-3">Student</th>
-                          <th className="p-3">Class</th>
-                          <th className="p-3">Bus</th>
-                          <th className="p-3">Bus Stop</th>
-                          <th className="p-3 text-center">Trip</th>
-                          <th className="p-3 text-center">Days</th>
-                          <th className="p-3 text-right">Discount</th>
-                          <th className="p-3 text-right">Net Fare</th>
-                          <th className="p-3 text-center">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {bulkPreviewRows.map((row) => {
-                          const isRowValid = row.isValid && !row.isDuplicateInCsv;
-                          return (
-                            <tr
-                              key={row.id}
-                              className={`transition-colors ${
-                                !isRowValid
-                                  ? 'bg-rose-50/40 text-slate-400'
-                                  : row.selected
-                                  ? 'bg-teal-50/40 hover:bg-teal-50/70'
-                                  : 'hover:bg-slate-50'
-                              }`}
-                            >
-                              <td className="p-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  disabled={!isRowValid}
-                                  checked={row.selected && isRowValid}
-                                  onChange={() => handleToggleSelectRow(row.id)}
-                                  className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30"
-                                />
-                              </td>
-
-                              <td className="p-3">
-                                {row.student ? (
-                                  <div>
-                                    <span className="font-bold text-slate-900 block">
-                                      {row.student.name}
-                                    </span>
-                                    <span className="font-mono text-[10px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
-                                      {row.student.regNo}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <div>
-                                    <span className="font-mono font-bold text-rose-700">
-                                      {row.regNo}
-                                    </span>
-                                    <span className="text-[10px] text-rose-500 block">Unmatched</span>
-                                  </div>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-slate-600">
-                                {row.studentClass?.name || '—'}
-                              </td>
-
-                              <td className="p-3">
-                                {row.bus ? (
-                                  <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                    {row.bus.busNumber}
-                                  </span>
-                                ) : (
-                                  <span className="text-rose-600 italic text-[11px]">
-                                    {row.busInput || 'None'}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="p-3">
-                                {row.stop ? (
-                                  <div>
-                                    <span className="font-bold text-slate-900 block">
-                                      {row.stop.name}
-                                    </span>
-                                    <span className="text-[10px] text-slate-500">
-                                      Base: {formatCurrency(row.stop.monthlyFare)}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <span className="text-rose-600 italic text-[11px]">
-                                    {row.stopInput || 'None'}
-                                  </span>
-                                )}
-                              </td>
-
-                              <td className="p-3 text-center">
-                                <span className={`px-2 py-0.5 rounded-md font-semibold text-[10px] ${
-                                  row.tripType === 'RoundTrip'
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                }`}>
-                                  {row.tripType === 'RoundTrip' ? 'Round' : 'One Way'}
-                                </span>
-                              </td>
-
-                              <td className="p-3 text-center font-bold text-slate-700">
-                                {row.daysCharged}d
-                              </td>
-
-                              <td className="p-3 text-right font-mono text-slate-600">
-                                {row.discount > 0 ? formatCurrency(row.discount) : '—'}
-                              </td>
-
-                              <td className="p-3 text-right font-mono font-bold text-teal-700 text-sm">
-                                {isRowValid ? formatCurrency(row.effectiveFare) : '—'}
-                              </td>
-
-                              <td className="p-3 text-center">
-                                {!isRowValid ? (
-                                  <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-rose-100 text-rose-800 border border-rose-200 whitespace-nowrap">
-                                    {row.errorMsg || 'Invalid'}
-                                  </span>
-                                ) : row.existingAsgn ? (
-                                  <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-amber-50 text-amber-800 border border-amber-200 whitespace-nowrap">
-                                    Update Existing
-                                  </span>
-                                ) : (
-                                  <span className="px-2 py-0.5 rounded-md font-bold text-[10px] bg-teal-50 text-teal-800 border border-teal-200 whitespace-nowrap">
-                                    New Assignment
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowBulkCsvModal(false);
-                  handleClearBulkCsv();
-                }}
-                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-100 text-xs font-bold transition cursor-pointer"
-              >
-                Cancel
-              </button>
-
-              {bulkPreviewRows.length > 0 && (
                 <button
                   type="button"
-                  onClick={handleCommitBulkImport}
-                  disabled={
-                    bulkPreviewRows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length === 0
-                  }
-                  className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-2"
+                  onClick={handleDownloadSampleTransportCsv}
+                  className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
                 >
-                  <Check className="w-4 h-4" />
-                  <span>
-                    Confirm & Save {
-                      bulkPreviewRows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length
-                    } Assignment(s)
-                  </span>
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Download Sample Transport CSV Format</span>
                 </button>
-              )}
-            </div>
+
+                {/* Status alerts */}
+                {bulkImportStatus.message && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-medium flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{bulkImportStatus.message}</span>
+                  </div>
+                )}
+                {bulkImportStatus.error && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 font-medium flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{bulkImportStatus.error}</span>
+                  </div>
+                )}
+
+                {/* File Dropzone & Click Target */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsBulkDragging(true);
+                  }}
+                  onDragLeave={() => setIsBulkDragging(false)}
+                  onDrop={handleBulkCsvDrop}
+                  onClick={() => bulkFileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-xl p-6 text-center transition cursor-pointer group ${
+                    isBulkDragging
+                      ? 'border-teal-500 bg-teal-50/60'
+                      : 'border-teal-300 hover:border-teal-500 bg-teal-50/20 hover:bg-teal-50/60'
+                  }`}
+                >
+                  <Upload className="w-8 h-8 text-teal-600 group-hover:scale-110 transition mx-auto mb-2" />
+                  <span className="font-bold text-slate-800 block text-sm">
+                    Click to select CSV File or drag & drop
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-1">
+                    Supports standard comma-separated .csv files
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      bulkFileInputRef.current?.click();
+                    }}
+                    className="mt-3 inline-flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-1.5 rounded-lg text-xs transition cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Browse CSV File
+                  </button>
+                  <input
+                    ref={bulkFileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={handleBulkCsvFileInputChange}
+                  />
+                </div>
+              </div>
+            ) : (
+              /* Preview View with Interactive Table & Filters */
+              <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+                {/* Metric Summary Bar */}
+                {(() => {
+                  const total = bulkPreviewRows.length;
+                  const validRows = bulkPreviewRows.filter((r) => r.isValid && !r.isDuplicateInCsv);
+                  const selectedCount = validRows.filter((r) => r.selected).length;
+                  const updateCount = validRows.filter((r) => !!r.existingAsgn).length;
+                  const duplicateCount = bulkPreviewRows.filter((r) => r.isDuplicateInCsv).length;
+                  const invalidCount = bulkPreviewRows.filter((r) => !r.isValid && !r.isDuplicateInCsv).length;
+                  const totalIssues = duplicateCount + invalidCount;
+                  const totalEstRevenue = validRows.filter((r) => r.selected).reduce((sum, r) => sum + r.effectiveFare, 0);
+
+                  const filteredRows = bulkPreviewRows.filter((r) => {
+                    if (previewFilter === 'valid') return r.isValid && !r.isDuplicateInCsv;
+                    if (previewFilter === 'invalid') return !r.isValid || r.isDuplicateInCsv;
+                    if (previewFilter === 'duplicates') return r.isDuplicateInCsv;
+                    if (previewFilter === 'updates') return r.isValid && !r.isDuplicateInCsv && !!r.existingAsgn;
+                    return true;
+                  });
+
+                  return (
+                    <>
+                      {/* Compact Status & Action Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 px-3 py-2 rounded-xl border border-slate-200 text-xs shrink-0">
+                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                          <div className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                            <span className="text-slate-500 font-semibold text-[11px]">Total Rows:</span>
+                            <span className="font-bold text-slate-900">{total}</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80 shadow-2xs">
+                            <span className="text-emerald-700 font-semibold text-[11px]">Selected:</span>
+                            <span className="font-bold text-emerald-800">{selectedCount}</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 shadow-2xs">
+                            <span className="text-teal-700 font-semibold text-[11px]">Est. Revenue:</span>
+                            <span className="font-bold text-teal-800">{formatCurrency(totalEstRevenue)}</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-2xs">
+                            <span className="text-amber-700 font-semibold text-[11px]">Updates:</span>
+                            <span className="font-bold text-amber-800">{updateCount}</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
+                            <span className="text-rose-700 font-semibold text-[11px]">Duplicates:</span>
+                            <span className="font-bold text-rose-800">{duplicateCount}</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
+                            <span className="text-rose-700 font-semibold text-[11px]">Invalid:</span>
+                            <span className="font-bold text-rose-800">{invalidCount}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={handleToggleSelectAllValid}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-semibold text-xs shadow-2xs transition cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5 text-teal-600" />
+                            <span>Toggle Select All</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClearBulkCsv}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 rounded-lg font-semibold text-xs transition cursor-pointer"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Upload New File</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Filter Selector Tabs */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs shrink-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFilter('all')}
+                            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
+                              previewFilter === 'all'
+                                ? 'bg-slate-900 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            All ({total})
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFilter('valid')}
+                            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
+                              previewFilter === 'valid'
+                                ? 'bg-emerald-700 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            Valid Only ({validRows.length})
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFilter('updates')}
+                            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
+                              previewFilter === 'updates'
+                                ? 'bg-amber-600 text-white shadow-xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            Updates ({updateCount})
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFilter('invalid')}
+                            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
+                              previewFilter === 'invalid'
+                                ? 'bg-rose-700 text-white shadow-xs'
+                                : totalIssues > 0
+                                ? 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
+                                : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                            }`}
+                          >
+                            Issues ({totalIssues})
+                          </button>
+                        </div>
+
+                        {previewFilter !== 'all' && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewFilter('all')}
+                            className="text-xs text-teal-700 hover:text-teal-900 font-bold underline cursor-pointer"
+                          >
+                            Reset Filter (Show All)
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Error Alert */}
+                      {bulkImportStatus.error && (
+                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-medium flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>{bulkImportStatus.error}</span>
+                        </div>
+                      )}
+
+                      {/* Interactive Preview Table Container */}
+                      <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] flex-1">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
+                            <tr>
+                              <th className="p-3 w-10 text-center">Import</th>
+                              <th className="p-3">Student (Reg #)</th>
+                              <th className="p-3">Class</th>
+                              <th className="p-3">Bus & Stop</th>
+                              <th className="p-3 text-center">Trip</th>
+                              <th className="p-3 text-center">Days</th>
+                              <th className="p-3 text-right">Discount</th>
+                              <th className="p-3 text-right">Net Fare</th>
+                              <th className="p-3">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={9} className="p-8 text-center bg-white text-slate-500">
+                                  <div className="flex flex-col items-center justify-center gap-2">
+                                    <AlertCircle className="w-6 h-6 text-slate-400" />
+                                    <p className="font-semibold text-slate-700 text-sm">
+                                      No records match the current filter: <span className="font-bold capitalize">{previewFilter}</span>
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPreviewFilter('all')}
+                                      className="mt-1 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition cursor-pointer"
+                                    >
+                                      View All ({total}) Records
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredRows.map((row) => {
+                                const isRowValid = row.isValid && !row.isDuplicateInCsv;
+                                return (
+                                  <tr
+                                    key={row.id}
+                                    className={`hover:bg-slate-50/80 transition ${
+                                      row.isDuplicateInCsv
+                                        ? 'bg-rose-50/60 text-slate-700'
+                                        : !row.isValid
+                                        ? 'bg-rose-50/40'
+                                        : row.existingAsgn
+                                        ? 'bg-amber-50/40'
+                                        : row.selected
+                                        ? 'bg-teal-50/20'
+                                        : ''
+                                    }`}
+                                  >
+                                    <td className="p-3 text-center">
+                                      <input
+                                        type="checkbox"
+                                        disabled={!isRowValid}
+                                        checked={row.selected && isRowValid}
+                                        onChange={() => handleToggleSelectRow(row.id)}
+                                        className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                      />
+                                    </td>
+
+                                    <td className="p-3">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-mono font-bold bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded border border-slate-200">
+                                          {row.regNo}
+                                        </span>
+                                        <span className="font-bold text-slate-900">
+                                          {row.student?.name || <span className="text-rose-500 italic">Unmatched</span>}
+                                        </span>
+                                      </div>
+                                    </td>
+
+                                    <td className="p-3 text-slate-600">
+                                      {row.studentClass?.name || <span className="text-slate-400">—</span>}
+                                    </td>
+
+                                    <td className="p-3">
+                                      <div className="flex items-center gap-1.5">
+                                        {row.bus ? (
+                                          <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                            {row.bus.busNumber}
+                                          </span>
+                                        ) : (
+                                          <span className="text-rose-600 italic text-[11px]">{row.busInput || 'No Bus'}</span>
+                                        )}
+                                        <span className="font-bold text-slate-800">
+                                          {row.stop?.name || <span className="text-rose-600 italic text-[11px]">{row.stopInput || 'No Stop'}</span>}
+                                        </span>
+                                      </div>
+                                      {row.stop && (
+                                        <span className="text-[10px] text-slate-500 block mt-0.5">
+                                          Base: {formatCurrency(row.stop.monthlyFare)}
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    <td className="p-3 text-center">
+                                      <span
+                                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                          row.tripType === 'RoundTrip'
+                                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        }`}
+                                      >
+                                        {row.tripType === 'RoundTrip' ? 'Round' : 'One Way'}
+                                      </span>
+                                    </td>
+
+                                    <td className="p-3 text-center font-bold text-slate-700 font-mono">
+                                      {row.daysCharged}d
+                                    </td>
+
+                                    <td className="p-3 text-right font-mono text-slate-600">
+                                      {row.discount > 0 ? formatCurrency(row.discount) : '—'}
+                                    </td>
+
+                                    <td className="p-3 text-right font-mono font-bold text-teal-700">
+                                      {isRowValid ? formatCurrency(row.effectiveFare) : '—'}
+                                    </td>
+
+                                    <td className="p-3">
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                          row.isDuplicateInCsv
+                                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                            : !row.isValid
+                                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                            : row.existingAsgn
+                                            ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                        }`}
+                                      >
+                                        {!row.isValid && <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />}
+                                        {row.existingAsgn && !row.isDuplicateInCsv && row.isValid && (
+                                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                        )}
+                                        {row.errorMsg
+                                          ? row.errorMsg
+                                          : row.existingAsgn
+                                          ? 'Updates Existing'
+                                          : 'New Assignment'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {/* Modal Footer Controls */}
+                {bulkPreviewRows.length > 0 && (
+                  <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleCommitBulkImport}
+                      disabled={
+                        bulkPreviewRows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length === 0
+                      }
+                      className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>
+                        Confirm & Save {
+                          bulkPreviewRows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length
+                        } Selected Assignment(s)
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

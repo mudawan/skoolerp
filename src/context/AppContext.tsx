@@ -2081,22 +2081,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Find voucher by voucherId, studentId, or by matching student's regNo in target month
       let voucher: FeeVoucher | undefined;
       let matchedStudent = students.find((s) => s.id === row.studentId);
+      let targetVoucherRaw: FeeVoucher | undefined;
 
       if (row.voucherId) {
-        const byId = vouchers.find(
-          (v) => v.id === row.voucherId && v.status !== 'Reversed' && v.status !== 'Carried'
-        );
-        voucher = byId;
-        if (byId && !matchedStudent) {
-          matchedStudent = students.find((s) => s.id === byId.studentId);
+        targetVoucherRaw = vouchers.find((v) => v.id === row.voucherId);
+        if (targetVoucherRaw && !matchedStudent) {
+          matchedStudent = students.find((s) => s.id === targetVoucherRaw!.studentId);
         }
       } else if (row.studentId) {
-        voucher = vouchers.find(
-          (v) =>
-            v.studentId === row.studentId &&
-            v.month === month &&
-            v.status !== 'Reversed' &&
-            v.status !== 'Carried'
+        targetVoucherRaw = vouchers.find(
+          (v) => v.studentId === row.studentId && v.month === month
         );
       } else {
         const cleanReg = (row.regNo || row.identifier || '').trim().toLowerCase();
@@ -2108,39 +2102,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (matchedStudent) {
           const ms = matchedStudent;
-          voucher = vouchers.find(
-            (v) =>
-              v.studentId === ms.id &&
-              v.month === month &&
-              v.status !== 'Reversed' &&
-              v.status !== 'Carried'
+          targetVoucherRaw = vouchers.find(
+            (v) => v.studentId === ms.id && v.month === month
           );
         }
       }
 
+      if (targetVoucherRaw && targetVoucherRaw.status !== 'Reversed' && targetVoucherRaw.status !== 'Carried') {
+        voucher = targetVoucherRaw;
+      }
+
       if (!voucher) {
         const regDisplay = row.regNo || row.identifier || (matchedStudent ? matchedStudent.regNo : 'Unknown');
-        if (matchedStudent) {
-          const ms = matchedStudent;
-          const inactive = vouchers.find(
-            (v) =>
-              v.studentId === ms.id &&
-              v.month === month &&
-              (v.status === 'Carried' || v.status === 'Reversed')
-          );
-          if (inactive && inactive.status === 'Carried') {
+        if (targetVoucherRaw) {
+          if (targetVoucherRaw.status === 'Carried') {
+            const [cy, cm] = targetVoucherRaw.month.split('-').map(Number);
+            const nextMonth = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`;
             errors.push(
-              `Row ${idx + 1}: Skipped. Voucher ${inactive.voucherNo} was carried forward — its balance moved to the next month. Record this payment against the following month's voucher.`
+              `Row ${idx + 1} (${regDisplay}): Skipped. Voucher ${targetVoucherRaw.voucherNo} was carried forward. Its balance moved to the ${nextMonth} voucher — record this payment against that voucher instead.`
             );
-          } else if (inactive && inactive.status === 'Reversed') {
+          } else if (targetVoucherRaw.status === 'Reversed') {
             errors.push(
-              `Row ${idx + 1}: Skipped. Voucher ${inactive.voucherNo} is reversed and cannot accept payments.`
-            );
-          } else {
-            errors.push(
-              `Row ${idx + 1}: No active fee voucher found for student ${matchedStudent.name} (Reg # ${regDisplay}) in month ${month}.`
+              `Row ${idx + 1} (${regDisplay}): Skipped. Voucher ${targetVoucherRaw.voucherNo} is reversed and cannot accept payments.`
             );
           }
+        } else if (matchedStudent) {
+          errors.push(
+            `Row ${idx + 1}: No fee voucher found for student ${matchedStudent.name} (Reg # ${regDisplay}) in month ${month}.`
+          );
         } else {
           errors.push(
             `Row ${idx + 1}: No student found matching Reg # "${regDisplay}".`
