@@ -1,0 +1,6 @@
+{
+  "name": "Skooler Fee Management System",
+  "description": "Comprehensive school fee management system covering student/class/family records, monthly fee vouchers, bulk collections, defaulters, transport, and reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

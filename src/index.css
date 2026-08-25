@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@media print {
+  /* Hide application navigation, top headers, sidebars, buttons, toolbars, search bars, modals */
+  header,
+  nav,
+  aside,
+  #app-sidebar,
+  #app-header,
+  .no-print,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Reset body and outer containers */
+  html,
+  body,
+  #root {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    font-size: 11pt !important;
+  }
+
+  /* Expand main container to full width without offset margins */
+  main,
+  div[class*="md:ml-"],
+  div[class*="min-h-screen"],
+  .flex-1 {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* Ensure card borders and table borders are crisp */
+  .border,
+  .border-b,
+  .border-t,
+  .border-r,
+  .border-l {
+    border-color: #cbd5e1 !important;
+  }
+
+  /* Prevent awkward page cuts in table rows and cards */
+  tr,
+  td,
+  th,
+  table,
+  tbody,
+  thead,
+  .page-break-inside-avoid,
+  .break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Print exact color adjustments */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+}
