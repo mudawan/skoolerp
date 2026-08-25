@@ -49,35 +49,39 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   const doc3FileInputRef = useRef<HTMLInputElement>(null);
 
   // Compute the last used ID and next suggested ID
+  type ParsedRegNo = { prefix: string; num: number; width: number; padded: boolean };
+  const parseRegNo = (regNo: string): ParsedRegNo | null => {
+    const m = regNo.trim().match(/^(.*?)(\d+)$/);
+    if (!m) return null;
+    return {
+      prefix: m[1],
+      num: parseInt(m[2], 10),
+      width: m[2].length,
+      padded: m[2].length > 1 && m[2][0] === '0',
+    };
+  };
+
   const lastUsedRegNo = useMemo(() => {
     if (!students || students.length === 0) return 'None';
-    const sorted = [...students].sort((a, b) => {
-      const numA = parseInt(a.regNo.replace(/\D/g, ''), 10);
-      const numB = parseInt(b.regNo.replace(/\D/g, ''), 10);
-      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
-        return numA - numB;
+    let best: { regNo: string; date: string; idx: number } | null = null;
+    for (const [idx, s] of students.entries()) {
+      const date = s.createdDate || '';
+      if (!best || date > best.date || (date === best.date && idx > best.idx)) {
+        best = { regNo: s.regNo, date, idx };
       }
-      return a.regNo.localeCompare(b.regNo, undefined, { numeric: true, sensitivity: 'base' });
-    });
-    return sorted[sorted.length - 1]?.regNo || 'None';
+    }
+    return best ? best.regNo : 'None';
   }, [students]);
 
   const computeNextRegNo = () => {
-    if (!students || students.length === 0) return 'REG-1001';
-    let maxNum = 1000;
-    let prefix = 'REG-';
-    students.forEach((s) => {
-      const match = s.regNo.match(/^([A-Za-z_-]+)(\d+)$/);
-      if (match) {
-        prefix = match[1];
-        const num = parseInt(match[2], 10);
-        if (num > maxNum) maxNum = num;
-      } else {
-        const onlyNum = parseInt(s.regNo.replace(/\D/g, ''), 10);
-        if (!isNaN(onlyNum) && onlyNum > maxNum) maxNum = onlyNum;
-      }
-    });
-    return `${prefix}${maxNum + 1}`;
+    let best: ParsedRegNo | null = null;
+    for (const s of students || []) {
+      const parsed = parseRegNo(s.regNo);
+      if (parsed && (!best || parsed.num > best.num)) best = parsed;
+    }
+    if (!best) return 'REG-1001';
+    const next = best.padded ? String(best.num + 1).padStart(best.width, '0') : String(best.num + 1);
+    return `${best.prefix}${next}`;
   };
 
   const [formData, setFormData] = useState({
@@ -93,7 +97,11 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       const admMonth = student?.admissionDate ? student.admissionDate.substring(0, 7) : currentMonth;
       return admMonth > currentMonth ? admMonth : currentMonth;
     })(),
-    classId: student?.classId || classes[0]?.id || '',
+    classId: student
+      ? classes.some((c) => c.id === student.classId)
+        ? student.classId
+        : ''
+      : classes[0]?.id || '',
     monthlyDiscount: student?.monthlyDiscount ?? 0,
     mobileNumber: student?.mobileNumber || '',
     notes: student?.notes || '',
@@ -123,6 +131,47 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   });
 
   const [formError, setFormError] = useState('');
+
+  // Live suggestion that adapts to what the user has typed so far.
+  const suggestedRegNo = useMemo(() => {
+    const t = (formData.regNo || '').trim();
+    if (!t) return computeNextRegNo();
+    let maxNum = -Infinity;
+    let width = 0;
+    let hasPrefixSeries = false;
+    let isExactExisting = false;
+    for (const s of students || []) {
+      const r = s.regNo?.trim() || '';
+      if (!r) continue;
+      if (r === t) {
+        isExactExisting = true;
+        continue;
+      }
+      if (!r.startsWith(t)) continue;
+      const rem = r.slice(t.length);
+      if (/^\d+$/.test(rem)) {
+        hasPrefixSeries = true;
+        const padded = rem.length > 1 && rem[0] === '0';
+        const n = parseInt(rem, 10);
+        if (n > maxNum) {
+          maxNum = n;
+          width = padded ? rem.length : 0;
+        }
+      }
+    }
+    if (hasPrefixSeries) {
+      const next = width ? String(maxNum + 1).padStart(width, '0') : String(maxNum + 1);
+      return `${t}${next}`;
+    }
+    const trail = t.match(/^(.*?)(\d+)$/);
+    if (trail) {
+      if (!isExactExisting) return t;
+      return `${trail[1]}${parseInt(trail[2], 10) + 1}`;
+    }
+    return `${t}1001`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.regNo, students]);
+
   const [isAutoPopulatedFamily, setIsAutoPopulatedFamily] = useState(false);
   const [matchedFamilyInfo, setMatchedFamilyInfo] = useState<{
     id: string;
@@ -212,8 +261,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       return;
     }
 
-    if (file.size > 3 * 1024 * 1024) {
-      setFormError('Image size exceeds 3MB limit. Please choose a smaller image.');
+    if (file.size > 500 * 1024) {
+      setFormError('Image size exceeds 500KB limit. Please choose a smaller image.');
       return;
     }
 
@@ -244,8 +293,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      setFormError('File size exceeds 10MB limit.');
+    if (file.size > 1024 * 1024) {
+      setFormError('File size exceeds 1MB limit.');
       return;
     }
 
@@ -465,7 +514,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                     Student Picture
                   </label>
                   <p className="text-[11px] text-slate-500">
-                    Upload image (PNG, JPG, WEBP up to 3MB) or enter image URL
+                    Upload image (PNG, JPG, WEBP up to 500KB) or enter image URL
                   </p>
                 </div>
 
@@ -539,16 +588,9 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
               {/* Reg # */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700">
-                    Reg # (Registration No) *
-                  </label>
-                  {!isEdit && (
-                    <span className="text-[10px] text-teal-700 font-semibold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
-                      Last used: {lastUsedRegNo}
-                    </span>
-                  )}
-                </div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Reg # *
+                </label>
                 <input
                   type="text"
                   required
@@ -564,6 +606,16 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                       : 'bg-white border border-slate-200 text-slate-900 focus:ring-2 focus:ring-teal-500/20'
                   }`}
                 />
+                {!isEdit && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="text-[10px] text-slate-600 font-semibold bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap">
+                      Last used: {lastUsedRegNo}
+                    </span>
+                    <span className="text-[10px] text-teal-700 font-semibold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 whitespace-nowrap truncate">
+                      Suggested: {suggestedRegNo}
+                    </span>
+                  </div>
+                )}
                 {isDuplicateRegNo && !isEdit && (
                   <p className="text-[11px] text-rose-600 font-semibold mt-1">
                     Duplicate ID! Already in use.
@@ -618,6 +670,9 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   onChange={(e) => setFormData({ ...formData, classId: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-semibold text-slate-900"
                 >
+                  <option value="" disabled>
+                    -- Select Class --
+                  </option>
                   {classes.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name} ({formatCurrency(c.monthlyFee)}/mo)
@@ -906,7 +961,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 Documents Upload
               </h4>
               <span className="text-[11px] font-medium text-slate-500">
-                PDF, JPG, PNG up to 10MB
+                PDF, JPG, PNG up to 1MB
               </span>
             </div>
 

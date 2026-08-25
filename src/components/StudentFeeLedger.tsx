@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { downloadCsv } from '../utils/csv';
 import { exportStudentFeeLedgerPdf, printStudentFeeLedgerPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
 import { PrintVoucherModal } from './PrintVoucherModal';
@@ -317,17 +318,11 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       '""',
     ]);
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-
     const cleanReg = currentStudent.regNo.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
-    link.setAttribute('download', `Fee_Collections_${cleanReg}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(
+      `Fee_Collections_${cleanReg}_${new Date().toISOString().split('T')[0]}.csv`,
+      [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
+    );
   };
 
   // 3. Export PDF
@@ -949,7 +944,9 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                               </button>
 
                               {/* Quick Collect Deposit (if allowed) */}
-                              {hasPermission('vouchers:edit') && (
+                              {hasPermission('vouchers:edit') &&
+                                entry.voucher.status !== 'Carried' &&
+                                entry.voucher.status !== 'Reversed' && (
                                 <button
                                   onClick={() => handleOpenCollectModal(entry.voucher)}
                                   className={`px-2 py-1 rounded-lg font-bold text-[11px] shadow-2xs transition flex items-center gap-1 cursor-pointer ${

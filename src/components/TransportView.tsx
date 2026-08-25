@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
 import { calculateTransportFee, formatCurrency, getDaysInMonth, roundBusFareUp } from '../utils/feeMath';
+import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Info, Check, ChevronsUpDown, ChevronDown, Upload, FileSpreadsheet, Download, GripVertical } from 'lucide-react';
@@ -491,14 +492,10 @@ export const TransportView: React.FC = () => {
       [sampleStudents[2]?.regNo || 'REG-1003', sampleBus, sampleStop1, 'RoundTrip', String(Math.min(22, sampleMonthDays)), '0'],
     ];
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `sample_transport_assignments_${targetMonth}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCsv(
+      `sample_transport_assignments_${targetMonth}.csv`,
+      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
+    );
   };
 
   const processTransportCsvFile = (file: File) => {
@@ -547,25 +544,6 @@ export const TransportView: React.FC = () => {
           return;
         }
 
-        const parseCsvLine = (line: string): string[] => {
-          const result: string[] = [];
-          let insideQuotes = false;
-          let current = '';
-          for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-              insideQuotes = !insideQuotes;
-            } else if (char === ',' && !insideQuotes) {
-              result.push(current.trim());
-              current = '';
-            } else {
-              current += char;
-            }
-          }
-          result.push(current.trim());
-          return result.map((s) => s.replace(/^["']|["']$/g, '').trim());
-        };
-
         const targetMonth = csvTargetMonth || activeMonth;
         const targetMonthDays = getDaysInMonth(targetMonth);
         const parsedRows: BulkTransportPreviewRow[] = [];
@@ -599,39 +577,64 @@ export const TransportView: React.FC = () => {
           });
           const studentClass = student ? classes.find((c) => c.id === student.classId) : undefined;
 
-          // 2. Match Bus (fallback to first active bus if omitted or matches)
+          // 2. Match Bus: exact Bus # first, then exact Route name. No substring guessing.
           let bus: TransportBus | undefined;
+          let busError: string | undefined;
           if (rawBus.trim()) {
             const cleanBus = rawBus.trim().toLowerCase();
             const cleanBusAlpha = cleanBus.replace(/[^a-z0-9]/g, '');
-            bus = buses.find((b) => {
-              const bNum = b.busNumber.toLowerCase();
-              return (
-                bNum === cleanBus ||
-                bNum.replace(/[^a-z0-9]/g, '') === cleanBusAlpha ||
-                b.model.toLowerCase().includes(cleanBus) ||
-                b.routeName.toLowerCase().includes(cleanBus)
-              );
-            });
-          } else if (buses.length > 0) {
+            const byNumber = buses.filter(
+              (b) =>
+                b.busNumber.toLowerCase() === cleanBus ||
+                b.busNumber.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBusAlpha
+            );
+            const byRoute = buses.filter(
+              (b) =>
+                b.routeName.toLowerCase() === cleanBus ||
+                b.routeName.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanBusAlpha
+            );
+            const candidates = byNumber.length > 0 ? byNumber : byRoute;
+            if (candidates.length === 1) {
+              bus = candidates[0];
+            } else if (candidates.length > 1) {
+              busError = `Bus '${rawBus.trim()}' matches ${candidates.length} buses. Use the exact Bus #.`;
+            } else {
+              busError = `Bus '${rawBus.trim()}' not found (must exactly match a Bus # or Route name)`;
+            }
+          } else if (buses.length === 1) {
             bus = buses[0];
+          } else {
+            busError = `Bus is required (${buses.length} buses in fleet)`;
           }
 
-          // 3. Match Stop (fallback to first stop if omitted or matches)
+          // 3. Match Stop: exact Stop name first, then exact Area. No substring guessing.
           let stop: TransportStop | undefined;
+          let stopError: string | undefined;
           if (rawStop.trim()) {
             const cleanStop = rawStop.trim().toLowerCase();
             const cleanStopAlpha = cleanStop.replace(/[^a-z0-9]/g, '');
-            stop = stops.find((sp) => {
-              const spName = sp.name.toLowerCase();
-              return (
-                spName === cleanStop ||
-                spName.replace(/[^a-z0-9]/g, '') === cleanStopAlpha ||
-                sp.area.toLowerCase().includes(cleanStop)
-              );
-            });
-          } else if (stops.length > 0) {
+            const byName = stops.filter(
+              (sp) =>
+                sp.name.toLowerCase() === cleanStop ||
+                sp.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanStopAlpha
+            );
+            const byArea = stops.filter(
+              (sp) =>
+                sp.area.toLowerCase() === cleanStop ||
+                sp.area.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanStopAlpha
+            );
+            const candidates = byName.length > 0 ? byName : byArea;
+            if (candidates.length === 1) {
+              stop = candidates[0];
+            } else if (candidates.length > 1) {
+              stopError = `Stop '${rawStop.trim()}' matches ${candidates.length} stops. Use the exact stop name.`;
+            } else {
+              stopError = `Stop '${rawStop.trim()}' not found (must exactly match a Stop name or Area)`;
+            }
+          } else if (stops.length === 1) {
             stop = stops[0];
+          } else {
+            stopError = `Stop is required (${stops.length} stops defined)`;
           }
 
           // 4. Trip Type
@@ -681,10 +684,10 @@ export const TransportView: React.FC = () => {
             errorMsg = `Student is ${student.status}`;
           } else if (!bus) {
             isValid = false;
-            errorMsg = rawBus ? `Bus '${rawBus}' not found` : 'No fleet bus available';
+            errorMsg = busError || (rawBus ? `Bus '${rawBus}' not found` : 'No fleet bus available');
           } else if (!stop) {
             isValid = false;
-            errorMsg = rawStop ? `Stop '${rawStop}' not found` : 'No bus stop available';
+            errorMsg = stopError || (rawStop ? `Stop '${rawStop}' not found` : 'No bus stop available');
           } else if (isDuplicateInCsv) {
             isValid = false;
             errorMsg = 'Duplicate Reg # in CSV';
@@ -3106,7 +3109,7 @@ export const TransportView: React.FC = () => {
       {(() => {
         const assignedStudents = busToDelete
           ? transportAssignments.filter(
-              (a) => a.busId === busToDelete.id && a.month === activeMonth && students.some((s) => s.id === a.studentId)
+              (a) => a.busId === busToDelete.id && a.month === activeMonth && students.some((s) => s.id === a.studentId && s.status === 'Active')
             )
           : [];
         const hasAssigned = assignedStudents.length > 0;
@@ -3156,7 +3159,7 @@ export const TransportView: React.FC = () => {
       {(() => {
         const assignedStudents = stopToDelete
           ? transportAssignments.filter(
-              (a) => a.stopId === stopToDelete.id && a.month === activeMonth && students.some((s) => s.id === a.studentId)
+              (a) => a.stopId === stopToDelete.id && a.month === activeMonth && students.some((s) => s.id === a.studentId && s.status === 'Active')
             )
           : [];
         const hasAssigned = assignedStudents.length > 0;

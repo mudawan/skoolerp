@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ConfirmModal } from './ConfirmModal';
+import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
 import {
   Building2,
   Calendar,
@@ -17,6 +18,8 @@ export const HeaderBar: React.FC = () => {
     currentUser,
     activeMonth,
     setActiveMonth,
+    beforeMonthChange,
+    vouchers,
     institute,
     resetToDemoData,
     logout,
@@ -25,18 +28,18 @@ export const HeaderBar: React.FC = () => {
 
   const [showResetModal, setShowResetModal] = useState(false);
 
-  const availableMonths = [
-    '2026-05',
-    '2026-06',
-    '2026-07',
-    '2026-08',
-    '2026-09',
-    '2026-10',
-    '2026-11',
-    '2026-12',
-  ];
+  const availableMonths = mergeWithDataMonths(
+    getMonthPickerWindow(),
+    vouchers.map((v) => v.month)
+  );
 
   const currentIdx = availableMonths.indexOf(activeMonth);
+
+  const requestMonthChange = (next: string) => {
+    if (next === activeMonth) return;
+    if (beforeMonthChange.current && beforeMonthChange.current(next)) return;
+    setActiveMonth(next);
+  };
 
   return (
     <header className="bg-slate-900 text-slate-100 border-b border-slate-800 sticky top-0 z-30 shadow-md print:hidden">
@@ -77,7 +80,7 @@ export const HeaderBar: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                if (currentIdx > 0) setActiveMonth(availableMonths[currentIdx - 1]);
+                if (currentIdx > 0) requestMonthChange(availableMonths[currentIdx - 1]);
               }}
               disabled={currentIdx <= 0}
               title="Previous Month"
@@ -88,7 +91,7 @@ export const HeaderBar: React.FC = () => {
 
             <select
               value={activeMonth}
-              onChange={(e) => setActiveMonth(e.target.value)}
+              onChange={(e) => requestMonthChange(e.target.value)}
               className="bg-transparent text-white font-extrabold focus:outline-none cursor-pointer tracking-wide"
             >
               {availableMonths.map((m) => {
@@ -106,7 +109,7 @@ export const HeaderBar: React.FC = () => {
               type="button"
               onClick={() => {
                 if (currentIdx >= 0 && currentIdx < availableMonths.length - 1) {
-                  setActiveMonth(availableMonths[currentIdx + 1]);
+                  requestMonthChange(availableMonths[currentIdx + 1]);
                 }
               }}
               disabled={currentIdx < 0 || currentIdx >= availableMonths.length - 1}

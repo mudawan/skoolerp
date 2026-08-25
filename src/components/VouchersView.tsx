@@ -1,23 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp, DownstreamConflict } from '../context/AppContext';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getNextMonthString, VoucherPreviewCalculation } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, VoucherPreviewCalculation } from '../utils/feeMath';
 import { PrintVoucherModal } from './PrintVoucherModal';
 import { ExportPdfModal } from './ExportPdfModal';
 import { StudentAvatar } from './StudentAvatar';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import { RecordsPerPageSelector } from './RecordsPerPageSelector';
-
-const AVAILABLE_MONTHS = [
-  '2026-05',
-  '2026-06',
-  '2026-07',
-  '2026-08',
-  '2026-09',
-  '2026-10',
-  '2026-11',
-  '2026-12',
-];
 import {
   AlertTriangle,
   ArrowDown,
@@ -96,6 +85,10 @@ export const VouchersView: React.FC = () => {
   // Generator Wizard State
   const [showGeneratorModal, setShowGeneratorModal] = useState(false);
   const [targetMonth, setTargetMonth] = useState(activeMonth);
+  const availableTargetMonths = useMemo(
+    () => mergeWithDataMonths(getMonthPickerWindow(), vouchers.map((v) => v.month)),
+    [vouchers]
+  );
   const [scope, setScope] = useState<'all' | 'class' | 'students'>('all');
   const [scopeClassId, setScopeClassId] = useState(classes[0]?.id || '');
   const [dueDateInput, setDueDateInput] = useState(`${activeMonth}-15`);
@@ -243,7 +236,7 @@ export const VouchersView: React.FC = () => {
 
   const handleOpenCarryModalForSelected = () => {
     const unpaidSelected = vouchers.filter(
-      (v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried'
+      (v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed'
     );
     if (unpaidSelected.length === 0) {
       showToast('No unpaid vouchers selected to carry forward.', 'error');
@@ -667,14 +660,14 @@ export const VouchersView: React.FC = () => {
           )}
 
           {selectedIds.length > 0 &&
-            vouchers.some((v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried') &&
+            vouchers.some((v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed') &&
             hasPermission('fees.generate') && (
               <button
                 onClick={handleOpenCarryModalForSelected}
                 className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
               >
                 <ArrowRight className="w-4 h-4" />
-                Carry Forward ({vouchers.filter((v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried').length})
+                Carry Forward ({vouchers.filter((v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed').length})
               </button>
             )}
 
@@ -893,8 +886,8 @@ export const VouchersView: React.FC = () => {
                   const student = students.find((s) => s.id === v.studentId);
                   const schoolClass = classes.find((c) => c.id === v.classId);
                   const isSelected = selectedIds.includes(v.id);
-                  const canCollect = v.status !== 'Carried' && hasPermission('fees.collect');
-                  const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && hasPermission('fees.generate');
+                  const canCollect = v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.collect');
+                  const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.generate');
                   const canDelete = hasPermission('fees.generate');
 
                   return (
@@ -1142,7 +1135,7 @@ export const VouchersView: React.FC = () => {
                   onChange={(e) => handleUpdatePreview(scope, scopeClassId, e.target.value)}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold"
                 >
-                  {AVAILABLE_MONTHS.map((m) => (
+                  {availableTargetMonths.map((m) => (
                     <option key={m} value={m}>
                       {formatMonthName(m)} ({m})
                     </option>
@@ -1481,8 +1474,7 @@ export const VouchersView: React.FC = () => {
                     Collect Payment &bull; {collectingVoucher.voucherNo}
                   </h3>
                   <p className="text-xs text-slate-500 font-mono">
-                    Student: {students.find((s) => s.id === collectingVoucher.studentId)?.name} &bull; {students.find((s) => s.id === collectingVoucher.studentId)?.regNo} &bull; {formatMonthName(collectingVoucher.month)}
-                  </p>
+                    Student: {students.find((s) => s.id === collectingVoucher.studentId)?.name} &bull; {students.find((s) => s.id === collectingVoucher.studentId)?.regNo} &bull; {formatMonthName(collectingVoucher.month)}                  </p>
                 </div>
               </div>
               <button

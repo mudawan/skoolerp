@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Family } from '../types';
+import { downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import {
@@ -319,18 +320,12 @@ export const FamiliesView: React.FC = () => {
     });
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI('data:text/csv;charset=utf-8,' + csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
+    downloadCsv(
       `Skooler_Families_${selectedFamilyIds.length > 0 ? 'Selected_' : ''}${new Date()
         .toISOString()
-        .slice(0, 10)}.csv`
+        .slice(0, 10)}.csv`,
+      csvContent
     );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
     showToast(`Exported ${targets.length} family record(s) to CSV.`, 'success');
   };
 

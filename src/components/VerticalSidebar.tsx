@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActiveTab } from '../types';
 import { useApp } from '../context/AppContext';
+import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
 import {
   AlertTriangle,
   BarChart3,
@@ -43,6 +44,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     currentUser,
     activeMonth,
     setActiveMonth,
+    beforeMonthChange,
     vouchers,
     getMonthClosureStatus,
     logout,
@@ -50,18 +52,20 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     setIsSidebarCollapsed,
   } = useApp();
 
-  const availableMonths = [
-    '2026-05',
-    '2026-06',
-    '2026-07',
-    '2026-08',
-    '2026-09',
-    '2026-10',
-    '2026-11',
-    '2026-12',
-  ];
+  const availableMonths = mergeWithDataMonths(
+    getMonthPickerWindow(),
+    vouchers.map((v) => v.month)
+  );
 
   const currentIdx = availableMonths.indexOf(activeMonth);
+
+  // Route month switches through the shared guard (SettingsView may veto while
+  // it has unsaved template drafts open).
+  const changeMonth = (next: string) => {
+    if (!next || next === activeMonth) return;
+    if (beforeMonthChange.current && beforeMonthChange.current(next)) return;
+    setActiveMonth(next);
+  };
 
   const monthDefaulters = vouchers.filter(
     (v) => v.month === activeMonth && (v.status === 'Issued' || v.status === 'Partial')
@@ -179,7 +183,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (currentIdx > 0) setActiveMonth(availableMonths[currentIdx - 1]);
+                  if (currentIdx > 0) changeMonth(availableMonths[currentIdx - 1]);
                 }}
                 disabled={currentIdx <= 0}
                 title="Previous Month"
@@ -190,7 +194,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
               <select
                 value={activeMonth}
-                onChange={(e) => setActiveMonth(e.target.value)}
+                onChange={(e) => changeMonth(e.target.value)}
                 className="bg-transparent text-teal-200 font-extrabold text-xs focus:outline-none cursor-pointer tracking-wide text-center"
               >
                 {availableMonths.map((m) => {
@@ -208,7 +212,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                 type="button"
                 onClick={() => {
                   if (currentIdx >= 0 && currentIdx < availableMonths.length - 1) {
-                    setActiveMonth(availableMonths[currentIdx + 1]);
+                    changeMonth(availableMonths[currentIdx + 1]);
                   }
                 }}
                 disabled={currentIdx < 0 || currentIdx >= availableMonths.length - 1}
@@ -224,7 +228,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             <button
               onClick={() => {
                 const next = (currentIdx + 1) % availableMonths.length;
-                setActiveMonth(availableMonths[next]);
+                changeMonth(availableMonths[next]);
               }}
               title={`Active Month: ${activeMonth} (Click to advance)`}
               className="p-2 rounded-xl bg-teal-950/70 text-teal-400 border border-teal-600/40 hover:bg-teal-900/60 transition cursor-pointer"

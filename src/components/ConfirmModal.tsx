@@ -7,6 +7,9 @@ export interface ConfirmModalProps {
   message: string | React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  tertiaryLabel?: string;
+  tertiaryVariant?: 'danger' | 'neutral';
+  onTertiary?: () => void;
   variant?: 'danger' | 'warning' | 'info';
   confirmDisabled?: boolean;
   onConfirm: () => void;
@@ -19,6 +22,9 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  tertiaryLabel,
+  tertiaryVariant = 'neutral',
+  onTertiary,
   variant = 'danger',
   confirmDisabled = false,
   onConfirm,
@@ -80,6 +86,19 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
         {/* Actions */}
         <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 pt-3.5">
+          {tertiaryLabel && onTertiary && (
+            <button
+              type="button"
+              onClick={onTertiary}
+              className={`px-4 py-2 font-bold rounded-xl text-xs transition cursor-pointer ${
+                tertiaryVariant === 'danger'
+                  ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                  : 'border border-slate-200 text-slate-700 hover:bg-slate-100'
+              }`}
+            >
+              {tertiaryLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}

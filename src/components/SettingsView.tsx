@@ -12,6 +12,7 @@ import {
   VoucherDeletionResolution,
 } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import { parseCsvLine, CSV_DELIMITERS_TEMPLATE } from '../utils/csv';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
 import {
@@ -101,6 +102,8 @@ export const SettingsView: React.FC = () => {
     students,
     classes,
     activeMonth,
+    setActiveMonth,
+    beforeMonthChange,
     showToast,
   } = useApp();
 
@@ -111,6 +114,7 @@ export const SettingsView: React.FC = () => {
   const [selectedLateFeeRate, setSelectedLateFeeRate] = useState<number>(defaultLateFeeRate);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [bankToDelete, setBankToDelete] = useState<BankAccount | null>(null);
 
   // Auto-close toast popup notifications after 3.5 seconds
   useEffect(() => {
@@ -208,9 +212,9 @@ export const SettingsView: React.FC = () => {
       setLogoError('Please select a valid image file (PNG, JPG, SVG, or WEBP).');
       return;
     }
-    // Max 3MB
-    if (file.size > 3 * 1024 * 1024) {
-      setLogoError('Logo image size exceeds 3MB. Please upload a smaller image.');
+    // Max 500KB
+    if (file.size > 500 * 1024) {
+      setLogoError('Logo image size exceeds 500KB. Please upload a smaller image.');
       return;
     }
 
@@ -389,10 +393,18 @@ export const SettingsView: React.FC = () => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  // Sync roster state if external templates change
+  // Sync roster state only when the GLOBAL template slice changes; class and
+  // student override saves must never clobber unsaved global edits.
+  const globalTemplatesKey = useMemo(
+    () => JSON.stringify(templates.filter((t) => !t.studentId && !t.classId)),
+    [templates]
+  );
+  const [globalBaselineKey, setGlobalBaselineKey] = useState('[]');
   React.useEffect(() => {
-    setRosterState(initializeRosterState());
-  }, [templates]);
+    const fresh = initializeRosterState();
+    setRosterState(fresh);
+    setGlobalBaselineKey(draftKeyOf(fresh));
+  }, [globalTemplatesKey]);
 
   const handleRosterLabelChange = (kind: ParticularKind, label: string) => {
     setRosterState((prev) =>
@@ -418,8 +430,7 @@ export const SettingsView: React.FC = () => {
     setDragOverIndex(null);
   };
 
-  const handleSaveAllParticulars = (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveGlobalRoster = () => {
     const updatedGlobalTemplates: FeeTemplate[] = rosterState.map((r, idx) => ({
       id: `tpl-${r.kind.toLowerCase()}-${idx + 1}`,
       kind: r.kind,
@@ -431,6 +442,11 @@ export const SettingsView: React.FC = () => {
     updateGlobalTemplatesList(updatedGlobalTemplates);
     setToastMessage('Fee Particulars roster order & labels saved successfully! All vouchers and PDF exports will follow this order.');
     setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleSaveAllParticulars = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveGlobalRoster();
   };
 
   // 3-Way Hierarchy Fee Template Overrides State: Global | Class | Student
@@ -497,10 +513,46 @@ export const SettingsView: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Draft-dirty bookkeeping: effects rebuild these editors only from their
+  // OWN template slice (never the whole store), and capture a baseline key at
+  // build time so unsaved edits can be detected before destructive switches.
+  const draftKeyOf = (
+    rows: Array<{ kind: ParticularKind; label: string; defaultAmount: number; isOverridden?: boolean }>
+  ) => JSON.stringify(rows.map((r) => [r.kind, r.label.trim(), Math.max(0, Number(r.defaultAmount) || 0), !!r.isOverridden]));
+
+  const classTemplatesKey = useMemo(
+    () =>
+      JSON.stringify(
+        templates.filter(
+          (t) => !t.studentId && t.classId === selectedClassId && (!t.month || t.month === activeMonth)
+        )
+      ),
+    [templates, selectedClassId, activeMonth]
+  );
+  const studentTemplatesKey = useMemo(
+    () =>
+      JSON.stringify([
+        templates.filter((t) => t.studentId === selectedStudentId && (!t.month || t.month === activeMonth)),
+        selectedStudent
+          ? templates.filter(
+              (t) =>
+                !t.studentId &&
+                t.classId === selectedStudent.classId &&
+                (!t.month || t.month === activeMonth)
+            )
+          : [],
+      ]),
+    [templates, selectedStudentId, selectedStudent, activeMonth]
+  );
+  const [classBaselineKey, setClassBaselineKey] = useState('[]');
+  const [studentBaselineKey, setStudentBaselineKey] = useState('[]');
+  const [rebuildNonce, setRebuildNonce] = useState(0);
+
   // Sync class roster state when selected class, templates, rosterState, or activeMonth changes
   useEffect(() => {
     if (!selectedClass) {
       setClassRosterState([]);
+      setClassBaselineKey('[]');
       return;
     }
 
@@ -530,12 +582,14 @@ export const SettingsView: React.FC = () => {
     });
 
     setClassRosterState(items);
-  }, [selectedClassId, selectedClass, templates, rosterState, activeMonth]);
+    setClassBaselineKey(draftKeyOf(items));
+  }, [selectedClassId, selectedClass, classTemplatesKey, rosterState, activeMonth, rebuildNonce]);
 
   // Sync student roster state when selected student, templates, rosterState, or activeMonth changes
   useEffect(() => {
     if (!selectedStudent) {
       setStudentRosterState([]);
+      setStudentBaselineKey('[]');
       return;
     }
 
@@ -574,7 +628,8 @@ export const SettingsView: React.FC = () => {
     });
 
     setStudentRosterState(items);
-  }, [selectedStudentId, templates, rosterState, activeMonth, classes, selectedStudent]);
+    setStudentBaselineKey(draftKeyOf(items));
+  }, [selectedStudentId, studentTemplatesKey, rosterState, activeMonth, classes, selectedStudent, rebuildNonce]);
 
   const handleStudentRosterLabelChange = (kind: ParticularKind, label: string) => {
     setStudentRosterState((prev) =>
@@ -604,8 +659,7 @@ export const SettingsView: React.FC = () => {
     );
   };
 
-  const handleSaveClassOverrides = (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveClassRoster = () => {
     if (!selectedClassId || !selectedClass) return;
 
     const itemsToSave = classRosterState.map((item, idx) => {
@@ -624,6 +678,11 @@ export const SettingsView: React.FC = () => {
     );
   };
 
+  const handleSaveClassOverrides = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveClassRoster();
+  };
+
   const handleClearClassOverrides = (classIdToClear: string) => {
     const classObj = classes.find((c) => c.id === classIdToClear);
     deleteClassTemplates(classIdToClear, activeMonth);
@@ -632,8 +691,7 @@ export const SettingsView: React.FC = () => {
     );
   };
 
-  const handleSaveStudentOverrides = (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveStudentRoster = () => {
     if (!selectedStudentId || !selectedStudent) return;
 
     const itemsToSave = studentRosterState.map((item, idx) => {
@@ -652,6 +710,11 @@ export const SettingsView: React.FC = () => {
     );
   };
 
+  const handleSaveStudentOverrides = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveStudentRoster();
+  };
+
   const handleClearStudentOverrides = (studentIdToClear: string) => {
     const studentObj = students.find((s) => s.id === studentIdToClear);
     deleteStudentTemplates(studentIdToClear, activeMonth);
@@ -659,6 +722,105 @@ export const SettingsView: React.FC = () => {
       `Custom individual overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee template for ${formatMonthName(activeMonth)}.`
     );
   };
+
+  // ---- Unsaved-edit guard: tier switches & month changes must never silently
+  // ---- discard in-progress drafts. Dirty state is derived by comparing the
+  // ---- live editor rows against the baseline captured when they were built.
+  const globalDirty = draftKeyOf(rosterState) !== globalBaselineKey;
+  const classDirty =
+    !!selectedClass &&
+    classRosterState.length > 0 &&
+    draftKeyOf(classRosterState) !== classBaselineKey;
+  const studentDirty =
+    !!selectedStudent &&
+    studentRosterState.length > 0 &&
+    draftKeyOf(studentRosterState) !== studentBaselineKey;
+
+  const scopeLabel =
+    templateScopeMode === 'global'
+      ? 'Global tier'
+      : templateScopeMode === 'class'
+        ? `Class Override tier (${selectedClass?.name || ''})`
+        : `Student Override tier (${selectedStudent?.name || selectedStudent?.regNo || ''})`;
+
+  const discardDirtyDrafts = () => {
+    if (templateScopeMode === 'global') {
+      const fresh = initializeRosterState();
+      setRosterState(fresh);
+      setGlobalBaselineKey(draftKeyOf(fresh));
+    } else {
+      if (templateScopeMode === 'class') setClassBaselineKey(draftKeyOf(classRosterState));
+      if (templateScopeMode === 'student') setStudentBaselineKey(draftKeyOf(studentRosterState));
+      setRebuildNonce((n) => n + 1);
+    }
+    setToastMessage('Unsaved changes discarded.');
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  const saveActiveDrafts = () => {
+    const transition = pendingTransition;
+    let savedCount = 0;
+    if (templateScopeMode === 'global' && globalDirty) {
+      saveGlobalRoster();
+      savedCount++;
+    }
+    if (templateScopeMode === 'class' && classDirty) {
+      saveClassRoster();
+      savedCount++;
+    }
+    if (templateScopeMode === 'student' && studentDirty) {
+      saveStudentRoster();
+      savedCount++;
+    }
+    if (!savedCount) {
+      setToastMessage('Nothing to save.');
+      setTimeout(() => setToastMessage(null), 2000);
+      return;
+    }
+    setPendingTransition(null);
+    transition?.apply();
+  };
+
+  type PendingTransition =
+    | { kind: 'scope'; label: string; apply: () => void }
+    | { kind: 'month'; label: string; apply: () => void };
+
+  const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null);
+
+  const requestTransition = (next: PendingTransition) => {
+    const dirty =
+      (templateScopeMode === 'global' && globalDirty) ||
+      (templateScopeMode === 'class' && classDirty) ||
+      (templateScopeMode === 'student' && studentDirty);
+    if (!dirty) {
+      next.apply();
+      return;
+    }
+    setPendingTransition(next);
+  };
+
+  // Month changes initiated outside SettingsView (header/sidebar pickers) are
+  // routed through the same guard via the shared beforeMonthChange ref. A ref
+  // to requestTransition keeps the handler free of stale scope/dirty closures.
+  const requestTransitionRef = useRef(requestTransition);
+  requestTransitionRef.current = requestTransition;
+  React.useEffect(() => {
+    if (!beforeMonthChange) return;
+    beforeMonthChange.current = (next: string): boolean => {
+      requestTransitionRef.current({
+        kind: 'month',
+        label: formatMonthName(next),
+        apply: () => {
+          setActiveMonth(next);
+          showToast(`Working month switched to ${formatMonthName(next)}.`, 'info');
+        },
+      });
+      return true;
+    };
+    return () => {
+      if (beforeMonthChange) beforeMonthChange.current = null;
+    };
+  }, [beforeMonthChange]);
 
   const handleConfirmResetAll = () => {
     resetAllTemplates(activeMonth);
@@ -813,25 +975,6 @@ export const SettingsView: React.FC = () => {
   const [isParsedPreviewExpanded, setIsParsedPreviewExpanded] = useState(false);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
-  const parseCsvLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if ((char === ',' || char === '\t' || char === ';') && !inQuotes) {
-        result.push(current.trim().replace(/^"|"$/g, ''));
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    result.push(current.trim().replace(/^"|"$/g, ''));
-    return result;
-  };
-
   const processCsvContent = (text: string) => {
     setCsvParseError(null);
     if (!text || !text.trim()) {
@@ -849,7 +992,7 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    const firstLineCells = parseCsvLine(lines[0]);
+    const firstLineCells = parseCsvLine(lines[0], CSV_DELIMITERS_TEMPLATE);
     const firstLineClean = firstLineCells.map((c) => c.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
     // Check if first line is a header
@@ -991,7 +1134,7 @@ export const SettingsView: React.FC = () => {
     const results: ParsedCsvTemplateRow[] = [];
 
     dataLines.forEach((line, idx) => {
-      const cells = parseCsvLine(line);
+      const cells = parseCsvLine(line, CSV_DELIMITERS_TEMPLATE);
       if (cells.length === 0 || (cells.length === 1 && !cells[0].trim())) return;
 
       const rawId = (cells[idIdx] || '').trim();
@@ -1273,7 +1416,7 @@ export const SettingsView: React.FC = () => {
       setEditingUser(user);
       setUserFormData({
         username: user.username,
-        password: user.password || '',
+        password: '',
         name: user.name,
         role: user.role,
         email: user.email || '',
@@ -1291,7 +1434,7 @@ export const SettingsView: React.FC = () => {
     setShowUserModal(true);
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userFormData.username.trim()) {
       showToast('Username is required.', 'warning');
@@ -1308,16 +1451,21 @@ export const SettingsView: React.FC = () => {
       if (userFormData.password?.trim()) {
         updates.password = userFormData.password.trim();
       }
-      const res = updateUser(editingUser.id, updates);
+      const res = await updateUser(editingUser.id, updates);
       if (!res.success) {
         showToast(res.error || 'Failed to update user.', 'error');
         return;
       }
       showToast(`Operator @${userFormData.username} updated successfully!`, 'success');
     } else {
-      const res = addUser({
+      const plainPassword = userFormData.password?.trim() || '';
+      if (plainPassword.length < 6) {
+        showToast('Password is required (minimum 6 characters).', 'warning');
+        return;
+      }
+      const res = await addUser({
         username: userFormData.username.trim(),
-        password: userFormData.password?.trim() || 'password123',
+        password: plainPassword,
         name: userFormData.name.trim() || userFormData.username.trim(),
         role: userFormData.role,
         email: userFormData.email?.trim() || undefined,
@@ -1346,6 +1494,13 @@ export const SettingsView: React.FC = () => {
       showToast(`User ${userToDelete.name} removed from system.`, 'success');
     }
     setUserToDelete(null);
+  };
+
+  const handleConfirmDeleteBank = () => {
+    if (!bankToDelete) return;
+    deleteBankAccount(bankToDelete.id);
+    showToast(`Bank account "${bankToDelete.bankName}" removed.`, 'success');
+    setBankToDelete(null);
   };
 
   const handleSaveProfile = (e: React.FormEvent) => {
@@ -1463,15 +1618,17 @@ export const SettingsView: React.FC = () => {
           >
             Fee Templates
           </button>
-          <button
-            id="settings-tab-users"
-            onClick={() => setActiveSubTab('users')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
-            }`}
-          >
-            Users & Auth
-          </button>
+          {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
+            <button
+              id="settings-tab-users"
+              onClick={() => setActiveSubTab('users')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+              }`}
+            >
+              Users & Auth
+            </button>
+          )}
           {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
             <button
               id="settings-tab-cleanup"
@@ -1702,7 +1859,7 @@ export const SettingsView: React.FC = () => {
                           Click to browse or drag and drop your logo file here
                         </span>
                         <span className="text-[11px] text-slate-500 mt-0.5 block">
-                          PNG, JPG, SVG, or WEBP (Max: 3MB). High resolution recommended.
+                          PNG, JPG, SVG, or WEBP (Max: 500KB). High resolution recommended.
                         </span>
                       </div>
                     </div>
@@ -2478,7 +2635,7 @@ export const SettingsView: React.FC = () => {
                       )}
                       <button
                         type="button"
-                        onClick={() => deleteBankAccount(bank.id)}
+                        onClick={() => setBankToDelete(bank)}
                         className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
                         title="Delete Bank Account"
                       >
@@ -2546,11 +2703,17 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   id="tab-scope-global"
-                  onClick={() => {
-                    setTemplateScopeMode('global');
-                    setSelectedStudentId('');
-                    setSelectedClassId('');
-                  }}
+                  onClick={() =>
+                    requestTransition({
+                      kind: 'scope',
+                      label: scopeLabel,
+                      apply: () => {
+                        setTemplateScopeMode('global');
+                        setSelectedStudentId('');
+                        setSelectedClassId('');
+                      },
+                    })
+                  }
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     templateScopeMode === 'global' && !selectedStudentId && !selectedClassId
                       ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
@@ -2563,13 +2726,19 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   id="tab-scope-class"
-                  onClick={() => {
-                    setTemplateScopeMode('class');
-                    setSelectedStudentId('');
-                    if (!selectedClassId && classes.length > 0) {
-                      setSelectedClassId(classes[0].id);
-                    }
-                  }}
+                  onClick={() =>
+                    requestTransition({
+                      kind: 'scope',
+                      label: scopeLabel,
+                      apply: () => {
+                        setTemplateScopeMode('class');
+                        setSelectedStudentId('');
+                        if (!selectedClassId && classes.length > 0) {
+                          setSelectedClassId(classes[0].id);
+                        }
+                      },
+                    })
+                  }
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     templateScopeMode === 'class' || (selectedClassId && !selectedStudentId)
                       ? 'bg-white text-indigo-950 shadow-xs border border-slate-200/80'
@@ -2587,10 +2756,16 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   id="tab-scope-student"
-                  onClick={() => {
-                    setTemplateScopeMode('student');
-                    setSelectedClassId('');
-                  }}
+                  onClick={() =>
+                    requestTransition({
+                      kind: 'scope',
+                      label: scopeLabel,
+                      apply: () => {
+                        setTemplateScopeMode('student');
+                        setSelectedClassId('');
+                      },
+                    })
+                  }
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                     templateScopeMode === 'student' || selectedStudentId
                       ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
@@ -2653,9 +2828,16 @@ export const SettingsView: React.FC = () => {
                         id="select-override-class"
                         value={selectedClassId}
                         onChange={(e) => {
-                          setSelectedClassId(e.target.value);
-                          setSelectedStudentId('');
-                          setTemplateScopeMode('class');
+                          const nextId = e.target.value;
+                          requestTransition({
+                            kind: 'scope',
+                            label: `Class Override tier (${selectedClass?.name || ''})`,
+                            apply: () => {
+                              setSelectedClassId(nextId);
+                              setSelectedStudentId('');
+                              setTemplateScopeMode('class');
+                            },
+                          });
                         }}
                         className="pl-9 pr-8 py-2 bg-indigo-50/60 hover:bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-950 transition w-48 sm:w-56 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                       >
@@ -2768,11 +2950,17 @@ export const SettingsView: React.FC = () => {
                               <div
                                 key={std.id}
                                 onClick={() => {
-                                  setSelectedStudentId(std.id);
-                                  setSelectedClassId('');
-                                  setTemplateScopeMode('student');
-                                  setIsStudentDropdownOpen(false);
-                                  setStudentSearchQuery('');
+                                  requestTransition({
+                                    kind: 'scope',
+                                    label: `Student Override tier (${selectedStudent?.name || selectedStudent?.regNo || ''})`,
+                                    apply: () => {
+                                      setSelectedStudentId(std.id);
+                                      setSelectedClassId('');
+                                      setTemplateScopeMode('student');
+                                      setIsStudentDropdownOpen(false);
+                                      setStudentSearchQuery('');
+                                    },
+                                  });
                                 }}
                                 className={`p-2.5 flex items-center justify-between hover:bg-teal-50/70 cursor-pointer transition text-xs ${
                                   isCurrent ? 'bg-teal-50 font-bold' : ''
@@ -2895,9 +3083,15 @@ export const SettingsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedStudentId('');
-                      setStudentSearchQuery('');
-                      setTemplateScopeMode('global');
+                      requestTransition({
+                        kind: 'scope',
+                        label: scopeLabel,
+                        apply: () => {
+                          setSelectedStudentId('');
+                          setStudentSearchQuery('');
+                          setTemplateScopeMode('global');
+                        },
+                      });
                     }}
                     className="text-xs font-semibold text-teal-700 hover:text-teal-900 bg-white hover:bg-teal-100/50 border border-teal-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer"
                   >
@@ -2944,8 +3138,14 @@ export const SettingsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedClassId('');
-                      setTemplateScopeMode('global');
+                      requestTransition({
+                        kind: 'scope',
+                        label: scopeLabel,
+                        apply: () => {
+                          setSelectedClassId('');
+                          setTemplateScopeMode('global');
+                        },
+                      });
                     }}
                     className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-100/50 border border-indigo-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer"
                   >
@@ -3085,7 +3285,8 @@ export const SettingsView: React.FC = () => {
                                   }
                                 }}
                                 placeholder={spec.defaultLabel}
-                                className="w-full max-w-xs p-2 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 transition text-xs"
+                                disabled={!hasPermission('settings.manage')}
+                                className="w-full max-w-xs p-2 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 transition text-xs disabled:opacity-60 disabled:cursor-not-allowed"
                               />
                             ) : (
                               <span className="font-bold text-slate-900 block text-xs">
@@ -3116,7 +3317,8 @@ export const SettingsView: React.FC = () => {
                                     }
                                   }}
                                   placeholder="0"
-                                  className="w-24 p-1.5 text-right bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 text-xs transition"
+                                  disabled={!hasPermission('settings.manage')}
+                                  className="w-24 p-1.5 text-right bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 text-xs transition disabled:opacity-60 disabled:cursor-not-allowed"
                                 />
                               </div>
                             ) : (
@@ -3253,10 +3455,16 @@ export const SettingsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setSelectedClassId(item.classId);
-                                  setSelectedStudentId('');
-                                  setTemplateScopeMode('class');
-                                  window.scrollTo({ top: 100, behavior: 'smooth' });
+                                  requestTransition({
+                                    kind: 'scope',
+                                    label: scopeLabel,
+                                    apply: () => {
+                                      setSelectedClassId(item.classId);
+                                      setSelectedStudentId('');
+                                      setTemplateScopeMode('class');
+                                      window.scrollTo({ top: 100, behavior: 'smooth' });
+                                    },
+                                  });
                                 }}
                                 className="px-2.5 py-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition cursor-pointer"
                               >
@@ -3416,8 +3624,14 @@ export const SettingsView: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setSelectedStudentId(item.studentId);
-                                    window.scrollTo({ top: 100, behavior: 'smooth' });
+                                    requestTransition({
+                                      kind: 'scope',
+                                      label: scopeLabel,
+                                      apply: () => {
+                                        setSelectedStudentId(item.studentId);
+                                        window.scrollTo({ top: 100, behavior: 'smooth' });
+                                      },
+                                    });
                                   }}
                                   className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg transition cursor-pointer"
                                 >
@@ -3452,7 +3666,7 @@ export const SettingsView: React.FC = () => {
       )}
 
       {/* Subtab 5: Users & Authentication */}
-      {activeSubTab === 'users' && (
+      {activeSubTab === 'users' && (currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
             <div>
@@ -4221,6 +4435,25 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
+      {/* Unsaved-draft guard modal: fires for tier switches and month changes */}
+      <ConfirmModal
+        isOpen={!!pendingTransition}
+        variant="warning"
+        title={`Unsaved changes in ${scopeLabel}`}
+        message="Save them first, or continue without saving. Discarding will restore this tier's editor from saved data."
+        cancelLabel="Keep Editing"
+        confirmLabel="Save & Continue"
+        tertiaryLabel="Discard & Continue"
+        tertiaryVariant="danger"
+        onTertiary={() => {
+          discardDirtyDrafts();
+          if (pendingTransition) pendingTransition.apply();
+          setPendingTransition(null);
+        }}
+        onConfirm={saveActiveDrafts}
+        onClose={() => setPendingTransition(null)}
+      />
+
       {/* Delete User Confirmation Modal */}
       <ConfirmModal
         isOpen={!!userToDelete}
@@ -4239,6 +4472,34 @@ export const SettingsView: React.FC = () => {
         variant="danger"
         onConfirm={handleConfirmDeleteUser}
         onClose={() => setUserToDelete(null)}
+      />
+
+      {/* Delete Bank Account Confirmation Modal */}
+      <ConfirmModal
+        isOpen={!!bankToDelete}
+        title="Delete Bank Account"
+        message={
+          bankToDelete ? (
+            <div className="space-y-2">
+              <p>
+                Are you sure you want to delete{' '}
+                <strong className="text-slate-900">{bankToDelete.bankName}</strong>{' '}
+                <span className="font-mono">(A/C: {bankToDelete.accountNumber})</span>?
+              </p>
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900">
+                Until another account is set as the active default, newly issued vouchers{' '}
+                <strong>and reprints of existing ones</strong> will instruct:{' '}
+                <strong>&ldquo;Payment can be made at the institute accounts office.&rdquo;</strong>
+              </div>
+            </div>
+          ) : (
+            ''
+          )
+        }
+        confirmLabel="Delete Account"
+        variant="danger"
+        onConfirm={handleConfirmDeleteBank}
+        onClose={() => setBankToDelete(null)}
       />
 
       {/* Toast Notification */}

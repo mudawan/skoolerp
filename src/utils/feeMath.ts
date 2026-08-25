@@ -626,3 +626,37 @@ export function formatMonthName(monthStr: string): string {
   const date = new Date(parseInt(yearStr, 10), parseInt(monthNumStr, 10) - 1, 1);
   return date.toLocaleString('default', { month: 'long', year: 'numeric' });
 }
+
+export function getCurrentMonthString(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+}
+
+export function shiftMonth(monthStr: string, delta: number): string {
+  const [yearStr, monthNumStr] = monthStr.split('-');
+  const total = parseInt(yearStr, 10) * 12 + (parseInt(monthNumStr, 10) - 1) + delta;
+  const year = Math.floor(total / 12);
+  const month = (total % 12) + 1;
+  return `${year}-${month.toString().padStart(2, '0')}`;
+}
+
+export function getMonthPickerWindow(backCount: number = 11, forwardCount: number = 6): string[] {
+  const start = shiftMonth(getCurrentMonthString(), -backCount);
+  const months: string[] = [];
+  for (let i = 0; i <= backCount + forwardCount; i++) {
+    months.push(shiftMonth(start, i));
+  }
+  return months;
+}
+
+export function mergeWithDataMonths(pickerMonths: string[], dataMonths: string[]): string[] {
+  return Array.from(new Set([...pickerMonths, ...dataMonths])).sort();
+}
+
+export function getRecentMonthsEndingAt(endMonthStr: string, count: number): string[] {
+  const months: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    months.push(shiftMonth(endMonthStr, -i));
+  }
+  return months;
+}
