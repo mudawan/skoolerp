@@ -117,6 +117,9 @@ interface AppContextType {
   updateStop: (id: string, updates: Partial<TransportStop>) => { success: boolean; error?: string };
   deleteStop: (id: string) => { success: boolean; error?: string };
   reorderStops: (reorderedStops: TransportStop[]) => { success: boolean; error?: string };
+  bulkSaveTransportStops: (
+    stopsList: Array<Omit<TransportStop, 'id'> & { id?: string }>
+  ) => { success: boolean; count: number; addedCount: number; updatedCount: number };
   saveTransportAssignment: (
     assignment: Omit<TransportAssignment, 'id'> & { id?: string }
   ) => { success: boolean; error?: string };
@@ -1294,6 +1297,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
     setStops(updated);
     return { success: true };
+  };
+
+  const bulkSaveTransportStops = (
+    stopsList: Array<Omit<TransportStop, 'id'> & { id?: string }>
+  ) => {
+    let addedCount = 0;
+    let updatedCount = 0;
+    setStops((prev) => {
+      let currentStops = [...prev];
+      for (const item of stopsList) {
+        const cleanName = item.name.trim();
+        const existingIdx = currentStops.findIndex(
+          (s) =>
+            (item.id && s.id === item.id) ||
+            s.name.toLowerCase() === cleanName.toLowerCase()
+        );
+        const fare = roundBusFareUp(item.monthlyFare || 0);
+
+        if (existingIdx >= 0) {
+          currentStops[existingIdx] = {
+            ...currentStops[existingIdx],
+            name: cleanName,
+            area: item.area !== undefined ? item.area.trim() : currentStops[existingIdx].area,
+            landmark: item.landmark !== undefined ? item.landmark.trim() : currentStops[existingIdx].landmark,
+            monthlyFare: fare,
+            sortOrder: item.sortOrder || currentStops[existingIdx].sortOrder,
+          };
+          updatedCount++;
+        } else {
+          const nextSortOrder = item.sortOrder || currentStops.length + 1;
+          const newStop: TransportStop = {
+            id: item.id || `stop-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+            name: cleanName,
+            area: (item.area || '').trim(),
+            landmark: (item.landmark || '').trim(),
+            monthlyFare: fare,
+            sortOrder: nextSortOrder,
+          };
+          currentStops.push(newStop);
+          addedCount++;
+        }
+      }
+      currentStops.sort((a, b) => a.sortOrder - b.sortOrder);
+      return currentStops.map((s, idx) => ({ ...s, sortOrder: idx + 1 }));
+    });
+    return { success: true, count: stopsList.length, addedCount, updatedCount };
   };
 
   const saveTransportAssignment = (
@@ -2947,6 +2996,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateStop,
         deleteStop,
         reorderStops,
+        bulkSaveTransportStops,
         saveTransportAssignment,
         bulkSaveTransportAssignments,
         deleteTransportAssignment,
