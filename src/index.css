@@ -1,5 +1,132 @@
 @import "tailwindcss";
 
+:root {
+  --color-primary: #0d9488;
+  --color-primary-hover: #0f766e;
+  --color-primary-light: #f0fdfa;
+  --color-primary-border: #99f6e4;
+  --color-primary-text: #115e59;
+  --color-chart: #0d9488;
+}
+
+/* Global Selection styling */
+::selection {
+  background-color: var(--color-primary, #0d9488) !important;
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   DYNAMIC THEME PROPAGATION ACROSS ALL VIEWS & COMPONENTS
+   ========================================================================== */
+
+/* Primary Backgrounds */
+[data-theme-color] .bg-teal-600,
+[data-theme-color] .bg-teal-500,
+[data-theme-color] .bg-teal-700,
+[data-theme-color] .bg-teal-800 {
+  background-color: var(--color-primary) !important;
+}
+
+/* Primary Hover Backgrounds */
+[data-theme-color] .hover\:bg-teal-700:hover,
+[data-theme-color] .hover\:bg-teal-600:hover,
+[data-theme-color] .hover\:bg-teal-500:hover,
+[data-theme-color] .hover\:bg-teal-800:hover {
+  background-color: var(--color-primary-hover) !important;
+}
+
+/* Light / Tinted Backgrounds */
+[data-theme-color] .bg-teal-50,
+[data-theme-color] .bg-teal-50\/40,
+[data-theme-color] .bg-teal-50\/50,
+[data-theme-color] .bg-teal-50\/60,
+[data-theme-color] .bg-teal-50\/70,
+[data-theme-color] .bg-teal-50\/80,
+[data-theme-color] .bg-teal-100,
+[data-theme-color] .bg-teal-100\/50,
+[data-theme-color] .bg-teal-500\/10,
+[data-theme-color] .bg-teal-500\/20,
+[data-theme-color] .bg-teal-600\/10,
+[data-theme-color] .bg-teal-600\/20 {
+  background-color: var(--color-primary-light) !important;
+}
+
+[data-theme-color] .hover\:bg-teal-50:hover,
+[data-theme-color] .hover\:bg-teal-50\/80:hover {
+  background-color: var(--color-primary-light) !important;
+}
+
+/* Text Colors */
+[data-theme-color] .text-teal-600,
+[data-theme-color] .text-teal-500,
+[data-theme-color] .text-teal-700 {
+  color: var(--color-primary) !important;
+}
+
+[data-theme-color] .text-teal-800,
+[data-theme-color] .text-teal-900 {
+  color: var(--color-primary-text) !important;
+}
+
+[data-theme-color] .hover\:text-teal-700:hover,
+[data-theme-color] .hover\:text-teal-600:hover,
+[data-theme-color] .hover\:text-teal-800:hover {
+  color: var(--color-primary-hover) !important;
+}
+
+/* Borders */
+[data-theme-color] .border-teal-200,
+[data-theme-color] .border-teal-300,
+[data-theme-color] .border-teal-400,
+[data-theme-color] .border-teal-500\/30,
+[data-theme-color] .border-teal-500\/20,
+[data-theme-color] .border-teal-700\/60 {
+  border-color: var(--color-primary-border) !important;
+}
+
+[data-theme-color] .border-teal-500,
+[data-theme-color] .border-teal-600,
+[data-theme-color] .border-teal-700 {
+  border-color: var(--color-primary) !important;
+}
+
+/* Focus Rings and Outlines */
+[data-theme-color] .focus\:ring-teal-500:focus,
+[data-theme-color] .focus\:ring-teal-600:focus,
+[data-theme-color] .focus\:border-teal-500:focus,
+[data-theme-color] .focus\:border-teal-600:focus,
+[data-theme-color] .ring-teal-500,
+[data-theme-color] .ring-teal-600 {
+  --tw-ring-color: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+}
+
+/* Form Controls & Checkboxes */
+[data-theme-color] input[type="checkbox"]:checked,
+[data-theme-color] input[type="radio"]:checked,
+[data-theme-color] .accent-teal-600,
+[data-theme-color] .accent-teal-500 {
+  accent-color: var(--color-primary) !important;
+}
+
+/* Density Preferences across Views */
+[data-ui-density="compact"] th {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0.5rem !important;
+  font-size: 11px !important;
+}
+
+[data-ui-density="compact"] td {
+  padding-top: 0.4rem !important;
+  padding-bottom: 0.4rem !important;
+  font-size: 12px !important;
+}
+
+[data-ui-density="compact"] .table-compact-row td {
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+}
+
 @media print {
   /* Hide application navigation, top headers, sidebars, buttons, toolbars, search bars, modals */
   header,

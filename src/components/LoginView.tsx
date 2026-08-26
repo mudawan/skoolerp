@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   Layers,
   Lock,
@@ -16,7 +17,7 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
-  const { login, institute } = useApp();
+  const { login, institute, themeConfig } = useApp();
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +25,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,12 +45,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-teal-950 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans antialiased text-slate-100 selection:bg-teal-500 selection:text-white">
+    <div className={`min-h-screen bg-gradient-to-br ${preset.headerGradient} flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans antialiased text-slate-100 selection:bg-teal-500 selection:text-white`}>
       <div className="w-full max-w-md space-y-6">
         
         {/* System & Platform Header */}
         <div className="text-center space-y-3">
-          <div className="mx-auto w-20 h-20 rounded-2xl bg-teal-600 border border-teal-400/40 p-1 flex items-center justify-center shadow-xl shadow-teal-900/50 overflow-hidden bg-white">
+          <div
+            style={{ borderColor: preset.lightBorder }}
+            className="mx-auto w-20 h-20 rounded-2xl border p-1 flex items-center justify-center shadow-xl overflow-hidden bg-white"
+          >
             {institute?.logoUrl ? (
               <img
                 src={institute.logoUrl}
@@ -55,11 +61,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 className="w-full h-full object-contain rounded-xl"
               />
             ) : (
-              <Layers className="w-10 h-10 text-teal-700" />
+              <Layers style={{ color: preset.primaryColor }} className="w-10 h-10" />
             )}
           </div>
           <div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-400 text-[11px] font-bold tracking-wide uppercase">
+            <div
+              style={{
+                backgroundColor: preset.primaryColor + '20',
+                borderColor: preset.primaryColor + '50',
+                color: preset.lightBorder,
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold tracking-wide uppercase"
+            >
               <Globe2 className="w-3.5 h-3.5" />
               {institute?.regNo ? `Reg: ${institute.regNo}` : 'School Fee Portal'}
             </div>
@@ -169,7 +182,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
               type="submit"
               id="login-submit-btn"
               disabled={isLoading}
-              className="w-full mt-3 bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-teal-900/30 hover:shadow-teal-900/50 transition flex items-center justify-center gap-2 cursor-pointer"
+              style={{ backgroundColor: preset.primaryColor }}
+              className="w-full mt-3 hover:opacity-90 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
             >
               {isLoading ? (
                 <>

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp, DownstreamConflict } from '../context/AppContext';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, VoucherPreviewCalculation } from '../utils/feeMath';
+import { MonthPicker } from './MonthPicker';
+import { DatePicker } from './DatePicker';
 import { PrintVoucherModal } from './PrintVoucherModal';
 import { ExportPdfModal } from './ExportPdfModal';
 import { StudentAvatar } from './StudentAvatar';
@@ -34,6 +36,7 @@ import {
   Printer,
   Receipt,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   ShieldAlert,
@@ -59,7 +62,10 @@ export const VouchersView: React.FC = () => {
     deleteVoucher,
     bulkDeleteVouchers,
     bulkCarryForwardDefaulters,
+    undoCarryForwardVoucher,
     hasPermission,
+    getMonthClosureStatus,
+    themeConfig,
     priorMonthRule,
     skippedMonthRule,
     voucherDeletionResolution,
@@ -234,9 +240,48 @@ export const VouchersView: React.FC = () => {
   const [addLateFine, setAddLateFine] = useState(true);
   const [carryFineAmount, setCarryFineAmount] = useState<number>(defaultLateFeeRate || 500);
 
+  // Undo Carry Forward Confirmation Modal State
+  const [undoCarryModal, setUndoCarryModal] = useState<{
+    isOpen: boolean;
+    targetVoucher: FeeVoucher;
+    hasDownstream: boolean;
+    downstreamMonths: string[];
+  } | null>(null);
+
   useEffect(() => {
     setCarryFineAmount(defaultLateFeeRate || 500);
   }, [defaultLateFeeRate]);
+
+  const handleOpenUndoCarryModal = (v: FeeVoucher) => {
+    // Check if any future vouchers exist for this student
+    const futureVouchers = vouchers.filter(
+      (item) => item.studentId === v.studentId && item.id !== v.id && item.month > v.month
+    );
+    const downstreamMonths = Array.from(new Set(futureVouchers.map((item) => item.month))).sort();
+
+    setUndoCarryModal({
+      isOpen: true,
+      targetVoucher: v,
+      hasDownstream: futureVouchers.length > 0,
+      downstreamMonths,
+    });
+  };
+
+  const executeUndoCarryForward = () => {
+    if (!undoCarryModal?.targetVoucher) return;
+    const v = undoCarryModal.targetVoucher;
+    const res = undoCarryForwardVoucher(v.id);
+
+    if (res.success) {
+      showToast(`Successfully reverted carry forward for Voucher #${v.voucherNo} (${formatMonthName(v.month)})!`);
+      setUndoCarryModal(null);
+      if (detailVoucher?.id === v.id) {
+        setDetailVoucher(null);
+      }
+    } else {
+      showToast(res.error || 'Failed to undo carry forward', 'error');
+    }
+  };
 
   const handleOpenCarryModalForSelected = () => {
     const unpaidSelected = vouchers.filter(
@@ -892,6 +937,7 @@ export const VouchersView: React.FC = () => {
                   const isSelected = selectedIds.includes(v.id);
                   const canCollect = v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.collect');
                   const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.generate');
+                  const canUndoCarry = v.status === 'Carried' && hasPermission('fees.generate');
                   const canDelete = hasPermission('fees.generate');
 
                   return (
@@ -973,27 +1019,45 @@ export const VouchersView: React.FC = () => {
                               <Coins className="w-3.5 h-3.5" />
                             </button>
 
-                            <button
-                              type="button"
-                              disabled={!canCarry}
-                              onClick={() => canCarry && handleOpenCarryModalSingle(v)}
-                              title={
-                                canCarry
-                                  ? `Carry Forward Balance to ${formatMonthName(getNextMonthString(v.month))}`
-                                  : v.status === 'Paid'
-                                  ? 'Cannot carry forward a fully paid voucher'
-                                  : v.status === 'Carried'
-                                  ? 'Voucher balance is already carried forward'
-                                  : 'Carry forward balance disabled'
-                              }
-                              className={`p-1.5 rounded-lg transition shrink-0 inline-flex items-center justify-center ${
-                                canCarry
-                                  ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs cursor-pointer'
-                                  : 'bg-slate-100 text-slate-300 border border-slate-200/60 cursor-not-allowed'
-                              }`}
-                            >
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
+                            {v.status === 'Carried' ? (
+                              <button
+                                type="button"
+                                disabled={!canUndoCarry}
+                                onClick={() => canUndoCarry && handleOpenUndoCarryModal(v)}
+                                title={
+                                  canUndoCarry
+                                    ? `Undo Carry Forward for ${formatMonthName(v.month)}`
+                                    : 'Permission required to undo carry forward'
+                                }
+                                className={`p-1.5 rounded-lg transition shrink-0 inline-flex items-center justify-center ${
+                                  canUndoCarry
+                                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 shadow-2xs cursor-pointer'
+                                    : 'bg-slate-100 text-slate-300 border border-slate-200/60 cursor-not-allowed'
+                                }`}
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={!canCarry}
+                                onClick={() => canCarry && handleOpenCarryModalSingle(v)}
+                                title={
+                                  canCarry
+                                    ? `Carry Forward Balance to ${formatMonthName(getNextMonthString(v.month))}`
+                                    : v.status === 'Paid'
+                                    ? 'Cannot carry forward a fully paid voucher'
+                                    : 'Carry forward balance disabled'
+                                }
+                                className={`p-1.5 rounded-lg transition shrink-0 inline-flex items-center justify-center ${
+                                  canCarry
+                                    ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs cursor-pointer'
+                                    : 'bg-slate-100 text-slate-300 border border-slate-200/60 cursor-not-allowed'
+                                }`}
+                              >
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            )}
 
                             <button
                               type="button"
@@ -1167,17 +1231,19 @@ export const VouchersView: React.FC = () => {
                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Target Month</label>
-                    <select
+                    <MonthPicker
                       value={targetMonth}
-                      onChange={(e) => handleUpdatePreview(scope, scopeClassId, e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                    >
-                      {availableTargetMonths.map((m) => (
-                        <option key={m} value={m}>
-                          {formatMonthName(m)} ({m})
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(newMonth) => handleUpdatePreview(scope, scopeClassId, newMonth)}
+                      availableMonths={availableTargetMonths}
+                      closedMonths={availableTargetMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+                      themeColor={themeConfig?.color || 'teal'}
+                      isLight={true}
+                      showSteppers={false}
+                      variant="input"
+                      className="w-full"
+                      idPrefix="modal-target-month-picker"
+                      align="left"
+                    />
                   </div>
 
                   <div>
@@ -1211,11 +1277,13 @@ export const VouchersView: React.FC = () => {
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Due Date</label>
-                    <input
-                      type="date"
+                    <DatePicker
                       value={dueDateInput}
-                      onChange={(e) => setDueDateInput(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      themeColor={themeConfig?.color || 'teal'}
+                      onChange={(newDate) => setDueDateInput(newDate)}
+                      idPrefix="modal-due-date-picker"
+                      placeholder="Select Due Date"
+                      required
                     />
                   </div>
 
@@ -1767,19 +1835,29 @@ export const VouchersView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-              {hasPermission('fees.delete') ? (
-                <button
-                  type="button"
-                  onClick={() => handleOpenDeleteSingle(detailVoucher)}
-                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete Voucher
-                </button>
-              ) : (
-                <div />
-              )}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+              <div className="flex items-center gap-2">
+                {detailVoucher.status === 'Carried' && hasPermission('fees.generate') && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenUndoCarryModal(detailVoucher)}
+                    className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Undo Carry Forward
+                  </button>
+                )}
+                {hasPermission('fees.delete') && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDeleteSingle(detailVoucher)}
+                    className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Voucher
+                  </button>
+                )}
+              </div>
               <button
                 onClick={() => setDetailVoucher(null)}
                 className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs cursor-pointer"
@@ -2283,6 +2361,123 @@ export const VouchersView: React.FC = () => {
                 <span>Confirm & Carry Forward ({carryModal.targetVouchers.length})</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Carry Forward Modal with Strict Downstream Guard */}
+      {undoCarryModal?.isOpen && undoCarryModal.targetVoucher && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-3 rounded-xl shrink-0 ${
+                  undoCarryModal.hasDownstream
+                    ? 'bg-rose-100 text-rose-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {undoCarryModal.hasDownstream ? (
+                  <AlertTriangle className="w-6 h-6" />
+                ) : (
+                  <RotateCcw className="w-6 h-6" />
+                )}
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  {undoCarryModal.hasDownstream
+                    ? 'Cannot Undo Carry Forward (Downstream Conflict)'
+                    : 'Undo Carry Forward Confirmation'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Voucher #{undoCarryModal.targetVoucher.voucherNo} &bull;{' '}
+                  {formatMonthName(undoCarryModal.targetVoucher.month)}
+                </p>
+              </div>
+            </div>
+
+            {undoCarryModal.hasDownstream ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2">
+                  <p className="font-semibold">
+                    This action is blocked to preserve chronological ledger integrity.
+                  </p>
+                  <p>
+                    A subsequent voucher already exists for this student in{' '}
+                    <span className="font-bold">
+                      {undoCarryModal.downstreamMonths.map((m) => formatMonthName(m)).join(', ')}
+                    </span>
+                    .
+                  </p>
+                  <p className="text-rose-900 font-medium">
+                    To undo carry forward on this {formatMonthName(undoCarryModal.targetVoucher.month)}{' '}
+                    voucher, you must first delete or resolve the subsequent month voucher(s).
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs text-slate-600">
+                <p>
+                  Are you sure you want to revert the carry forward status for Voucher{' '}
+                  <span className="font-bold text-slate-900">
+                    #{undoCarryModal.targetVoucher.voucherNo}
+                  </span>{' '}
+                  (
+                  {students.find((s) => s.id === undoCarryModal.targetVoucher.studentId)?.name ||
+                    'Student'}
+                  )?
+                </p>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Current Status:</span>
+                    <span className="font-bold text-slate-800">Carried Forward</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Restored Status:</span>
+                    <span className="font-bold text-teal-700">
+                      {(undoCarryModal.targetVoucher.paidAmount || 0) > 0 ? 'Partial' : 'Issued'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Net Due:</span>
+                    <span className="font-bold text-slate-900">
+                      {formatCurrency(undoCarryModal.targetVoucher.netDue)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Outstanding Unpaid:</span>
+                    <span className="font-bold text-rose-600">
+                      {formatCurrency(
+                        undoCarryModal.targetVoucher.netDue - (undoCarryModal.targetVoucher.amountPaid || 0)
+                      )}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-slate-500 italic">
+                  Once restored, this voucher will be available for direct fee collection or re-carrying.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setUndoCarryModal(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold rounded-xl text-xs cursor-pointer"
+              >
+                {undoCarryModal.hasDownstream ? 'Close' : 'Cancel'}
+              </button>
+              {!undoCarryModal.hasDownstream && (
+                <button
+                  type="button"
+                  onClick={executeUndoCarryForward}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Confirm Undo Carry</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

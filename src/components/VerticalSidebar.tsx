@@ -2,6 +2,8 @@ import React from 'react';
 import { ActiveTab } from '../types';
 import { useApp } from '../context/AppContext';
 import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
+import { MonthPicker } from './MonthPicker';
 import {
   AlertTriangle,
   BarChart3,
@@ -50,7 +52,30 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     logout,
     isSidebarCollapsed,
     setIsSidebarCollapsed,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
+  const isLight = themeConfig?.sidebarTheme === 'light';
+
+  const sidebarBgClass =
+    themeConfig?.sidebarTheme === 'light'
+      ? 'bg-white text-slate-800 border-slate-200 shadow-md'
+      : themeConfig?.sidebarTheme === 'branded'
+      ? themeConfig.color === 'teal'
+        ? 'bg-[#042424] text-teal-50 border-teal-900/80'
+        : themeConfig.color === 'navy'
+        ? 'bg-[#081734] text-blue-50 border-blue-900/80'
+        : themeConfig.color === 'indigo'
+        ? 'bg-[#130f2c] text-indigo-50 border-indigo-950'
+        : themeConfig.color === 'emerald'
+        ? 'bg-[#022319] text-emerald-50 border-emerald-950'
+        : themeConfig.color === 'amber'
+        ? 'bg-[#241004] text-amber-50 border-amber-950'
+        : themeConfig.color === 'rose'
+        ? 'bg-[#240614] text-rose-50 border-rose-950'
+        : 'bg-[#131416] text-zinc-50 border-zinc-800'
+      : 'bg-slate-900 text-slate-100 border-slate-800';
 
   const availableMonths = mergeWithDataMonths(
     getMonthPickerWindow(),
@@ -111,7 +136,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-40 flex flex-col bg-slate-900 text-slate-100 border-r border-slate-800 transition-all duration-300 ease-in-out print:hidden ${
+        className={`fixed top-0 bottom-0 left-0 z-40 flex flex-col ${sidebarBgClass} transition-all duration-300 ease-in-out print:hidden ${
           // Mobile state: slide in / out
           mobileOpen
             ? 'translate-x-0 w-72 shadow-2xl'
@@ -122,9 +147,12 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         }`}
       >
         {/* Sidebar Header: School Logo & Title */}
-        <div className="flex items-center justify-between p-4 border-b border-slate-800/80 shrink-0 min-h-[68px]">
+        <div className={`flex items-center justify-between p-4 border-b ${isLight ? 'border-slate-200' : 'border-slate-800/80'} shrink-0 min-h-[68px]`}>
           <div className="flex items-center gap-3 min-w-0 overflow-hidden">
-            <div className="w-10 h-10 rounded-xl bg-teal-600 flex items-center justify-center text-white font-bold text-xl shadow-md border border-teal-500 overflow-hidden shrink-0">
+            <div
+              style={{ backgroundColor: preset.primaryColor }}
+              className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md overflow-hidden shrink-0"
+            >
               {institute.logoUrl ? (
                 <img
                   src={institute.logoUrl}
@@ -141,10 +169,10 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
             {(!isSidebarCollapsed || mobileOpen) && (
               <div className="min-w-0 leading-tight">
-                <h1 className="text-sm font-bold tracking-tight text-white truncate">
+                <h1 className={`text-sm font-bold tracking-tight truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
                   {institute.name}
                 </h1>
-                <p className="text-[11px] text-slate-400 truncate">
+                <p className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                   {institute.regNo || 'Fee Management'}
                 </p>
               </div>
@@ -154,7 +182,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           {/* Mobile Close Button */}
           <button
             onClick={() => setMobileOpen(false)}
-            className="md:hidden p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+            className={`md:hidden p-1.5 rounded-lg cursor-pointer ${
+              isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
           >
             <X className="w-5 h-5" />
           </button>
@@ -163,7 +193,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           <button
             onClick={() => setIsSidebarCollapsed((prev) => !prev)}
             title={isSidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-            className="hidden md:flex items-center justify-center w-7 h-7 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer shrink-0"
+            className={`hidden md:flex items-center justify-center w-7 h-7 rounded-lg transition cursor-pointer shrink-0 ${
+              isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
           >
             {isSidebarCollapsed ? (
               <ChevronRight className="w-4 h-4 text-teal-400" />
@@ -175,66 +207,36 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
         {/* Working Month Selector in Sidebar */}
         {(!isSidebarCollapsed || mobileOpen) ? (
-          <div className="px-3.5 py-3 border-b border-slate-800/80 bg-slate-950/40 shrink-0">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5 px-1">
+          <div className={`px-3.5 py-3 border-b shrink-0 ${isLight ? 'border-slate-200 bg-slate-50/70' : 'border-slate-800/80 bg-slate-950/40'}`}>
+            <span className={`text-[10px] font-bold uppercase tracking-wider block mb-1.5 px-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
               Active Billing Month
             </span>
-            <div className="flex items-center justify-between bg-teal-950/60 border border-teal-600/40 rounded-xl px-2 py-1 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  if (currentIdx > 0) changeMonth(availableMonths[currentIdx - 1]);
-                }}
-                disabled={currentIdx <= 0}
-                title="Previous Month"
-                className="p-1 rounded text-teal-300 hover:bg-teal-800/60 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-
-              <select
-                value={activeMonth}
-                onChange={(e) => changeMonth(e.target.value)}
-                className="bg-transparent text-teal-200 font-extrabold text-xs focus:outline-none cursor-pointer tracking-wide text-center"
-              >
-                {availableMonths.map((m) => {
-                  const date = new Date(m + '-01');
-                  const label = date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                  return (
-                    <option key={m} value={m} className="bg-slate-900 text-white font-medium">
-                      {label} ({m})
-                    </option>
-                  );
-                })}
-              </select>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (currentIdx >= 0 && currentIdx < availableMonths.length - 1) {
-                    changeMonth(availableMonths[currentIdx + 1]);
-                  }
-                }}
-                disabled={currentIdx < 0 || currentIdx >= availableMonths.length - 1}
-                title="Next Month"
-                className="p-1 rounded text-teal-300 hover:bg-teal-800/60 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <MonthPicker
+              value={activeMonth}
+              onChange={changeMonth}
+              availableMonths={availableMonths}
+              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              themeColor={themeConfig?.color || 'teal'}
+              isLight={isLight}
+              className="w-full"
+              idPrefix="sidebar-month-picker"
+              align="left"
+            />
           </div>
         ) : (
-          <div className="py-2.5 flex justify-center border-b border-slate-800/80 bg-slate-950/40 shrink-0">
-            <button
-              onClick={() => {
-                const next = (currentIdx + 1) % availableMonths.length;
-                changeMonth(availableMonths[next]);
-              }}
-              title={`Active Month: ${activeMonth} (Click to advance)`}
-              className="p-2 rounded-xl bg-teal-950/70 text-teal-400 border border-teal-600/40 hover:bg-teal-900/60 transition cursor-pointer"
-            >
-              <Calendar className="w-4 h-4" />
-            </button>
+          <div className={`py-2.5 px-2 flex justify-center border-b shrink-0 ${isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800/80 bg-slate-950/40'}`}>
+            <MonthPicker
+              value={activeMonth}
+              onChange={changeMonth}
+              availableMonths={availableMonths}
+              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              themeColor={themeConfig?.color || 'teal'}
+              isLight={isLight}
+              className="w-full"
+              compact={true}
+              idPrefix="sidebar-collapsed-month-picker"
+              align="left"
+            />
           </div>
         )}
 
@@ -252,14 +254,20 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                 title={isCollapsed ? item.label : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer group relative ${
                   isActive
-                    ? 'bg-teal-600 text-white shadow-md shadow-teal-950/40 font-bold'
+                    ? `${preset.activeNavBg} text-white shadow-md ${preset.activeNavGlow} font-bold`
+                    : isLight
+                    ? 'text-slate-600 hover:text-slate-950 hover:bg-slate-100'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
                 } ${isCollapsed ? 'justify-center px-2' : 'justify-between'}`}
               >
                 <div className={`flex items-center gap-3 min-w-0 ${isCollapsed ? 'justify-center' : ''}`}>
                   <Icon
                     className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
-                      isActive ? 'text-white' : 'text-slate-400 group-hover:text-teal-400'
+                      isActive
+                        ? 'text-white'
+                        : isLight
+                        ? 'text-slate-400 group-hover:text-slate-900'
+                        : 'text-slate-400 group-hover:text-slate-200'
                     }`}
                   />
                   {!isCollapsed && <span className="truncate">{item.label}</span>}
@@ -287,20 +295,24 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         </nav>
 
         {/* Sidebar Footer: User Profile & Role Info */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/50 shrink-0">
+        <div className={`p-3 border-t shrink-0 ${isLight ? 'border-slate-200 bg-slate-50' : 'border-slate-800 bg-slate-950/50'}`}>
           {(!isSidebarCollapsed || mobileOpen) ? (
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-800/70 border border-slate-700/60">
+              <div className={`flex items-center justify-between gap-2 p-2 rounded-xl border ${
+                isLight ? 'bg-white border-slate-200 shadow-2xs' : 'bg-slate-800/70 border-slate-700/60'
+              }`}>
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-slate-700 border border-slate-600 text-emerald-400 shrink-0">
+                  <div className={`relative flex items-center justify-center w-8 h-8 rounded-lg border text-emerald-400 shrink-0 ${
+                    isLight ? 'bg-slate-100 border-slate-200 text-emerald-600' : 'bg-slate-700 border-slate-600'
+                  }`}>
                     <UserCheck className="w-4 h-4" />
                     <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-slate-800" />
                   </div>
                   <div className="min-w-0">
-                    <span className="block text-xs font-bold text-slate-200 truncate">
+                    <span className={`block text-xs font-bold truncate ${isLight ? 'text-slate-900' : 'text-slate-200'}`}>
                       {currentUser.name}
                     </span>
-                    <span className="block text-[10px] text-slate-400 truncate">
+                    <span className={`block text-[10px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                       @{currentUser.username}
                     </span>
                   </div>
@@ -309,9 +321,11 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                 <div
                   className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border shrink-0 ${
                     currentUser.role === 'Admin'
-                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                      ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
                       : currentUser.role === 'Accountant'
-                      ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
+                      ? `${preset.sampleBadgeClass}`
+                      : isLight
+                      ? 'bg-slate-100 text-slate-600 border-slate-300'
                       : 'bg-slate-700/50 text-slate-300 border-slate-600/50'
                   }`}
                 >
@@ -321,7 +335,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
               <button
                 onClick={logout}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 border border-rose-800/40 rounded-xl text-xs font-bold transition cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-rose-950/30 hover:bg-rose-900/50 text-rose-400 border border-rose-800/40 rounded-xl text-xs font-bold transition cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Sign Out</span>
@@ -331,7 +345,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             <div className="flex flex-col items-center gap-2">
               <div
                 title={`${currentUser.name} (${currentUser.role})`}
-                className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-emerald-400"
+                className={`w-9 h-9 rounded-xl border flex items-center justify-center ${
+                  isLight ? 'bg-white border-slate-200 text-emerald-600' : 'bg-slate-800 border-slate-700 text-emerald-400'
+                }`}
               >
                 <UserCheck className="w-4 h-4" />
               </div>

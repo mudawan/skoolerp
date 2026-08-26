@@ -3,6 +3,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react'
 import { normalizePaymentMode } from '../utils/paymentMode';
 import { MIN_PASSWORD_LENGTH, sha256Hex, verifyPassword } from '../utils/passwords';
 import {
+  AppThemeConfig,
   BankAccount,
   CleanupResult,
   DataCleanupOptions,
@@ -27,6 +28,7 @@ import {
   VoucherItem,
   VoucherStatus,
 } from '../types';
+import { DEFAULT_THEME_CONFIG, applyThemeToDom } from '../utils/themeConfig';
 import {
   INITIAL_BANK_ACCOUNTS,
   INITIAL_BUSES,
@@ -248,9 +250,12 @@ interface AppContextType {
   transactions: PaymentTransaction[];
   deleteCollection: (id: string) => void;
 
-  // UI Preferences
+  // UI Preferences & Themes
   isSidebarCollapsed: boolean;
   setIsSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
+  themeConfig: AppThemeConfig;
+  updateThemeConfig: (updates: Partial<AppThemeConfig>) => void;
+  resetThemeConfig: () => void;
 
   // Settings & Policy
   priorMonthRule: PriorMonthVoucherRule;
@@ -618,6 +623,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_sidebar_collapsed`, String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  // Theme & Appearance Configuration
+  const [themeConfig, setThemeConfig] = useState<AppThemeConfig>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_theme_config`);
+    if (saved) {
+      try {
+        return { ...DEFAULT_THEME_CONFIG, ...JSON.parse(saved) };
+      } catch {
+        return DEFAULT_THEME_CONFIG;
+      }
+    }
+    return DEFAULT_THEME_CONFIG;
+  });
+
+  const updateThemeConfig = useCallback((updates: Partial<AppThemeConfig>) => {
+    setThemeConfig((prev) => {
+      const next = { ...prev, ...updates };
+      localStorage.setItem(`${STORAGE_KEY}_theme_config`, JSON.stringify(next));
+      applyThemeToDom(next);
+      return next;
+    });
+  }, []);
+
+  const resetThemeConfig = useCallback(() => {
+    setThemeConfig(DEFAULT_THEME_CONFIG);
+    localStorage.setItem(`${STORAGE_KEY}_theme_config`, JSON.stringify(DEFAULT_THEME_CONFIG));
+    applyThemeToDom(DEFAULT_THEME_CONFIG);
+  }, []);
+
+  // Ensure DOM is updated on initial mount and theme changes
+  useEffect(() => {
+    applyThemeToDom(themeConfig);
+  }, [themeConfig]);
 
   // Sync to local storage
   useEffect(() => {
@@ -3029,6 +3067,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteCollection,
         isSidebarCollapsed,
         setIsSidebarCollapsed,
+        themeConfig,
+        updateThemeConfig,
+        resetThemeConfig,
         priorMonthRule,
         setPriorMonthRule,
         skippedMonthRule,

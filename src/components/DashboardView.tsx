@@ -2,10 +2,12 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, getPreviousMonthString, getRecentMonthsEndingAt } from '../utils/feeMath';
 import { ActiveTab } from '../types';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   AlertTriangle,
   ArrowUpRight,
   BookOpen,
+  Calendar,
   CalendarCheck,
   CheckCircle2,
   Clock,
@@ -49,7 +51,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
     collections,
     transactions,
     getMonthClosureStatus,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const monthVouchers = vouchers.filter((v) => v.month === activeMonth && v.status !== 'Reversed');
   const activeStudents = students.filter((s) => s.status === 'Active');
@@ -126,18 +131,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
   return (
     <div className="space-y-6">
       {/* Top Banner & Quick Action Buttons */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-teal-950 rounded-xl px-4 py-3 sm:px-5 sm:py-3.5 text-white shadow-md relative overflow-hidden">
+      <div className={`bg-gradient-to-r ${preset.headerGradient} rounded-2xl px-5 py-4 text-white shadow-md relative overflow-hidden border border-white/10`}>
+        {/* Themed Glow Flare */}
+        <div
+          style={{ backgroundColor: preset.primaryColor }}
+          className="absolute -right-10 -top-10 w-44 h-44 rounded-full opacity-25 blur-3xl pointer-events-none"
+        />
+
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
-            <div className="flex items-center flex-wrap gap-2">
-              <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white">
+            <div className="flex items-center flex-wrap gap-2.5">
+              <h2 className="text-lg sm:text-xl font-extrabold tracking-tight text-white">
                 Fee Collection Dashboard
               </h2>
-              <span className="text-[11px] font-semibold tracking-wide text-teal-300 bg-teal-500/20 px-2 py-0.5 rounded-md border border-teal-500/30">
-                {formatMonthName(activeMonth)}
+              <span
+                style={{
+                  backgroundColor: preset.primaryColor + '30',
+                  borderColor: preset.primaryColor + '70',
+                  color: preset.lightBorder,
+                }}
+                className="text-[11px] font-bold tracking-wide px-2.5 py-0.5 rounded-lg border backdrop-blur-xs flex items-center gap-1.5 shadow-2xs"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{formatMonthName(activeMonth)}</span>
               </span>
             </div>
-            <p className="text-xs text-slate-300 mt-0.5">
+            <p className="text-xs text-slate-300 mt-1">
               Track voucher issuance, daily collections, carry-forwards, and class performance.
             </p>
           </div>
@@ -147,7 +166,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
             <button
               id="btn-dashboard-generate-vouchers"
               onClick={() => setActiveTab('vouchers')}
-              className="flex items-center gap-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+              style={{
+                backgroundColor: preset.primaryColor,
+              }}
+              className="flex items-center gap-1.5 hover:opacity-90 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-md transition cursor-pointer whitespace-nowrap"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               <span>Generate Vouchers</span>
@@ -155,7 +177,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
             <button
               id="btn-dashboard-collect-fees"
               onClick={() => setActiveTab('collections')}
-              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3 py-1.5 rounded-lg text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <Receipt className="w-3.5 h-3.5 text-emerald-400" />
               <span>Collect Fees</span>
@@ -163,7 +185,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
             <button
               id="btn-dashboard-defaulters"
               onClick={() => setActiveTab('defaulters')}
-              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3 py-1.5 rounded-lg text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               <span>Defaulters</span>
@@ -175,7 +197,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
               id="btn-dashboard-month-close"
               onClick={() => setActiveTab('defaulters')}
               title="Navigate to Defaulters & Month Close view to close active month and carry forward balances"
-              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3 py-1.5 rounded-lg text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white font-medium px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer whitespace-nowrap"
             >
               <CalendarCheck className="w-3.5 h-3.5 text-indigo-200" />
               <span>Month Close</span>
@@ -221,11 +243,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
               {formatCurrency(totalGrossTarget)}
             </h3>
             <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-              <FileText className="w-3.5 h-3.5 text-teal-600" />
+              <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5" />
               {monthVouchers.length} Vouchers Issued
             </p>
           </div>
-          <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center text-teal-600 font-bold">
+          <div
+            style={{
+              backgroundColor: preset.lightBg,
+              color: preset.primaryColor,
+            }}
+            className="w-12 h-12 rounded-xl flex items-center justify-center font-bold"
+          >
             <Coins className="w-6 h-6" />
           </div>
         </div>
@@ -302,7 +330,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-teal-600" />
+                <TrendingUp style={{ color: preset.primaryColor }} className="w-5 h-5" />
                 6-Month Fee Collection Trend
               </h3>
               <p className="text-xs text-slate-500">
@@ -320,8 +348,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
                     <stop offset="95%" stopColor="#94A3B8" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="colorCollected" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0D9488" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
+                    <stop offset="5%" stopColor={preset.chartColor} stopOpacity={0.8} />
+                    <stop offset="95%" stopColor={preset.chartColor} stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
@@ -333,7 +361,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab }) =>
                 />
                 <Legend wrapperStyle={{ fontSize: '12px' }} />
                 <Area type="monotone" dataKey="Target" stroke="#64748B" fillOpacity={1} fill="url(#colorTarget)" />
-                <Area type="monotone" dataKey="Collected" stroke="#0D9488" strokeWidth={2} fillOpacity={1} fill="url(#colorCollected)" />
+                <Area type="monotone" dataKey="Collected" stroke={preset.chartColor} strokeWidth={2.5} fillOpacity={1} fill="url(#colorCollected)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

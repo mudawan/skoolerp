@@ -239,6 +239,16 @@ export type ActiveTab =
   | 'reports'
   | 'settings';
 
+export type ThemeColor = 'teal' | 'navy' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
+export type SidebarTheme = 'dark' | 'light' | 'branded';
+export type UiDensity = 'comfortable' | 'compact';
+
+export interface AppThemeConfig {
+  color: ThemeColor;
+  sidebarTheme: SidebarTheme;
+  density: UiDensity;
+}
+
 export type PriorMonthVoucherRule = 'strict' | 'warning' | 'recalculate';
 export type SkippedMonthVoucherRule = 'strict' | 'warning' | 'allow';
 export type VoucherDeletionResolution = 'auto-heal' | 'cascade' | 'manual';

@@ -6,6 +6,7 @@ import { downloadCsv } from '../utils/csv';
 import { exportStudentFeeLedgerPdf, printStudentFeeLedgerPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
 import { PrintVoucherModal } from './PrintVoucherModal';
+import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import {
   AlertCircle,
@@ -56,6 +57,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     collectVoucherPayment,
     updateVoucherParticulars,
     hasPermission,
+    themeConfig,
     showToast,
   } = useApp();
 
@@ -1259,12 +1261,14 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
                     <div>
                       <label className="font-bold text-slate-700 block mb-1">Collection Date *</label>
-                      <input
-                        type="date"
-                        required
+                      <DatePicker
                         value={collectDate}
-                        onChange={(e) => setCollectDate(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs font-mono"
+                        required
+                        themeColor={themeConfig?.color || 'teal'}
+                        onChange={(newDate) => setCollectDate(newDate)}
+                        idPrefix="ledger-collect-date"
+                        placeholder="Select Collection Date"
+                        className="w-full"
                       />
                     </div>
                   </div>

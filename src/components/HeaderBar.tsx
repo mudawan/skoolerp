@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { ConfirmModal } from './ConfirmModal';
+import { MonthPicker } from './MonthPicker';
 import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
 import {
   Building2,
-  Calendar,
-  ChevronLeft,
-  ChevronRight,
   LogOut,
   RefreshCw,
   Shield,
@@ -21,6 +19,8 @@ export const HeaderBar: React.FC = () => {
     beforeMonthChange,
     vouchers,
     institute,
+    getMonthClosureStatus,
+    themeConfig,
     resetToDemoData,
     logout,
     showToast,
@@ -32,8 +32,6 @@ export const HeaderBar: React.FC = () => {
     getMonthPickerWindow(),
     vouchers.map((v) => v.month)
   );
-
-  const currentIdx = availableMonths.indexOf(activeMonth);
 
   const requestMonthChange = (next: string) => {
     if (next === activeMonth) return;
@@ -73,51 +71,18 @@ export const HeaderBar: React.FC = () => {
         {/* Right: Controls & Role Switcher */}
         <div className="flex items-center flex-wrap gap-3">
           {/* Working Month Selector */}
-          <div className="flex items-center bg-teal-950/70 border border-teal-600/60 rounded-xl px-2.5 py-1.5 gap-1.5 text-xs shadow-inner">
-            <Calendar className="w-4 h-4 text-teal-400 shrink-0" />
-            <span className="text-teal-200 font-bold hidden sm:inline">Working Month:</span>
-            
-            <button
-              type="button"
-              onClick={() => {
-                if (currentIdx > 0) requestMonthChange(availableMonths[currentIdx - 1]);
-              }}
-              disabled={currentIdx <= 0}
-              title="Previous Month"
-              className="p-1 rounded text-teal-300 hover:bg-teal-800/60 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-
-            <select
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-bold text-xs hidden sm:inline">Working Month:</span>
+            <MonthPicker
               value={activeMonth}
-              onChange={(e) => requestMonthChange(e.target.value)}
-              className="bg-transparent text-white font-extrabold focus:outline-none cursor-pointer tracking-wide"
-            >
-              {availableMonths.map((m) => {
-                const date = new Date(m + '-01');
-                const label = date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                return (
-                  <option key={m} value={m} className="bg-slate-900 text-white font-medium">
-                    {label} ({m})
-                  </option>
-                );
-              })}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (currentIdx >= 0 && currentIdx < availableMonths.length - 1) {
-                  requestMonthChange(availableMonths[currentIdx + 1]);
-                }
-              }}
-              disabled={currentIdx < 0 || currentIdx >= availableMonths.length - 1}
-              title="Next Month"
-              className="p-1 rounded text-teal-300 hover:bg-teal-800/60 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
+              onChange={requestMonthChange}
+              availableMonths={availableMonths}
+              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              themeColor={themeConfig?.color || 'teal'}
+              isLight={false}
+              idPrefix="headerbar-month-picker"
+              align="right"
+            />
           </div>
 
           {/* Integrated User Profile, Role Badge & Logout Chip */}

@@ -1951,69 +1951,68 @@ export const TransportView: React.FC = () => {
 
             {hasPermission('transport.manage') && (
               <div className="flex flex-wrap items-center gap-2">
-                {/* Global Active Days Input Text + Dropdown Field */}
+                {/* Compact Integrated Active Days Control with Presets and Apply Button */}
                 <div
                   id="transport-global-active-days-control"
-                  className="flex items-center bg-slate-50 border border-slate-300 rounded-xl p-1 shadow-2xs"
+                  className="inline-flex items-center bg-slate-50 border border-slate-200 rounded-xl p-1 text-xs shadow-2xs gap-1.5"
                 >
-                  <div className="flex items-center gap-1.5 px-2 text-slate-700 font-bold text-xs">
+                  <div className="flex items-center gap-1 pl-1.5 text-slate-700 font-bold text-xs">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                    <span className="whitespace-nowrap">Active Days:</span>
+                    <span className="text-[11px] whitespace-nowrap">Days:</span>
                   </div>
 
-                  {/* Number / Text Input */}
                   <input
                     type="number"
                     min="0"
                     max={totalDaysInMonth}
                     value={globalMonthDays}
                     onChange={(e) => handleGlobalDaysChange(Number(e.target.value))}
-                    className="w-14 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-2xs"
-                    title={`Enter active days in ${activeMonth} (0 to ${totalDaysInMonth})`}
+                    className="w-10 text-center font-bold text-slate-900 text-xs py-1 bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-2xs"
+                    title={`Active days in ${activeMonth} (0 to ${totalDaysInMonth})`}
                   />
 
-                  <span className="text-[11px] font-semibold text-slate-500 px-1">/ {totalDaysInMonth}d</span>
+                  <span className="text-[11px] font-semibold text-slate-400">/{totalDaysInMonth}d</span>
 
-                  {/* Quick Preset Dropdown */}
                   <select
                     value={globalMonthDays}
                     onChange={(e) => handleGlobalDaysChange(Number(e.target.value))}
-                    className="bg-white text-slate-800 font-semibold text-xs py-1 px-1.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer text-[11px] shadow-2xs"
-                    title="Select active days preset"
+                    className="bg-white hover:bg-slate-100 text-slate-700 font-semibold text-[11px] py-1 px-1.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                    title="Quick select preset days"
                   >
                     <option value={totalDaysInMonth}>Full ({totalDaysInMonth}d)</option>
+                    <option value={22}>22d (Working)</option>
                     <option value={Math.round(totalDaysInMonth / 2)}>Half ({Math.round(totalDaysInMonth / 2)}d)</option>
-                    <option value={26}>26 days</option>
-                    <option value={24}>24 days</option>
-                    <option value={22}>22 days (Working)</option>
-                    <option value={20}>20 days</option>
-                    <option value={15}>15 days</option>
-                    <option value={10}>10 days</option>
-                    <option value={0}>0 days</option>
+                    <option value={26}>26d</option>
+                    <option value={24}>24d</option>
+                    <option value={20}>20d</option>
+                    <option value={15}>15d</option>
+                    <option value={10}>10d</option>
+                    <option value={0}>0d</option>
                     {![
                       totalDaysInMonth,
+                      22,
                       Math.round(totalDaysInMonth / 2),
                       26,
                       24,
-                      22,
                       20,
                       15,
                       10,
                       0,
                     ].includes(globalMonthDays) && (
-                      <option value={globalMonthDays}>Custom ({globalMonthDays}d)</option>
+                      <option value={globalMonthDays}>{globalMonthDays}d (Custom)</option>
                     )}
                   </select>
 
-                  {/* Apply to existing month assignments button */}
+                  {/* Apply to All Button */}
                   {activeMonthAssignments.length > 0 && (
                     <button
                       type="button"
                       onClick={handleApplyGlobalDaysToAll}
-                      className="ml-1 px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[10px] font-bold transition cursor-pointer whitespace-nowrap shadow-2xs"
-                      title={`Apply ${globalMonthDays} days to all ${activeMonthAssignments.length} assignments in ${activeMonth}`}
+                      className="inline-flex items-center gap-1 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-bold px-2.5 py-1 rounded-lg text-[11px] shadow-2xs transition-colors cursor-pointer whitespace-nowrap"
+                      title={`Apply ${globalMonthDays} active days to all ${activeMonthAssignments.length} transport assignments in ${activeMonth}`}
                     >
-                      Apply to All
+                      <Check className="w-3 h-3 shrink-0" />
+                      <span>Apply All ({activeMonthAssignments.length})</span>
                     </button>
                   )}
                 </div>
@@ -2022,7 +2021,7 @@ export const TransportView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleCopyPreviousMonth}
-                  className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold px-3 py-2 rounded-xl text-xs shadow-xs cursor-pointer transition-colors whitespace-nowrap"
+                  className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold px-3 py-2 rounded-xl text-xs shadow-xs cursor-pointer transition-colors whitespace-nowrap"
                   title={`Copy transport assignments from previous month with ${globalMonthDays} active days`}
                 >
                   <Copy className="w-3.5 h-3.5 text-teal-600" />

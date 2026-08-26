@@ -12,17 +12,63 @@ import { TransportView } from './components/TransportView';
 import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { LoginView } from './components/LoginView';
+import { MonthPicker } from './components/MonthPicker';
 import { ActiveTab } from './types';
-import { Building2, Menu } from 'lucide-react';
+import { THEME_COLOR_PRESETS } from './utils/themeConfig';
+import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
+import { Building2, Calendar, Menu } from 'lucide-react';
 
 function MainApp() {
-  const { isAuthenticated, isSidebarCollapsed, institute, activeMonth } = useApp();
+  const {
+    isAuthenticated,
+    isSidebarCollapsed,
+    institute,
+    activeMonth,
+    setActiveMonth,
+    beforeMonthChange,
+    vouchers,
+    getMonthClosureStatus,
+    themeConfig,
+  } = useApp();
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   if (!isAuthenticated) {
     return <LoginView />;
   }
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
+  const isLight = themeConfig?.sidebarTheme === 'light';
+
+  const availableMonths = mergeWithDataMonths(
+    getMonthPickerWindow(),
+    vouchers.map((v) => v.month)
+  );
+
+  const changeMonth = (next: string) => {
+    if (!next || next === activeMonth) return;
+    if (beforeMonthChange.current && beforeMonthChange.current(next)) return;
+    setActiveMonth(next);
+  };
+
+  const mobileHeaderBgClass =
+    themeConfig?.sidebarTheme === 'light'
+      ? 'bg-white text-slate-800 border-slate-200'
+      : themeConfig?.sidebarTheme === 'branded'
+      ? themeConfig.color === 'teal'
+        ? 'bg-[#042424] text-teal-50 border-teal-900/80'
+        : themeConfig.color === 'navy'
+        ? 'bg-[#081734] text-blue-50 border-blue-900/80'
+        : themeConfig.color === 'indigo'
+        ? 'bg-[#130f2c] text-indigo-50 border-indigo-950'
+        : themeConfig.color === 'emerald'
+        ? 'bg-[#022319] text-emerald-50 border-emerald-950'
+        : themeConfig.color === 'amber'
+        ? 'bg-[#241004] text-amber-50 border-amber-950'
+        : themeConfig.color === 'rose'
+        ? 'bg-[#240614] text-rose-50 border-rose-950'
+        : 'bg-[#131416] text-zinc-50 border-zinc-800'
+      : 'bg-slate-900 text-white border-slate-800';
 
   return (
     <div className="min-w-[320px] min-h-screen bg-slate-100/70 text-slate-900 font-sans antialiased selection:bg-teal-500 selection:text-white flex flex-col md:flex-row">
@@ -41,17 +87,22 @@ function MainApp() {
         }`}
       >
         {/* Mobile-Only Header Bar (Drawer Toggle & Active School info) */}
-        <div className="md:hidden sticky top-0 z-30 bg-slate-900 text-white px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-800 print:hidden">
+        <div className={`md:hidden sticky top-0 z-30 ${mobileHeaderBgClass} px-4 py-3 flex items-center justify-between shadow-sm border-b print:hidden`}>
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setMobileSidebarOpen(true)}
-              className="p-1.5 -ml-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+              className={`p-1.5 -ml-1.5 rounded-lg cursor-pointer ${
+                isLight ? 'text-slate-600 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
               title="Open Navigation Menu"
             >
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-teal-600 flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden">
+              <div
+                style={{ backgroundColor: preset.primaryColor }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs shrink-0 overflow-hidden shadow-2xs"
+              >
                 {institute.logoUrl ? (
                   <img
                     src={institute.logoUrl}
@@ -65,14 +116,22 @@ function MainApp() {
                   <Building2 className="w-3.5 h-3.5 text-white" />
                 )}
               </div>
-              <span className="font-bold text-sm text-white truncate">
+              <span className={`font-bold text-sm truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 {institute.name}
               </span>
             </div>
           </div>
-          <div className="text-[11px] font-bold text-teal-300 bg-teal-950/80 px-2.5 py-1 rounded-lg border border-teal-700/60 shrink-0">
-            {activeMonth}
-          </div>
+          <MonthPicker
+            value={activeMonth}
+            onChange={changeMonth}
+            availableMonths={availableMonths}
+            closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+            themeColor={themeConfig?.color || 'teal'}
+            isLight={isLight}
+            compact={true}
+            idPrefix="mobile-header-month-picker"
+            align="right"
+          />
         </div>
 
         {/* Main Viewport Container */}

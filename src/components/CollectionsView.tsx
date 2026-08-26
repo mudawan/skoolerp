@@ -6,6 +6,7 @@ import { normalizePaymentMode } from '../utils/paymentMode';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
+import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import {
   AlertCircle,
@@ -44,6 +45,7 @@ export const CollectionsView: React.FC = () => {
     bulkCsvCollection,
     deleteCollection,
     hasPermission,
+    themeConfig,
   } = useApp();
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -1303,12 +1305,14 @@ export const CollectionsView: React.FC = () => {
 
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Collection Date *</label>
-                      <input
-                        type="date"
-                        required
+                      <DatePicker
                         value={directDate}
-                        onChange={(e) => setDirectDate(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono text-xs"
+                        required
+                        themeColor={themeConfig?.color || 'teal'}
+                        onChange={(newDate) => setDirectDate(newDate)}
+                        idPrefix="collection-direct-date"
+                        placeholder="Select Collection Date"
+                        className="w-full"
                       />
                     </div>
                   </div>

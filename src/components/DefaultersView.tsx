@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { FeeVoucher, PaymentTransaction, VoucherItem } from '../types';
 import { StudentAvatar } from './StudentAvatar';
+import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import {
   formatCurrency,
@@ -15,6 +16,7 @@ import {
   CheckCircle,
   Coins,
   Receipt,
+  RotateCcw,
   Save,
   Search,
   ShieldCheck,
@@ -30,14 +32,17 @@ export const DefaultersView: React.FC = () => {
     collectVoucherPayment,
     updateVoucherParticulars,
     bulkCarryForwardDefaulters,
+    undoCarryForwardVoucher,
     getMonthClosureStatus,
     hasPermission,
+    themeConfig,
     defaultLateFeeRate,
   } = useApp();
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [addLateFine, setAddLateFine] = useState(true);
   const [carryFineAmount, setCarryFineAmount] = useState<number>(defaultLateFeeRate || 500);
+  const [activeTab, setActiveTab] = useState<'uncarried' | 'carried'>('uncarried');
 
   useEffect(() => {
     setCarryFineAmount(defaultLateFeeRate || 500);
@@ -51,6 +56,41 @@ export const DefaultersView: React.FC = () => {
     setTimeout(() => {
       setToastMessage((current) => (current?.text === text ? null : current));
     }, 4500);
+  };
+
+  // Undo Carry Forward Confirmation Modal State
+  const [undoCarryModal, setUndoCarryModal] = useState<{
+    isOpen: boolean;
+    targetVoucher: FeeVoucher;
+    hasDownstream: boolean;
+    downstreamMonths: string[];
+  } | null>(null);
+
+  const handleOpenUndoCarryModal = (v: FeeVoucher) => {
+    const futureVouchers = vouchers.filter(
+      (item) => item.studentId === v.studentId && item.id !== v.id && item.month > v.month
+    );
+    const downstreamMonths = Array.from(new Set(futureVouchers.map((item) => item.month))).sort();
+
+    setUndoCarryModal({
+      isOpen: true,
+      targetVoucher: v,
+      hasDownstream: futureVouchers.length > 0,
+      downstreamMonths,
+    });
+  };
+
+  const executeUndoCarryForward = () => {
+    if (!undoCarryModal?.targetVoucher) return;
+    const v = undoCarryModal.targetVoucher;
+    const res = undoCarryForwardVoucher(v.id);
+
+    if (res.success) {
+      showToast(`Successfully reverted carry forward for Voucher #${v.voucherNo} (${formatMonthName(v.month)})!`);
+      setUndoCarryModal(null);
+    } else {
+      showToast(res.error || 'Failed to undo carry forward', 'error');
+    }
   };
 
   // Carry Forward Confirmation Modal State
@@ -91,6 +131,11 @@ export const DefaultersView: React.FC = () => {
       v.status !== 'Reversed' &&
       v.status !== 'Carried' &&
       v.amountPaid < v.netDue
+  );
+
+  // Carried vouchers in active working month
+  const carriedVouchers = vouchers.filter(
+    (v) => v.month === activeMonth && v.status === 'Carried'
   );
 
   const nextMonthStr = getNextMonthString(activeMonth);
@@ -316,144 +361,250 @@ export const DefaultersView: React.FC = () => {
         )}
       </div>
 
-      {/* Defaulters Table */}
+      {/* Defaulters Table / Tabs */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
-            Unpaid Defaulter Vouchers ({defaulterVouchers.length} Outstanding)
-          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('uncarried')}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'uncarried'
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              <span>Unpaid Defaulters</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                activeTab === 'uncarried' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-700'
+              }`}>
+                {defaulterVouchers.length}
+              </span>
+            </button>
 
-          <div className="flex items-center gap-1.5 bg-white pl-3 pr-1.5 py-1 rounded-xl border border-slate-200 shadow-2xs text-xs">
-            <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                id="checkbox-add-late-fine"
-                checked={addLateFine}
-                onChange={(e) => setAddLateFine(e.target.checked)}
-                className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
-              />
-              <span className="font-bold text-slate-800">Late Payment Fine / Surcharge:</span>
-            </label>
-            <div className={`flex items-center rounded-lg border transition-all ${
-              addLateFine
-                ? 'bg-amber-50/60 border-amber-300 focus-within:ring-2 focus-within:ring-amber-500/20 focus-within:border-amber-500 focus-within:bg-white'
-                : 'bg-slate-100 border-slate-200 opacity-50 cursor-not-allowed'
-            }`}>
-              <span className={`pl-2 text-[11px] font-bold ${addLateFine ? 'text-amber-800' : 'text-slate-400'}`}>Rs.</span>
-              <input
-                type="number"
-                min="0"
-                step="50"
-                id="input-carry-fine-amount"
-                disabled={!addLateFine}
-                value={addLateFine ? carryFineAmount : 0}
-                onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}
-                className={`w-20 pr-2 py-1 text-xs font-mono font-bold text-right bg-transparent focus:outline-none ${
-                  addLateFine ? 'text-slate-900' : 'text-slate-400 cursor-not-allowed'
-                }`}
-                placeholder="0"
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('carried')}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'carried'
+                  ? 'bg-amber-700 text-white shadow-2xs'
+                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              <span>Carried Forward</span>
+              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                activeTab === 'carried' ? 'bg-amber-900 text-amber-100' : 'bg-slate-100 text-slate-700'
+              }`}>
+                {carriedVouchers.length}
+              </span>
+            </button>
           </div>
+
+          {activeTab === 'uncarried' && (
+            <div className="flex items-center gap-1.5 bg-white pl-3 pr-1.5 py-1 rounded-xl border border-slate-200 shadow-2xs text-xs">
+              <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="checkbox-add-late-fine"
+                  checked={addLateFine}
+                  onChange={(e) => setAddLateFine(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                />
+                <span className="font-bold text-slate-800">Late Payment Fine / Surcharge:</span>
+              </label>
+              <div className={`flex items-center rounded-lg border transition-all ${
+                addLateFine
+                  ? 'bg-amber-50/60 border-amber-300 focus-within:ring-2 focus-within:ring-amber-500/20 focus-within:border-amber-500 focus-within:bg-white'
+                  : 'bg-slate-100 border-slate-200 opacity-50 cursor-not-allowed'
+              }`}>
+                <span className={`pl-2 text-[11px] font-bold ${addLateFine ? 'text-amber-800' : 'text-slate-400'}`}>Rs.</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="50"
+                  id="input-carry-fine-amount"
+                  disabled={!addLateFine}
+                  value={addLateFine ? carryFineAmount : 0}
+                  onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}
+                  className={`w-20 pr-2 py-1 text-xs font-mono font-bold text-right bg-transparent focus:outline-none ${
+                    addLateFine ? 'text-slate-900' : 'text-slate-400 cursor-not-allowed'
+                  }`}
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-              <tr>
-                <th className="p-3 w-10 text-center">
-                  <input
-                    type="checkbox"
-                    checked={
-                      selectedIds.length > 0 && selectedIds.length === defaulterVouchers.length
-                    }
-                    onChange={toggleSelectAll}
-                    className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
-                  />
-                </th>
-                <th className="p-3">Voucher #</th>
-                <th className="p-3">Student Name</th>
-                <th className="p-3">Class</th>
-                <th className="p-3">Net Due</th>
-                <th className="p-3">Paid</th>
-                <th className="p-3">Outstanding Balance</th>
-                <th className="p-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {defaulterVouchers.length > 0 ? (
-                defaulterVouchers.map((v) => {
-                  const student = students.find((s) => s.id === v.studentId);
-                  const cls = classes.find((c) => c.id === v.classId);
-                  const outstanding = v.netDue - v.amountPaid;
-                  const isSelected = selectedIds.includes(v.id);
-
-                  return (
-                    <tr
-                      key={v.id}
-                      className={`hover:bg-slate-50 transition ${
-                        isSelected ? 'bg-amber-50/50' : ''
-                      }`}
-                    >
-                      <td className="p-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelect(v.id)}
-                          className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
-                        />
-                      </td>
-                      <td className="p-3 font-mono font-bold text-slate-900">{v.voucherNo}</td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <StudentAvatar photoUrl={student?.photoUrl} name={student?.name || 'Unknown'} size="xs" />
-                          <span className="font-bold text-slate-900">{student?.name || 'Unknown'}</span>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
-                          {cls?.name}
-                        </span>
-                      </td>
-                      <td className="p-3 font-bold text-slate-800">{formatCurrency(v.netDue)}</td>
-                      <td className="p-3 text-emerald-700 font-semibold">{formatCurrency(v.amountPaid)}</td>
-                      <td className="p-3 font-bold text-rose-600">{formatCurrency(outstanding)}</td>
-                      <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {hasPermission('fees.collect') && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenCollectModal(v)}
-                              title={`Collect payment for voucher #${v.voucherNo}`}
-                              className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition shadow-2xs cursor-pointer shrink-0 inline-flex items-center justify-center"
-                            >
-                              <Coins className="w-4 h-4" />
-                            </button>
-                          )}
-                          {hasPermission('fees.generate') && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenCarryModalSingle(v)}
-                              title={`Carry forward voucher #${v.voucherNo} into ${formatMonthName(nextMonthStr)}`}
-                              className="p-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition shadow-2xs cursor-pointer shrink-0 inline-flex items-center justify-center"
-                            >
-                              <ArrowRight className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
+          {activeTab === 'uncarried' ? (
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-400 italic">
-                    No uncarried defaulter vouchers in {formatMonthName(activeMonth)}. Month is closed!
-                  </td>
+                  <th className="p-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedIds.length > 0 && selectedIds.length === defaulterVouchers.length
+                      }
+                      onChange={toggleSelectAll}
+                      className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                    />
+                  </th>
+                  <th className="p-3">Voucher #</th>
+                  <th className="p-3">Student Name</th>
+                  <th className="p-3">Class</th>
+                  <th className="p-3">Net Due</th>
+                  <th className="p-3">Paid</th>
+                  <th className="p-3">Outstanding Balance</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {defaulterVouchers.length > 0 ? (
+                  defaulterVouchers.map((v) => {
+                    const student = students.find((s) => s.id === v.studentId);
+                    const cls = classes.find((c) => c.id === v.classId);
+                    const outstanding = v.netDue - v.amountPaid;
+                    const isSelected = selectedIds.includes(v.id);
+
+                    return (
+                      <tr
+                        key={v.id}
+                        className={`hover:bg-slate-50 transition ${
+                          isSelected ? 'bg-amber-50/50' : ''
+                        }`}
+                      >
+                        <td className="p-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(v.id)}
+                            className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-3 font-mono font-bold text-slate-900">{v.voucherNo}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <StudentAvatar photoUrl={student?.photoUrl} name={student?.name || 'Unknown'} size="xs" />
+                            <span className="font-bold text-slate-900">{student?.name || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                            {cls?.name}
+                          </span>
+                        </td>
+                        <td className="p-3 font-bold text-slate-800">{formatCurrency(v.netDue)}</td>
+                        <td className="p-3 text-emerald-700 font-semibold">{formatCurrency(v.amountPaid)}</td>
+                        <td className="p-3 font-bold text-rose-600">{formatCurrency(outstanding)}</td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {hasPermission('fees.collect') && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCollectModal(v)}
+                                title={`Collect payment for voucher #${v.voucherNo}`}
+                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition shadow-2xs cursor-pointer shrink-0 inline-flex items-center justify-center"
+                              >
+                                <Coins className="w-4 h-4" />
+                              </button>
+                            )}
+                            {hasPermission('fees.generate') && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCarryModalSingle(v)}
+                                title={`Carry forward voucher #${v.voucherNo} into ${formatMonthName(nextMonthStr)}`}
+                                className="p-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition shadow-2xs cursor-pointer shrink-0 inline-flex items-center justify-center"
+                              >
+                                <ArrowRight className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-slate-400 italic">
+                      No uncarried defaulter vouchers in {formatMonthName(activeMonth)}. Month is closed!
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+                <tr>
+                  <th className="p-3">Voucher #</th>
+                  <th className="p-3">Student Name</th>
+                  <th className="p-3">Class</th>
+                  <th className="p-3">Net Due</th>
+                  <th className="p-3">Carried To Month</th>
+                  <th className="p-3">Carried Late Fine</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {carriedVouchers.length > 0 ? (
+                  carriedVouchers.map((v) => {
+                    const student = students.find((s) => s.id === v.studentId);
+                    const cls = classes.find((c) => c.id === v.classId);
+
+                    return (
+                      <tr key={v.id} className="hover:bg-slate-50 transition">
+                        <td className="p-3 font-mono font-bold text-slate-900">{v.voucherNo}</td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <StudentAvatar photoUrl={student?.photoUrl} name={student?.name || 'Unknown'} size="xs" />
+                            <span className="font-bold text-slate-900">{student?.name || 'Unknown'}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                            {cls?.name}
+                          </span>
+                        </td>
+                        <td className="p-3 font-bold text-slate-800">{formatCurrency(v.netDue)}</td>
+                        <td className="p-3">
+                          <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
+                            <ArrowRight className="w-3 h-3" />
+                            {v.carryForwardMonth ? formatMonthName(v.carryForwardMonth) : 'Next Month'}
+                          </span>
+                        </td>
+                        <td className="p-3 font-semibold text-slate-600">
+                          {v.carriedLateFine ? formatCurrency(v.carriedLateFine) : 'None'}
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {hasPermission('fees.generate') && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenUndoCarryModal(v)}
+                                title={`Undo carry forward for voucher #${v.voucherNo}`}
+                                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 font-bold rounded-lg transition shadow-2xs cursor-pointer inline-flex items-center gap-1.5"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>Undo Carry</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                      No carried forward vouchers in {formatMonthName(activeMonth)}.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -584,12 +735,14 @@ export const DefaultersView: React.FC = () => {
                     </div>
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Date *</label>
-                      <input
-                        type="date"
-                        required
+                      <DatePicker
                         value={collectDate}
-                        onChange={(e) => setCollectDate(e.target.value)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono text-xs"
+                        required
+                        themeColor={themeConfig?.color || 'teal'}
+                        onChange={(newDate) => setCollectDate(newDate)}
+                        idPrefix="defaulter-collect-date"
+                        placeholder="Select Payment Date"
+                        className="w-full"
                       />
                     </div>
                   </div>
@@ -756,6 +909,123 @@ export const DefaultersView: React.FC = () => {
                 <span>Confirm & Carry Forward ({carryModal.targetVouchers.length})</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Undo Carry Forward Modal with Strict Downstream Guard */}
+      {undoCarryModal?.isOpen && undoCarryModal.targetVoucher && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-3 rounded-xl shrink-0 ${
+                  undoCarryModal.hasDownstream
+                    ? 'bg-rose-100 text-rose-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                {undoCarryModal.hasDownstream ? (
+                  <AlertTriangle className="w-6 h-6" />
+                ) : (
+                  <RotateCcw className="w-6 h-6" />
+                )}
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  {undoCarryModal.hasDownstream
+                    ? 'Cannot Undo Carry Forward (Downstream Conflict)'
+                    : 'Undo Carry Forward Confirmation'}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Voucher #{undoCarryModal.targetVoucher.voucherNo} &bull;{' '}
+                  {formatMonthName(undoCarryModal.targetVoucher.month)}
+                </p>
+              </div>
+            </div>
+
+            {undoCarryModal.hasDownstream ? (
+              <div className="space-y-3">
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2">
+                  <p className="font-semibold">
+                    This action is blocked to preserve chronological ledger integrity.
+                  </p>
+                  <p>
+                    A subsequent voucher already exists for this student in{' '}
+                    <span className="font-bold">
+                      {undoCarryModal.downstreamMonths.map((m) => formatMonthName(m)).join(', ')}
+                    </span>
+                    .
+                  </p>
+                  <p className="text-rose-900 font-medium">
+                    To undo carry forward on this {formatMonthName(undoCarryModal.targetVoucher.month)}{' '}
+                    voucher, you must first delete or resolve the subsequent month voucher(s).
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs text-slate-600">
+                <p>
+                  Are you sure you want to revert the carry forward status for Voucher{' '}
+                  <span className="font-bold text-slate-900">
+                    #{undoCarryModal.targetVoucher.voucherNo}
+                  </span>{' '}
+                  (
+                  {students.find((s) => s.id === undoCarryModal.targetVoucher.studentId)?.name ||
+                    'Student'}
+                  )?
+                </p>
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Current Status:</span>
+                    <span className="font-bold text-slate-800">Carried Forward</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Restored Status:</span>
+                    <span className="font-bold text-teal-700">
+                      {(undoCarryModal.targetVoucher.paidAmount || 0) > 0 ? 'Partial' : 'Issued'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Net Due:</span>
+                    <span className="font-bold text-slate-900">
+                      {formatCurrency(undoCarryModal.targetVoucher.netDue)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Outstanding Unpaid:</span>
+                    <span className="font-bold text-rose-600">
+                      {formatCurrency(
+                        undoCarryModal.targetVoucher.netDue - (undoCarryModal.targetVoucher.amountPaid || 0)
+                      )}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-slate-500 italic">
+                  Once restored, this voucher will be available for direct fee collection or re-carrying.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setUndoCarryModal(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold rounded-xl text-xs cursor-pointer"
+              >
+                {undoCarryModal.hasDownstream ? 'Close' : 'Cancel'}
+              </button>
+              {!undoCarryModal.hasDownstream && (
+                <button
+                  type="button"
+                  onClick={executeUndoCarryForward}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Confirm Undo Carry</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

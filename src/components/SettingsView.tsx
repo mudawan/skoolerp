@@ -5,14 +5,18 @@ import {
   FeeTemplate,
   ParticularKind,
   PriorMonthVoucherRule,
+  SidebarTheme,
   SkippedMonthVoucherRule,
   Student,
+  ThemeColor,
+  UiDensity,
   User,
   UserRole,
   VoucherDeletionResolution,
 } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
 import { parseCsvLine, CSV_DELIMITERS_TEMPLATE } from '../utils/csv';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
 import {
@@ -43,6 +47,8 @@ import {
   LayoutTemplate,
   Link as LinkIcon,
   Monitor,
+  Moon,
+  Palette,
   PanelLeft,
   PanelLeftClose,
   PanelLeftOpen,
@@ -57,6 +63,7 @@ import {
   ShieldAlert,
   Sliders,
   Sparkles,
+  Sun,
   Trash2,
   Upload,
   UserCheck,
@@ -70,6 +77,9 @@ export const SettingsView: React.FC = () => {
     updateInstitute,
     isSidebarCollapsed,
     setIsSidebarCollapsed,
+    themeConfig,
+    updateThemeConfig,
+    resetThemeConfig,
     bankAccounts,
     addBankAccount,
     updateBankAccount,
@@ -108,13 +118,65 @@ export const SettingsView: React.FC = () => {
   } = useApp();
 
   const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup'>('profile');
+  const [policyCategoryTab, setPolicyCategoryTab] = useState<'prior' | 'skipped' | 'deletion'>('prior');
   const [selectedPriorRule, setSelectedPriorRule] = useState<PriorMonthVoucherRule>(priorMonthRule);
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
   const [selectedDeletionResolution, setSelectedDeletionResolution] = useState<VoucherDeletionResolution>(voucherDeletionResolution);
   const [selectedLateFeeRate, setSelectedLateFeeRate] = useState<number>(defaultLateFeeRate);
+  const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [bankToDelete, setBankToDelete] = useState<BankAccount | null>(null);
+
+  // Sync policy drafts when context values change
+  useEffect(() => {
+    setSelectedPriorRule(priorMonthRule);
+  }, [priorMonthRule]);
+
+  useEffect(() => {
+    setSelectedSkippedRule(skippedMonthRule);
+  }, [skippedMonthRule]);
+
+  useEffect(() => {
+    setSelectedDeletionResolution(voucherDeletionResolution);
+  }, [voucherDeletionResolution]);
+
+  useEffect(() => {
+    setSelectedLateFeeRate(defaultLateFeeRate);
+  }, [defaultLateFeeRate]);
+
+  // Check for unsaved policy modifications
+  const hasPolicyChanges =
+    selectedPriorRule !== priorMonthRule ||
+    selectedSkippedRule !== skippedMonthRule ||
+    selectedDeletionResolution !== voucherDeletionResolution ||
+    selectedLateFeeRate !== defaultLateFeeRate;
+
+  const handleSavePolicyClick = () => {
+    if (!hasPolicyChanges) {
+      showToast('No changes detected in fee voucher policies.', 'info');
+      return;
+    }
+    setShowPolicyConfirmModal(true);
+  };
+
+  const handleConfirmPolicyChanges = () => {
+    setPriorMonthRule(selectedPriorRule);
+    setSkippedMonthRule(selectedSkippedRule);
+    setVoucherDeletionResolution(selectedDeletionResolution);
+    setDefaultLateFeeRate(selectedLateFeeRate);
+    setShowPolicyConfirmModal(false);
+    setToastMessage('Fee Voucher Policies updated and activated successfully!');
+    showToast('Fee Voucher Policies updated successfully!', 'success');
+  };
+
+  const handleResetPolicyDrafts = () => {
+    setSelectedPriorRule(priorMonthRule);
+    setSelectedSkippedRule(skippedMonthRule);
+    setSelectedDeletionResolution(voucherDeletionResolution);
+    setSelectedLateFeeRate(defaultLateFeeRate);
+    showToast('Policy selections reset to current saved configuration.', 'info');
+  };
 
   // Auto-close toast popup notifications after 3.5 seconds
   useEffect(() => {
@@ -125,77 +187,9 @@ export const SettingsView: React.FC = () => {
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
-  // Preset School Crests (Encoded SVG Data URLs for crisp resolution anywhere)
-  const PRESET_CRESTS = useMemo(
-    () => [
-      {
-        id: 'crest-beacon',
-        name: 'Emerald Beacon Academy',
-        description: 'Modern academic shield with book of wisdom and radiant star',
-        url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-            <circle cx="50" cy="50" r="46" fill="#0f766e" stroke="#042f2e" stroke-width="2"/>
-            <circle cx="50" cy="50" r="41" fill="none" stroke="#5eead4" stroke-width="1.5" stroke-dasharray="2 2"/>
-            <path d="M 50 16 L 76 28 L 76 56 C 76 72 50 84 50 84 C 50 84 24 72 24 56 L 24 28 Z" fill="#115e59" stroke="#ccfbf1" stroke-width="1.5"/>
-            <path d="M 50 36 L 50 64 M 50 64 Q 38 56 28 58 L 28 38 Q 38 36 50 42 Q 62 36 72 38 L 72 58 Q 62 56 50 64" fill="#ffffff" stroke="#0f766e" stroke-width="1.2"/>
-            <polygon points="50,22 53,30 61,30 55,35 57,43 50,38 43,43 45,35 39,30 47,30" fill="#fbbf24"/>
-          </svg>
-        `)}`,
-      },
-      {
-        id: 'crest-heritage',
-        name: 'Heritage Classic Shield',
-        description: 'Collegiate navy & gold crest with torch of knowledge',
-        url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-            <circle cx="50" cy="50" r="46" fill="#1e293b" stroke="#0f172a" stroke-width="2"/>
-            <circle cx="50" cy="50" r="40" fill="#0f172a" stroke="#f59e0b" stroke-width="2"/>
-            <path d="M 50 18 L 74 28 L 74 54 C 74 68 50 80 50 80 C 50 80 26 68 26 54 L 26 28 Z" fill="#1e3a8a" stroke="#fbbf24" stroke-width="1.8"/>
-            <path d="M 44 48 L 56 48 L 53 66 L 47 66 Z" fill="#d97706"/>
-            <path d="M 50 28 Q 58 38 50 48 Q 42 38 50 28 Z" fill="#ef4444"/>
-            <path d="M 50 34 Q 54 40 50 46 Q 46 40 50 34 Z" fill="#fbbf24"/>
-            <circle cx="50" cy="38" r="2.5" fill="#ffffff"/>
-          </svg>
-        `)}`,
-      },
-      {
-        id: 'crest-excellence',
-        name: 'Royal Honors Emblem',
-        description: 'Crimson & gold insignia with crown of achievement',
-        url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-            <rect x="6" y="6" width="88" height="88" rx="20" fill="#881337" stroke="#fbbf24" stroke-width="2"/>
-            <circle cx="50" cy="50" r="36" fill="#4c0519" stroke="#fef08a" stroke-width="1.5"/>
-            <path d="M 32 60 Q 50 74 68 60" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
-            <polygon points="32,48 40,40 50,50 60,40 68,48 64,58 36,58" fill="#fbbf24" stroke="#78350f" stroke-width="1.2"/>
-            <circle cx="40" cy="38" r="2.5" fill="#ffffff"/>
-            <circle cx="50" cy="46" r="2.5" fill="#ffffff"/>
-            <circle cx="60" cy="38" r="2.5" fill="#ffffff"/>
-          </svg>
-        `)}`,
-      },
-      {
-        id: 'crest-modern',
-        name: 'Geometric Monogram',
-        description: 'Modern technical academy insignia with dynamic facets',
-        url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-            <circle cx="50" cy="50" r="46" fill="#0369a1" stroke="#082f49" stroke-width="2"/>
-            <polygon points="50,16 80,33 80,67 50,84 20,67 20,33" fill="#0284c7" stroke="#e0f2fe" stroke-width="1.8"/>
-            <polygon points="50,24 72,37 72,63 50,76 28,63 28,37" fill="#0c4a6e"/>
-            <path d="M 35 44 L 50 34 L 65 44 L 50 54 Z" fill="#38bdf8"/>
-            <path d="M 50 54 L 65 44 L 65 58 L 50 68 Z" fill="#0284c7"/>
-            <path d="M 50 54 L 35 44 L 35 58 L 50 68 Z" fill="#bae6fd"/>
-          </svg>
-        `)}`,
-      },
-    ],
-    []
-  );
-
   // Institute Profile Form State
   const [profileData, setProfileData] = useState({ ...institute });
-  const [logoInputType, setLogoInputType] = useState<'upload' | 'url' | 'presets'>('upload');
+  const [logoInputType, setLogoInputType] = useState<'upload' | 'url'>('upload');
   const [customLogoUrl, setCustomLogoUrl] = useState('');
   const [logoDragActive, setLogoDragActive] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
@@ -223,7 +217,7 @@ export const SettingsView: React.FC = () => {
       const result = e.target?.result as string;
       if (result) {
         setProfileData((prev) => ({ ...prev, logoUrl: result }));
-        showToast('Logo loaded! Click "Save Profile & Branding" to save.', 'info');
+        showToast('Logo loaded! Click "Save Profile" to save.', 'info');
       }
     };
     reader.onerror = () => {
@@ -249,13 +243,7 @@ export const SettingsView: React.FC = () => {
     }
     setProfileData((prev) => ({ ...prev, logoUrl: trimmed }));
     setCustomLogoUrl('');
-    showToast('Logo URL applied! Click "Save Profile & Branding" to save.', 'info');
-  };
-
-  const handleSelectPresetLogo = (presetUrl: string, name: string) => {
-    setLogoError(null);
-    setProfileData((prev) => ({ ...prev, logoUrl: presetUrl }));
-    showToast(`Selected "${name}". Click "Save Profile & Branding" to save.`, 'info');
+    showToast('Logo URL applied! Click "Save Profile" to save.', 'info');
   };
 
   const handleRemoveLogo = () => {
@@ -1578,55 +1566,60 @@ export const SettingsView: React.FC = () => {
         <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl flex-wrap">
           <button
             onClick={() => setActiveSubTab('profile')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              activeSubTab === 'profile' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'profile' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Institute Profile
+            <Building2 className="w-3.5 h-3.5 text-teal-600" />
+            <span>Institute Profile</span>
           </button>
           <button
             id="settings-tab-appearance"
             onClick={() => setActiveSubTab('appearance')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'appearance' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+              activeSubTab === 'appearance' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <LayoutTemplate className="w-3.5 h-3.5 text-teal-600" />
-            <span>Appearance & Theme</span>
+            <Palette className="w-3.5 h-3.5 text-teal-600" />
+            <span>Appearance & Themes</span>
           </button>
           <button
             onClick={() => setActiveSubTab('policies')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              activeSubTab === 'policies' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'policies' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Prior Month Policy
+            <Sliders className="w-3.5 h-3.5 text-teal-600" />
+            <span>Voucher Policies</span>
           </button>
           <button
             onClick={() => setActiveSubTab('banks')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              activeSubTab === 'banks' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'banks' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Bank Accounts
+            <CreditCard className="w-3.5 h-3.5 text-teal-600" />
+            <span>Bank Accounts</span>
           </button>
           <button
             onClick={() => setActiveSubTab('templates')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-              activeSubTab === 'templates' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'templates' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Fee Templates
+            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+            <span>Fee Templates</span>
           </button>
           {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
             <button
               id="settings-tab-users"
               onClick={() => setActiveSubTab('users')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Users & Auth
+              <Users className="w-3.5 h-3.5 text-teal-600" />
+              <span>Users & Auth</span>
             </button>
           )}
           {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
@@ -1646,47 +1639,321 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Subtab: Appearance & Sidebar Settings */}
+      {/* Subtab: Appearance & Themes Settings */}
       {activeSubTab === 'appearance' && (
         <div className="space-y-6">
+          {/* Main Appearance Configuration Card */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <LayoutTemplate className="w-4 h-4 text-teal-600" />
-                Sidebar & Navigation Preferences
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Configure your collapsible sidebar navigation and workspace view preferences.
-              </p>
-            </div>
-
-            {/* Sidebar Collapse Toggle Preference */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/70 p-4 rounded-xl border border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
               <div>
-                <span className="font-bold text-slate-900 text-xs block">
-                  Sidebar Default State
-                </span>
-                <span className="text-[11px] text-slate-500">
-                  Currently: <strong>{isSidebarCollapsed ? 'Collapsed (Icons Only)' : 'Expanded (Full Width)'}</strong>
-                </span>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-teal-600" />
+                  Visual Theme & Workspace Aesthetics
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Customize the system color palette, navigation style, and visual layout density to match your preferences.
+                </p>
               </div>
+
               <button
                 type="button"
-                onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-                className="flex items-center gap-2 px-3.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 shadow-2xs transition cursor-pointer"
+                onClick={() => {
+                  resetThemeConfig();
+                  showToast('Theme reset to default Ocean Teal palette', 'info');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition cursor-pointer self-start sm:self-auto shadow-2xs"
               >
-                {isSidebarCollapsed ? (
-                  <>
-                    <PanelLeftOpen className="w-4 h-4 text-teal-600" />
-                    <span>Expand Sidebar</span>
-                  </>
-                ) : (
-                  <>
-                    <PanelLeftClose className="w-4 h-4 text-slate-600" />
-                    <span>Collapse Sidebar</span>
-                  </>
-                )}
+                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                <span>Reset to Defaults</span>
               </button>
+            </div>
+
+            {/* Section 1: Color Palette Selection */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Primary Accent Color Palette
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Applied to active navigation tabs, buttons, focus rings, and highlighted metrics.
+                  </p>
+                </div>
+                <span className="text-xs font-extrabold text-slate-800 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                  {THEME_COLOR_PRESETS[themeConfig?.color || 'teal']?.name}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                {(Object.entries(THEME_COLOR_PRESETS) as [ThemeColor, typeof THEME_COLOR_PRESETS['teal']][]).map(([key, preset]) => {
+                  const isSelected = (themeConfig?.color || 'teal') === key;
+
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        updateThemeConfig({ color: key });
+                        showToast(`Applied ${preset.name} theme`, 'success');
+                      }}
+                      className={`relative p-3.5 rounded-2xl border text-left transition-all duration-200 cursor-pointer flex flex-col justify-between group ${
+                        isSelected
+                          ? 'border-slate-900 ring-2 ring-slate-900/10 bg-slate-50/70 shadow-sm'
+                          : 'border-slate-200/90 hover:border-slate-300 hover:bg-slate-50/40 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                          <div
+                            style={{ backgroundColor: preset.primaryColor }}
+                            className="w-7 h-7 rounded-xl shadow-xs flex items-center justify-center text-white shrink-0 border border-black/10 transition-transform group-hover:scale-105"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                          </div>
+                          <div>
+                            <span className="font-bold text-xs text-slate-900 block leading-tight">
+                              {preset.name}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-medium block">
+                              {preset.subtitle}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isSelected && (
+                          <span
+                            style={{ backgroundColor: preset.primaryColor }}
+                            className="w-5 h-5 rounded-full text-white flex items-center justify-center shrink-0 shadow-2xs"
+                          >
+                            <Check className="w-3 h-3 stroke-[3]" />
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Swatch & Pill Preview */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 mt-auto">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            style={{ backgroundColor: preset.primaryColor }}
+                            className="w-3 h-3 rounded-full border border-black/10"
+                            title="Primary Accent"
+                          />
+                          <span
+                            style={{ backgroundColor: preset.hoverColor }}
+                            className="w-3 h-3 rounded-full border border-black/10"
+                            title="Hover State"
+                          />
+                          <span
+                            style={{ backgroundColor: preset.lightBg }}
+                            className="w-3 h-3 rounded-full border border-slate-300"
+                            title="Light Background"
+                          />
+                        </div>
+
+                        <span
+                          style={{
+                            backgroundColor: preset.lightBg,
+                            borderColor: preset.lightBorder,
+                            color: preset.textColor,
+                          }}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                        >
+                          Sample Pill
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Section 2: Sidebar Mode & Density */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 border-t border-slate-100">
+              {/* Sidebar Theme Selector */}
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Sidebar Navigation Mode
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Choose the appearance and contrast of the persistent side navigation bar.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5">
+                  {[
+                    {
+                      id: 'dark' as SidebarTheme,
+                      name: 'Dark Slate',
+                      desc: 'Classic deep contrast',
+                      bgClass: 'bg-slate-900 text-white',
+                    },
+                    {
+                      id: 'light' as SidebarTheme,
+                      name: 'Clean Light',
+                      desc: 'Minimalist white',
+                      bgClass: 'bg-white text-slate-900 border border-slate-200',
+                    },
+                    {
+                      id: 'branded' as SidebarTheme,
+                      name: 'Branded',
+                      desc: 'Palette tinted',
+                      bgClass: 'bg-slate-800 text-teal-300',
+                    },
+                  ].map((mode) => {
+                    const isSelected = (themeConfig?.sidebarTheme || 'dark') === mode.id;
+
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => {
+                          updateThemeConfig({ sidebarTheme: mode.id });
+                          showToast(`Sidebar mode set to ${mode.name}`, 'info');
+                        }}
+                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-slate-900 ring-2 ring-slate-900/10 bg-slate-50 shadow-2xs font-bold'
+                            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold shadow-2xs ${mode.bgClass}`}>
+                            NAV
+                          </div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-slate-900" />}
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">
+                            {mode.name}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium block">
+                            {mode.desc}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* UI Density Selector */}
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Interface Layout Density
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Adjust the spacing, padding, and row heights across tables and form cards.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  {[
+                    {
+                      id: 'comfortable' as UiDensity,
+                      name: 'Comfortable',
+                      desc: 'Standard balanced spacing',
+                    },
+                    {
+                      id: 'compact' as UiDensity,
+                      name: 'Compact',
+                      desc: 'Dense data-first view',
+                    },
+                  ].map((density) => {
+                    const isSelected = (themeConfig?.density || 'comfortable') === density.id;
+
+                    return (
+                      <button
+                        key={density.id}
+                        type="button"
+                        onClick={() => {
+                          updateThemeConfig({ density: density.id });
+                          showToast(`Layout density set to ${density.name}`, 'info');
+                        }}
+                        className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'border-slate-900 ring-2 ring-slate-900/10 bg-slate-50 shadow-2xs font-bold'
+                            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex flex-col gap-0.5 w-6">
+                            <span className={`h-1 rounded-full bg-slate-400 ${density.id === 'compact' ? 'w-4' : 'w-6'}`} />
+                            <span className={`h-1 rounded-full bg-slate-300 ${density.id === 'compact' ? 'w-3' : 'w-5'}`} />
+                          </div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-slate-900" />}
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 block">
+                            {density.name}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium block">
+                            {density.desc}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3: Live Interactive Theme Preview */}
+            <div className="pt-2 border-t border-slate-100 space-y-3">
+              <div>
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Live Theme Component Preview
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Instant real-time preview of buttons, active badges, and status pills using your active theme configuration.
+                </p>
+              </div>
+
+              {(() => {
+                const currentPreset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
+                return (
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        style={{ backgroundColor: currentPreset.primaryColor }}
+                        className="px-3.5 py-1.5 rounded-xl text-white text-xs font-bold shadow-xs cursor-pointer hover:opacity-90 transition"
+                      >
+                        Primary Action Button
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          backgroundColor: currentPreset.lightBg,
+                          borderColor: currentPreset.lightBorder,
+                          color: currentPreset.textColor,
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl border text-xs font-bold shadow-2xs cursor-pointer hover:opacity-90 transition"
+                      >
+                        Subtle Accent Button
+                      </button>
+
+                      <span
+                        style={{
+                          backgroundColor: currentPreset.lightBg,
+                          borderColor: currentPreset.lightBorder,
+                          color: currentPreset.textColor,
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold border"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Active State Status</span>
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 font-medium">
+                      Theme applied system-wide and saved across sessions.
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -1800,22 +2067,6 @@ export const SettingsView: React.FC = () => {
                     <LinkIcon className="w-3.5 h-3.5 text-teal-600" />
                     <span>Web URL</span>
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLogoInputType('presets');
-                      setLogoError(null);
-                    }}
-                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                      logoInputType === 'presets'
-                        ? 'bg-white text-slate-900 shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Preset Crests</span>
-                  </button>
                 </div>
 
                 {/* Tab 1: File Upload & Drag-and-Drop */}
@@ -1901,52 +2152,6 @@ export const SettingsView: React.FC = () => {
                   </div>
                 )}
 
-                {/* Tab 3: Preset Crests Gallery */}
-                {logoInputType === 'presets' && (
-                  <div className="space-y-3">
-                    <p className="text-[11px] text-slate-500">
-                      Choose from our library of ready-to-use vector institutional crests:
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {PRESET_CRESTS.map((preset) => {
-                        const isSelected = profileData.logoUrl === preset.url;
-                        return (
-                          <div
-                            key={preset.id}
-                            onClick={() => {
-                              if (hasPermission('settings.manage')) {
-                                handleSelectPresetLogo(preset.url, preset.name);
-                              }
-                            }}
-                            className={`p-3 rounded-xl border-2 transition cursor-pointer flex items-center gap-3 ${
-                              isSelected
-                                ? 'border-teal-600 bg-teal-50/30 ring-1 ring-teal-600/30'
-                                : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/50'
-                            }`}
-                          >
-                            <img
-                              src={preset.url}
-                              alt={preset.name}
-                              className="w-11 h-11 object-contain rounded-lg border border-slate-100 shrink-0 bg-white p-0.5"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <span className="font-bold text-xs text-slate-900 block truncate">
-                                {preset.name}
-                              </span>
-                              <span className="text-[10px] text-slate-500 line-clamp-1">
-                                {preset.description}
-                              </span>
-                            </div>
-                            {isSelected && (
-                              <CheckCircle className="w-4 h-4 text-teal-600 shrink-0" />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
                 {/* Error Banner if any */}
                 {logoError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-semibold flex items-center gap-2">
@@ -1958,106 +2163,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Card 2: Live Branding & Output Preview */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Sparkles className="w-4 h-4 text-teal-600" />
-                Live Branding Preview Across Modules
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Preview how your school emblem and contact details will appear in real-time across various interfaces:
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Preview 1: App Header Bar & Sidebar */}
-              <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 space-y-2">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-teal-400 block">
-                  1. Navigation Header & Sidebar
-                </span>
-                <div className="bg-slate-800/90 border border-slate-700/80 rounded-lg p-2.5 flex items-center gap-3">
-                  {profileData.logoUrl ? (
-                    <img
-                      src={profileData.logoUrl}
-                      alt={profileData.name}
-                      className="w-8 h-8 object-contain rounded-md bg-white p-0.5 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-md bg-teal-600 flex items-center justify-center text-white font-bold text-xs shrink-0">
-                      {profileData.name ? profileData.name.charAt(0) : 'S'}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <span className="text-xs font-bold text-white block truncate">
-                      {profileData.name || 'Institute Name'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block truncate">
-                      {profileData.regNo ? `Reg: ${profileData.regNo}` : 'Fee Management Portal'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Preview 2: Printable Fee Voucher Copy */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-teal-700 block">
-                  2. Printable Fee Voucher Copy
-                </span>
-                <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center gap-2.5 shadow-2xs">
-                  {profileData.logoUrl ? (
-                    <img
-                      src={profileData.logoUrl}
-                      alt={profileData.name}
-                      className="w-7 h-7 object-contain rounded-sm border border-slate-100 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-7 h-7 rounded-sm bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold text-[10px] shrink-0">
-                      {profileData.name ? profileData.name.charAt(0) : 'S'}
-                    </div>
-                  )}
-                  <div className="min-w-0 text-center flex-1">
-                    <span className="text-[11px] font-black text-slate-900 uppercase block truncate">
-                      {profileData.name || 'INSTITUTE NAME'}
-                    </span>
-                    <span className="text-[9px] font-bold text-teal-800 uppercase block">
-                      FEE VOUCHER &bull; COPY
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Preview 3: Official Collections & Ledger PDF */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-teal-700 block">
-                  3. Official PDF Statement
-                </span>
-                <div className="bg-white border border-slate-200 rounded-lg p-2.5 flex items-center gap-2.5 shadow-2xs">
-                  {profileData.logoUrl ? (
-                    <img
-                      src={profileData.logoUrl}
-                      alt={profileData.name}
-                      className="w-8 h-8 object-contain rounded-sm border border-slate-200 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-sm bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-bold text-xs shrink-0">
-                      {profileData.name ? profileData.name.charAt(0) : 'S'}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <span className="text-xs font-black text-slate-900 uppercase block truncate">
-                      {profileData.name || 'INSTITUTE NAME'}
-                    </span>
-                    <span className="text-[9px] text-slate-500 block truncate">
-                      {profileData.address || 'Campus Address & Contact Details'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 3: Institute Information Fields */}
+          {/* Card 2: Institute Information Fields */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
             <h3 className="font-bold text-slate-900 text-sm border-b border-slate-100 pb-2 flex items-center gap-2">
               <Building2 className="w-4 h-4 text-teal-600" />
@@ -2149,7 +2255,7 @@ export const SettingsView: React.FC = () => {
                   className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  Save Profile & Branding
+                  Save Profile
                 </button>
               </div>
             )}
@@ -2159,412 +2265,551 @@ export const SettingsView: React.FC = () => {
 
       {/* Subtab 2: Voucher Generation Policies */}
       {activeSubTab === 'policies' && (
-        <div className="space-y-6">
-          {/* Policy 1: Prior Month Fee Voucher Generation Rules */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Sliders className="w-4 h-4 text-teal-600" />
-                Prior Month Fee Voucher Generation Policy
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Configure how the system handles fee voucher generation when attempting to generate a voucher for a month prior to a student's latest generated voucher month (e.g. generating July 2026 when August 2026 already exists).
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4">
-              {/* Rule 1: Strict Chronological Rule */}
-              <div
-                onClick={() => setSelectedPriorRule('strict')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedPriorRule === 'strict'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="priorMonthRule"
-                    value="strict"
-                    checked={selectedPriorRule === 'strict'}
-                    onChange={() => setSelectedPriorRule('strict')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <ShieldAlert className="w-4 h-4 text-slate-700 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        1. Strict Chronological Rule
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Prohibit generating vouchers for prior months.</strong> If a student already has a voucher issued for any future month (e.g., August 2026), generating a voucher for a prior month (e.g., July 2026) is strictly blocked for that student.
-                    </p>
-                    <div className="text-[11px] text-slate-600 bg-slate-100/80 p-2 rounded-lg mt-2">
-                      ✓ Guarantees strict month-by-month chronological sequence and prevents accounting arrears discrepancies.
-                    </div>
-                  </div>
+        <div className="space-y-4">
+          {/* Top Section: Default Late Payment Fine Rate */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-200/60 shrink-0">
+                  <Clock className="w-5 h-5" />
                 </div>
-              </div>
-
-              {/* Rule 2: Sequential Month Warning */}
-              <div
-                onClick={() => setSelectedPriorRule('warning')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedPriorRule === 'warning'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="priorMonthRule"
-                    value="warning"
-                    checked={selectedPriorRule === 'warning'}
-                    onChange={() => setSelectedPriorRule('warning')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        2. Sequential Month Warning
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Allow generation with mandatory consequence alert.</strong> Allows generating vouchers for prior months, but prompts the user with an explicit alert summarizing that existing future vouchers will retain their current static balance figures.
-                    </p>
-                    <div className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded-lg mt-2 border border-amber-200/60">
-                      ⚠️ Generating July 2026 will create the voucher, but August 2026 vouchers will NOT automatically inherit new arrears unless manually adjusted.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rule 3: Auto-Recalculate Future Arrears */}
-              <div
-                onClick={() => setSelectedPriorRule('recalculate')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedPriorRule === 'recalculate'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="priorMonthRule"
-                    value="recalculate"
-                    checked={selectedPriorRule === 'recalculate'}
-                    onChange={() => setSelectedPriorRule('recalculate')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <RefreshCw className="w-4 h-4 text-indigo-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        3. Auto-Recalculate Arrears
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Allow generation and automatically recalculate future arrears.</strong> Allows generating prior month vouchers AND automatically updates the previous balance arrears (`prevBalance`) and net due totals for all subsequent future vouchers.
-                    </p>
-                    <div className="text-[11px] text-indigo-900 bg-indigo-50 p-2 rounded-lg mt-2 border border-indigo-200/60">
-                      🔄 Generating July 2026 will automatically recalculate August 2026 (and any subsequent) vouchers to reflect updated carry-over balance arrears.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Policy 2: Skipped Month Fee Voucher Generation Rules */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Sliders className="w-4 h-4 text-teal-600" />
-                Skipped Month Fee Voucher Generation Policy
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Configure how the system handles fee voucher generation when intermediate billing months are skipped (e.g. generating October 2026 when September 2026 was never generated for a student).
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4">
-              {/* Skipped Rule 1: Skipped Month Warning Prompt */}
-              <div
-                onClick={() => setSelectedSkippedRule('warning')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedSkippedRule === 'warning'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="skippedMonthRule"
-                    value="warning"
-                    checked={selectedSkippedRule === 'warning'}
-                    onChange={() => setSelectedSkippedRule('warning')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        1. Skipped Month Warning Prompt
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Allow generation with mandatory warning alert.</strong> Prompts the user with a confirmation alert summarizing that intermediate prior month(s) (e.g., September 2026) were skipped and will remain unbilled unless created later.
-                    </p>
-                    <div className="text-[11px] text-amber-900 bg-amber-50 p-2 rounded-lg mt-2 border border-amber-200/60">
-                      ⚠️ Generating October 2026 will proceed after confirmation, but September 2026 tuition will remain unbilled until generated.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Skipped Rule 2: Strict Sequential Generation Rule */}
-              <div
-                onClick={() => setSelectedSkippedRule('strict')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedSkippedRule === 'strict'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="skippedMonthRule"
-                    value="strict"
-                    checked={selectedSkippedRule === 'strict'}
-                    onChange={() => setSelectedSkippedRule('strict')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <ShieldAlert className="w-4 h-4 text-slate-700 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        2. Strict Sequential Generation Rule
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Prohibit generating vouchers if prior months were skipped.</strong> Strictly enforces that every preceding billing cycle must be generated before issuing future vouchers for that student.
-                    </p>
-                    <div className="text-[11px] text-slate-600 bg-slate-100/80 p-2 rounded-lg mt-2">
-                      ✓ Guarantees no missing billing cycles or unbilled months in student accounting histories.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Skipped Rule 3: Allow Independent Generation */}
-              <div
-                onClick={() => setSelectedSkippedRule('allow')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedSkippedRule === 'allow'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="skippedMonthRule"
-                    value="allow"
-                    checked={selectedSkippedRule === 'allow'}
-                    onChange={() => setSelectedSkippedRule('allow')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        3. Allow Independent Generation
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Allow generation without prompts or restrictions for skipped months.</strong> Generates fee vouchers for the selected target month regardless of whether prior months were generated.
-                    </p>
-                    <div className="text-[11px] text-emerald-900 bg-emerald-50 p-2 rounded-lg mt-2 border border-emerald-200/60">
-                      ℹ️ Allows generating October 2026 seamlessly regardless of whether September 2026 was generated.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Policy 3: Voucher Deletion & Chronological Sequence Resolution Policy */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2 border-b border-slate-100 pb-2">
-                <Trash2 className="w-4 h-4 text-teal-600" />
-                Voucher Deletion & Chronological Resolution Policy
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Configure how the system resolves balance continuity and chronological dependencies when a voucher is deleted and subsequent billing month vouchers already exist for the student.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4">
-              {/* Option 1: Cascade Delete */}
-              <div
-                onClick={() => setSelectedDeletionResolution('cascade')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedDeletionResolution === 'cascade'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="deletionResolution"
-                    value="cascade"
-                    checked={selectedDeletionResolution === 'cascade'}
-                    onChange={() => setSelectedDeletionResolution('cascade')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        1. Cascade Delete All Subsequent Vouchers
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Delete target voucher AND all subsequent future month vouchers.</strong> Deletes the selected voucher as well as any newer vouchers issued for the student to start fresh.
-                    </p>
-                    <div className="text-[11px] text-rose-900 bg-rose-50 p-2 rounded-lg mt-2 border border-rose-200/60">
-                      🗑️ Deleting July 2026 will also delete August 2026 (and any newer vouchers) for that student, establishing a clean slate.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Option 2: Auto-Heal */}
-              <div
-                onClick={() => setSelectedDeletionResolution('auto-heal')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedDeletionResolution === 'auto-heal'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="deletionResolution"
-                    value="auto-heal"
-                    checked={selectedDeletionResolution === 'auto-heal'}
-                    onChange={() => setSelectedDeletionResolution('auto-heal')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        2. Auto-Heal & Recalculate Subsequent Vouchers
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Delete target voucher and automatically recalculate future balances.</strong> Removes the voucher and automatically re-evaluates all remaining future vouchers for the student to eliminate ghost arrears and correct net dues.
-                    </p>
-                    <div className="text-[11px] text-emerald-900 bg-emerald-50 p-2 rounded-lg mt-2 border border-emerald-200/60">
-                      ✓ Deleting a prior month voucher will seamlessly heal downstream vouchers with accurate carry-over balances without deleting them.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Option 3: Strict Reverse Chronological */}
-              <div
-                onClick={() => setSelectedDeletionResolution('manual')}
-                className={`p-4 rounded-xl border-2 transition cursor-pointer relative ${
-                  selectedDeletionResolution === 'manual'
-                    ? 'border-teal-600 bg-teal-50/30 shadow-xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <input
-                    type="radio"
-                    name="deletionResolution"
-                    value="manual"
-                    checked={selectedDeletionResolution === 'manual'}
-                    onChange={() => setSelectedDeletionResolution('manual')}
-                    className="mt-1 text-teal-600 focus:ring-teal-500"
-                  />
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2">
-                      <ArrowUp className="w-4 h-4 text-slate-700 shrink-0" />
-                      <span className="font-bold text-sm text-slate-900">
-                        3. Strict Reverse Chronological (Prohibit Gap Deletion)
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      <strong>Prohibit deleting prior month vouchers when subsequent vouchers exist.</strong> Strictly enforces that operators must manually delete newer future month vouchers first before removing any prior month record.
-                    </p>
-                    <div className="text-[11px] text-slate-700 bg-slate-100/80 p-2 rounded-lg mt-2 border border-slate-200/80">
-                      🔒 Enforces strict reverse-chronological deletion: operators must delete August 2026 before deleting July 2026.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Policy 4: Default Late Fee / Surcharge Rate */}
-            <div className="pt-4 border-t border-slate-100 space-y-3">
-              <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-600" />
-                    Default Late Payment Fine / Surcharge Amount (Rs.)
-                  </h4>
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                    Default Late Payment Fine / Surcharge Rate
+                    {selectedLateFeeRate !== defaultLateFeeRate && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        Modified
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Pre-fills the default late fine rate during fee voucher generation and defaulter carry forwards.
+                    Pre-fills the overdue late surcharge during monthly voucher generation and student defaulter carry-forwards.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative w-36">
-                    <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rs.</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="50"
-                      id="input-default-late-fee-rate"
-                      value={selectedLateFeeRate}
-                      onChange={(e) => setSelectedLateFeeRate(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
-                    />
-                  </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                <div className="relative w-36">
+                  <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rs.</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    id="input-default-late-fee-rate"
+                    disabled={!hasPermission('settings.manage')}
+                    value={selectedLateFeeRate}
+                    onChange={(e) => setSelectedLateFeeRate(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
+                  />
                 </div>
               </div>
             </div>
+          </div>
 
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+          {/* Main Card: Three Category Tabs for Policies */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+            {/* Category Tab Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl w-full sm:w-auto overflow-x-auto">
+                <button
+                  type="button"
+                  id="tab-policy-prior"
+                  onClick={() => setPolicyCategoryTab('prior')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    policyCategoryTab === 'prior'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5 text-teal-600" />
+                  <span>1. Prior Month Policy</span>
+                  {selectedPriorRule !== priorMonthRule && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  id="tab-policy-skipped"
+                  onClick={() => setPolicyCategoryTab('skipped')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    policyCategoryTab === 'skipped'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>2. Skipped Month Policy</span>
+                  {selectedSkippedRule !== skippedMonthRule && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  id="tab-policy-deletion"
+                  onClick={() => setPolicyCategoryTab('deletion')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                    policyCategoryTab === 'deletion'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>3. Deletion & Sequence</span>
+                  {selectedDeletionResolution !== voucherDeletionResolution && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  )}
+                </button>
+              </div>
+
+              <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">
+                Click a category tab to adjust rules
+              </span>
+            </div>
+
+            {/* Tab 1 Content: Prior Month Voucher Generation Rules */}
+            {policyCategoryTab === 'prior' && (
+              <div className="space-y-3 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <Sliders className="w-4 h-4 text-teal-600" />
+                      Prior Month Generation Rule
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Handles generating a voucher for a month prior to student’s latest generated voucher (e.g. generating July when August exists).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Rule 1: Strict Chronological Rule */}
+                  <div
+                    onClick={() => setSelectedPriorRule('strict')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedPriorRule === 'strict'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="priorMonthRule"
+                          value="strict"
+                          checked={selectedPriorRule === 'strict'}
+                          onChange={() => setSelectedPriorRule('strict')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <ShieldAlert className="w-3.5 h-3.5 text-slate-700 shrink-0" />
+                            1. Strict Chronological
+                          </span>
+                          <span className="text-[10px] text-teal-700 font-semibold uppercase tracking-wider block">
+                            (Prohibit Prior Months)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Blocks generating prior month vouchers if any newer month vouchers already exist for that student.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-slate-600 bg-slate-100/90 p-2 rounded-lg mt-2.5">
+                      ✓ Guarantees strict month-by-month accounting without arrears discrepancies.
+                    </div>
+                  </div>
+
+                  {/* Rule 2: Sequential Month Warning */}
+                  <div
+                    onClick={() => setSelectedPriorRule('warning')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedPriorRule === 'warning'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="priorMonthRule"
+                          value="warning"
+                          checked={selectedPriorRule === 'warning'}
+                          onChange={() => setSelectedPriorRule('warning')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            2. Warning Alert
+                          </span>
+                          <span className="text-[10px] text-amber-700 font-semibold uppercase tracking-wider block">
+                            (Allow with Alert)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Allows generating prior vouchers with a warning; downstream future vouchers keep static balances.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-amber-900 bg-amber-50 p-2 rounded-lg mt-2.5 border border-amber-200/60">
+                      ⚠️ Downstream vouchers will NOT automatically inherit newly added arrears.
+                    </div>
+                  </div>
+
+                  {/* Rule 3: Auto-Recalculate Future Arrears */}
+                  <div
+                    onClick={() => setSelectedPriorRule('recalculate')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedPriorRule === 'recalculate'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="priorMonthRule"
+                          value="recalculate"
+                          checked={selectedPriorRule === 'recalculate'}
+                          onChange={() => setSelectedPriorRule('recalculate')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <RefreshCw className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            3. Auto-Recalculate
+                          </span>
+                          <span className="text-[10px] text-indigo-700 font-semibold uppercase tracking-wider block">
+                            (Auto-Update Future Dues)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Generates prior voucher and automatically updates previous balances (`prevBalance`) across future vouchers.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-indigo-900 bg-indigo-50 p-2 rounded-lg mt-2.5 border border-indigo-200/60">
+                      🔄 Automatically updates all subsequent vouchers to reflect carry-over arrears.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2 Content: Skipped Month Fee Voucher Generation Rules */}
+            {policyCategoryTab === 'skipped' && (
+              <div className="space-y-3 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      Skipped Month Generation Rule
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Handles generating a voucher when intermediate months were skipped (e.g. generating October when September was not generated).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Skipped Rule 1: Warning Prompt */}
+                  <div
+                    onClick={() => setSelectedSkippedRule('warning')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedSkippedRule === 'warning'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="skippedMonthRule"
+                          value="warning"
+                          checked={selectedSkippedRule === 'warning'}
+                          onChange={() => setSelectedSkippedRule('warning')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            1. Warning Alert
+                          </span>
+                          <span className="text-[10px] text-amber-700 font-semibold uppercase tracking-wider block">
+                            (Confirm Skipped Gaps)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Prompts the user with a warning explaining that intermediate months will remain unbilled.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-amber-900 bg-amber-50 p-2 rounded-lg mt-2.5 border border-amber-200/60">
+                      ⚠️ Allows generation after confirmation; missing months stay unbilled.
+                    </div>
+                  </div>
+
+                  {/* Skipped Rule 2: Strict Sequential */}
+                  <div
+                    onClick={() => setSelectedSkippedRule('strict')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedSkippedRule === 'strict'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="skippedMonthRule"
+                          value="strict"
+                          checked={selectedSkippedRule === 'strict'}
+                          onChange={() => setSelectedSkippedRule('strict')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <ShieldAlert className="w-3.5 h-3.5 text-slate-700 shrink-0" />
+                            2. Strict Sequential
+                          </span>
+                          <span className="text-[10px] text-teal-700 font-semibold uppercase tracking-wider block">
+                            (Block Skipped Gaps)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Strictly blocks generating future months if any preceding billing month was never issued.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-slate-600 bg-slate-100/90 p-2 rounded-lg mt-2.5">
+                      ✓ Enforces unbroken billing continuity without missing monthly periods.
+                    </div>
+                  </div>
+
+                  {/* Skipped Rule 3: Allow Independent */}
+                  <div
+                    onClick={() => setSelectedSkippedRule('allow')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedSkippedRule === 'allow'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="skippedMonthRule"
+                          value="allow"
+                          checked={selectedSkippedRule === 'allow'}
+                          onChange={() => setSelectedSkippedRule('allow')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            3. Independent
+                          </span>
+                          <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider block">
+                            (No Prompts / Unrestricted)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Generates vouchers for any chosen month regardless of whether prior months were generated.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-emerald-900 bg-emerald-50 p-2 rounded-lg mt-2.5 border border-emerald-200/60">
+                      ℹ️ Allows independent billing generation for custom schedule scenarios.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3 Content: Voucher Deletion & Chronological Sequence Resolution Policy */}
+            {policyCategoryTab === 'deletion' && (
+              <div className="space-y-3 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <Trash2 className="w-4 h-4 text-rose-600" />
+                      Voucher Deletion & Chronological Resolution
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Handles balance continuity and dependencies when a voucher is deleted and newer vouchers already exist.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Option 1: Cascade Delete */}
+                  <div
+                    onClick={() => setSelectedDeletionResolution('cascade')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedDeletionResolution === 'cascade'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="deletionResolution"
+                          value="cascade"
+                          checked={selectedDeletionResolution === 'cascade'}
+                          onChange={() => setSelectedDeletionResolution('cascade')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            1. Cascade Delete
+                          </span>
+                          <span className="text-[10px] text-rose-700 font-semibold uppercase tracking-wider block">
+                            (Purge Subsequent)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Deleting a voucher permanently deletes all subsequent newer month vouchers for that student.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-rose-900 bg-rose-50 p-2 rounded-lg mt-2.5 border border-rose-200/60">
+                      🗑️ Clean slate: deleting July 2026 also removes August 2026 vouchers.
+                    </div>
+                  </div>
+
+                  {/* Option 2: Auto-Heal */}
+                  <div
+                    onClick={() => setSelectedDeletionResolution('auto-heal')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedDeletionResolution === 'auto-heal'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="deletionResolution"
+                          value="auto-heal"
+                          checked={selectedDeletionResolution === 'auto-heal'}
+                          onChange={() => setSelectedDeletionResolution('auto-heal')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            2. Auto-Heal
+                          </span>
+                          <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider block">
+                            (Recalculate Balances)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Removes target voucher and automatically heals subsequent vouchers with updated carry-over balances.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-emerald-900 bg-emerald-50 p-2 rounded-lg mt-2.5 border border-emerald-200/60">
+                      ✓ Seamlessly repairs future balances without deleting subsequent records.
+                    </div>
+                  </div>
+
+                  {/* Option 3: Strict Reverse Chronological */}
+                  <div
+                    onClick={() => setSelectedDeletionResolution('manual')}
+                    className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
+                      selectedDeletionResolution === 'manual'
+                        ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="deletionResolution"
+                          value="manual"
+                          checked={selectedDeletionResolution === 'manual'}
+                          onChange={() => setSelectedDeletionResolution('manual')}
+                          className="mt-0.5 text-teal-600 focus:ring-teal-500"
+                        />
+                        <div>
+                          <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
+                            <ArrowUp className="w-3.5 h-3.5 text-slate-700 shrink-0" />
+                            3. Strict Reverse
+                          </span>
+                          <span className="text-[10px] text-slate-700 font-semibold uppercase tracking-wider block">
+                            (Prohibit Gaps)
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
+                        Blocks deleting prior vouchers until all newer future month vouchers are deleted in reverse order.
+                      </p>
+                    </div>
+                    <div className="text-[10px] text-slate-700 bg-slate-100/90 p-2 rounded-lg mt-2.5 border border-slate-200/80">
+                      🔒 Enforces manual reverse deletion: delete August before deleting July.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Unsaved Policy Modifications Alert Banner */}
+            {hasPolicyChanges && (
+              <div className="p-3 bg-amber-50/95 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs text-amber-900 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    You have unsaved policy changes. Review your selections and click save to apply.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetPolicyDrafts}
+                  className="px-2.5 py-1 bg-white hover:bg-amber-100 border border-amber-300 rounded-lg text-amber-800 font-semibold text-[11px] shrink-0 cursor-pointer self-end sm:self-auto"
+                >
+                  Reset to Saved
+                </button>
+              </div>
+            )}
+
+            {/* Action Bar */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              {hasPolicyChanges && (
+                <button
+                  type="button"
+                  onClick={handleResetPolicyDrafts}
+                  className="px-3.5 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold rounded-xl text-xs transition cursor-pointer"
+                >
+                  Discard Changes
+                </button>
+              )}
               <button
                 type="button"
                 id="btn-save-voucher-policies"
                 disabled={!hasPermission('settings.manage')}
-                onClick={() => {
-                  setPriorMonthRule(selectedPriorRule);
-                  setSkippedMonthRule(selectedSkippedRule);
-                  setVoucherDeletionResolution(selectedDeletionResolution);
-                  setDefaultLateFeeRate(selectedLateFeeRate);
-                  setToastMessage('Fee Voucher Policies updated successfully!');
-                  setTimeout(() => setToastMessage(null), 3500);
-                }}
-                className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                onClick={handleSavePolicyClick}
+                className={`px-4 py-2 font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50 ${
+                  hasPolicyChanges
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white ring-2 ring-amber-500/20'
+                    : 'bg-teal-600 hover:bg-teal-700 text-white'
+                }`}
               >
-                <Save className="w-4 h-4" />
-                Save Policy Options
+                <Save className="w-3.5 h-3.5" />
+                {hasPolicyChanges ? 'Review & Save Policy Options' : 'Save Policy Options'}
               </button>
             </div>
           </div>
@@ -4501,6 +4746,141 @@ export const SettingsView: React.FC = () => {
         onConfirm={handleConfirmDeleteBank}
         onClose={() => setBankToDelete(null)}
       />
+
+      {/* Fee Voucher Policy Change Warning Confirmation Modal */}
+      {showPolicyConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[88vh]">
+            {/* Compact Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-amber-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg shrink-0 border border-amber-200">
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                    Confirm Policy Changes
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Review modified rules & operational impacts
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPolicyConfirmModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition hover:bg-white/60 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body: Compact List of Modified Policies */}
+            <div className="p-4 overflow-y-auto space-y-2.5 text-xs divide-y divide-slate-100">
+              {/* Late Fee Rate (Promoted to Top) */}
+              {selectedLateFeeRate !== defaultLateFeeRate && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      Late Surcharge Rate
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      Rs. {defaultLateFeeRate} &rarr; <span className="text-teal-700 font-extrabold">Rs. {selectedLateFeeRate}</span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
+                    <strong>Impact:</strong> Updates default fine pre-fill for new vouchers and month-end defaulter carry-forwards.
+                  </div>
+                </div>
+              )}
+
+              {/* Prior Month Rule */}
+              {selectedPriorRule !== priorMonthRule && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-teal-600" />
+                      Prior Month Generation
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {priorMonthRule} &rarr; <span className="text-teal-700 font-extrabold">{selectedPriorRule}</span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {selectedPriorRule === 'strict' && 'Blocks generation for any month prior to student’s latest issued month.'}
+                    {selectedPriorRule === 'warning' && 'Allows prior-month vouchers after warning; downstream figures remain static.'}
+                    {selectedPriorRule === 'recalculate' && 'Auto-updates prior balances and recalculates net dues across subsequent vouchers.'}
+                  </div>
+                </div>
+              )}
+
+              {/* Skipped Month Rule */}
+              {selectedSkippedRule !== skippedMonthRule && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-teal-600" />
+                      Skipped Month Generation
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {skippedMonthRule} &rarr; <span className="text-teal-700 font-extrabold">{selectedSkippedRule}</span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {selectedSkippedRule === 'strict' && 'Strictly blocks generation if any preceding month in billing history was skipped.'}
+                    {selectedSkippedRule === 'warning' && 'Warns operators when skipping intermediate months before proceeding.'}
+                    {selectedSkippedRule === 'allow' && 'Allows independent generation for any target month without gap checks.'}
+                  </div>
+                </div>
+              )}
+
+              {/* Voucher Deletion Policy */}
+              {selectedDeletionResolution !== voucherDeletionResolution && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      Voucher Deletion Policy
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {voucherDeletionResolution} &rarr; <span className="text-teal-700 font-extrabold">{selectedDeletionResolution}</span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-rose-50/80 border border-rose-200/70 rounded-lg text-[11px] text-rose-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {selectedDeletionResolution === 'cascade' && 'Deleting a prior voucher permanently deletes all newer subsequent vouchers.'}
+                    {selectedDeletionResolution === 'auto-heal' && 'Deleting a voucher auto-heals subsequent vouchers and recalculates balances.'}
+                    {selectedDeletionResolution === 'manual' && 'Deleting prior vouchers is blocked until newer vouchers are deleted in reverse order.'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Compact Modal Footer */}
+            <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPolicyConfirmModal(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-apply-policies"
+                onClick={handleConfirmPolicyChanges}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Apply Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast Notification */}
       {toastMessage && (

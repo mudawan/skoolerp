@@ -2,6 +2,8 @@ import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, StudentDocument, StudentStatus } from '../types';
 import { formatCurrency, calculateAge } from '../utils/feeMath';
+import { MonthPicker } from './MonthPicker';
+import { DatePicker } from './DatePicker';
 import { StudentAvatar } from './StudentAvatar';
 import {
   AlertCircle,
@@ -35,6 +37,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     students,
     classes,
     families,
+    themeConfig,
     addStudent,
     updateStudent,
   } = useApp();
@@ -108,7 +111,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     status: student?.status || ('Active' as StudentStatus),
 
     // 2. Other Information
-    dob: student?.dob || '2016-01-01',
+    dob: student?.dob || '',
     gender: ((student?.gender === 'Female') ? 'Female' : 'Male') as 'Male' | 'Female',
     bFormNo: student?.bFormNo || '',
     familyId: student?.familyId || '',
@@ -406,7 +409,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       notes: formData.notes.trim() || undefined,
       photoUrl: formData.photoUrl.trim() || undefined,
 
-      dob: formData.dob,
+      dob: formData.dob ? formData.dob.trim() : undefined,
       gender: formData.gender,
       bFormNo: formData.bFormNo.trim() || undefined,
       familyId: formData.familyId || undefined,
@@ -628,19 +631,20 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">
                   Date of Admission *
                 </label>
-                <input
-                  type="date"
-                  required
+                <DatePicker
                   value={formData.admissionDate}
-                  onChange={(e) => {
-                    const newAdmDate = e.target.value;
+                  required
+                  themeColor={themeConfig?.color || 'teal'}
+                  onChange={(newAdmDate) => {
                     setFormData((prev) => ({
                       ...prev,
                       admissionDate: newAdmDate,
                       firstBillingMonth: prev.firstBillingMonth || (newAdmDate ? newAdmDate.substring(0, 7) : ''),
                     }));
                   }}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-semibold"
+                  idPrefix="student-admission-date"
+                  placeholder="Select Admission Date"
+                  className="w-full"
                 />
               </div>
 
@@ -649,12 +653,16 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">
                   First Fee Billing Month *
                 </label>
-                <input
-                  type="month"
-                  required
+                <MonthPicker
                   value={formData.firstBillingMonth}
-                  onChange={(e) => setFormData({ ...formData, firstBillingMonth: e.target.value })}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-semibold text-slate-900"
+                  onChange={(newMonth) => setFormData({ ...formData, firstBillingMonth: newMonth })}
+                  themeColor={themeConfig?.color || 'teal'}
+                  isLight={true}
+                  showSteppers={false}
+                  variant="input"
+                  className="w-full"
+                  idPrefix="student-first-billing-month"
+                  placeholder="Select Starting Month"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">
                   Voucher generation begins from this month
@@ -768,11 +776,15 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                     </span>
                   )}
                 </div>
-                <input
-                  type="date"
+                <DatePicker
                   value={formData.dob}
-                  onChange={(e) => setFormData({ ...formData, dob: e.target.value })}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-semibold"
+                  minYear={1990}
+                  maxYear={new Date().getFullYear()}
+                  themeColor={themeConfig?.color || 'teal'}
+                  onChange={(newDob) => setFormData({ ...formData, dob: newDob })}
+                  idPrefix="student-dob"
+                  placeholder="Select Date of Birth"
+                  className="w-full"
                 />
               </div>
 
