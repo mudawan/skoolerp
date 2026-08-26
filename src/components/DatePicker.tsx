@@ -9,8 +9,6 @@ export interface DatePickerProps {
   maxDate?: string; // 'YYYY-MM-DD'
   minYear?: number;
   maxYear?: number;
-  defaultViewYear?: number;
-  defaultViewMonth?: number; // 0-11
   themeColor?: string;
   className?: string;
   idPrefix?: string;
@@ -40,8 +38,6 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   maxDate,
   minYear = 1950,
   maxYear = 2050,
-  defaultViewYear,
-  defaultViewMonth,
   themeColor = 'teal',
   className = '',
   idPrefix = 'date-picker',
@@ -74,11 +70,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
   // Grid view year and month
   const [viewYear, setViewYear] = useState<number>(
-    parsedDate ? parsedDate.year : (defaultViewYear ?? today.year)
+    parsedDate ? parsedDate.year : today.year
   );
   const [viewMonth, setViewMonth] = useState<number>(
-    parsedDate ? parsedDate.month : (defaultViewMonth ?? today.month)
+    parsedDate ? parsedDate.month : today.month
   );
+
+  const [isSelectingYear, setIsSelectingYear] = useState(false);
 
   const preset = THEME_COLOR_PRESETS[themeColor] || THEME_COLOR_PRESETS.teal;
 
@@ -87,11 +85,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     if (parsedDate) {
       setViewYear(parsedDate.year);
       setViewMonth(parsedDate.month);
-    } else {
-      if (defaultViewYear !== undefined) setViewYear(defaultViewYear);
-      if (defaultViewMonth !== undefined) setViewMonth(defaultViewMonth);
     }
-  }, [parsedDate, defaultViewYear, defaultViewMonth]);
+  }, [parsedDate]);
 
   // Click outside listener
   useEffect(() => {

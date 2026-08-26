@@ -217,7 +217,7 @@ export const SettingsView: React.FC = () => {
       const result = e.target?.result as string;
       if (result) {
         setProfileData((prev) => ({ ...prev, logoUrl: result }));
-        showToast('Logo loaded! Click "Save Profile" to save.', 'info');
+        showToast('Logo loaded! Click "Save Profile & Branding" to save.', 'info');
       }
     };
     reader.onerror = () => {
@@ -243,7 +243,7 @@ export const SettingsView: React.FC = () => {
     }
     setProfileData((prev) => ({ ...prev, logoUrl: trimmed }));
     setCustomLogoUrl('');
-    showToast('Logo URL applied! Click "Save Profile" to save.', 'info');
+    showToast('Logo URL applied! Click "Save Profile & Branding" to save.', 'info');
   };
 
   const handleRemoveLogo = () => {
@@ -2255,7 +2255,7 @@ export const SettingsView: React.FC = () => {
                   className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
                 >
                   <Save className="w-4 h-4" />
-                  Save Profile
+                  Save Profile & Branding
                 </button>
               </div>
             )}
