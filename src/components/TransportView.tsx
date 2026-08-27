@@ -146,6 +146,27 @@ export const TransportView: React.FC = () => {
     };
   }, [isStudentComboOpen]);
 
+  // Sorting state for assignments list
+  type AsgnSortField = 'student' | 'class' | 'bus' | 'stop' | 'tripType' | 'days' | 'discount' | 'fare';
+  const [sortField, setSortField] = useState<AsgnSortField>('student');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const handleSort = (field: AsgnSortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
+
+  // Edit targets state
+  const [editingBus, setEditingBus] = useState<TransportBus | null>(null);
+  const [editingStop, setEditingStop] = useState<TransportStop | null>(null);
+  const [editingAsgn, setEditingAsgn] = useState<TransportAssignment | null>(null);
+
+  // Close the top-most open modal/overlay when Escape is pressed. Declared
+  // after all the state it references so the active flag evaluates cleanly.
   useEscapeKey(() => {
     if (isStudentComboOpen) {
       setIsStudentComboOpen(false);
@@ -178,25 +199,6 @@ export const TransportView: React.FC = () => {
     showBusModal ||
     editingBus
   ));
-
-  // Sorting state for assignments list
-  type AsgnSortField = 'student' | 'class' | 'bus' | 'stop' | 'tripType' | 'days' | 'discount' | 'fare';
-  const [sortField, setSortField] = useState<AsgnSortField>('student');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
-  const handleSort = (field: AsgnSortField) => {
-    if (sortField === field) {
-      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
-    }
-  };
-
-  // Edit targets state
-  const [editingBus, setEditingBus] = useState<TransportBus | null>(null);
-  const [editingStop, setEditingStop] = useState<TransportStop | null>(null);
-  const [editingAsgn, setEditingAsgn] = useState<TransportAssignment | null>(null);
 
   // Bus search and drag/drop sort state
   const [busSearchQuery, setBusSearchQuery] = useState('');

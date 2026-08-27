@@ -2560,6 +2560,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
+    } else {
+      // No voucher exists for this student in the target month. Create a
+      // real voucher there carrying the folded balance, so an outstanding
+      // prior / pre-billing Admission voucher's dues stay visible and
+      // collectable in the target (working) month instead of vanishing as a
+      // "hidden" source voucher. The particulars, totals and status are then
+      // normalized by recalculateVouchersSequence, which re-derives the
+      // PreviousBalance + carried late fine from the now-Carried source.
+      const student = students.find((s) => s.id === voucher.studentId);
+      const yearStr = targetMonth.split('-')[0];
+      const issuedDate = new Date().toISOString().split('T')[0];
+
+      const newVoucher: FeeVoucher = {
+        id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        voucherNo: `FE${yearStr}-${(updatedList.length + 1).toString().padStart(6, '0')}`,
+        studentId: voucher.studentId,
+        month: targetMonth,
+        classId: student?.classId || voucher.classId,
+        issueDate: issuedDate,
+        dueDate: '',
+        particulars: [],
+        grossTotal: 0,
+        discountTotal: 0,
+        prevBalance: 0,
+        lateFeeRate: voucher.lateFeeRate ?? defaultLateFeeRate,
+        netDue: 0,
+        amountPaid: 0,
+        status: 'Issued',
+        voucherType: 'Monthly',
+        createdDate: issuedDate,
+      };
+
+      updatedList.push(newVoucher);
+      updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
     }
 
     vouchersRef.current = updatedList;

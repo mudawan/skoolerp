@@ -106,8 +106,9 @@ export const VouchersView: React.FC = () => {
     () => Array.from(new Set(vouchers.map((v) => v.month))),
     [vouchers]
   );
-  const [scope, setScope] = useState<'all' | 'class' | 'students'>('all');
+  const [scope, setScope] = useState<'all' | 'class' | 'students' | 'student'>('all');
   const [scopeClassId, setScopeClassId] = useState(classes[0]?.id || '');
+  const [selectedSingleStudentId, setSelectedSingleStudentId] = useState<string>('');
   const [dueDateInput, setDueDateInput] = useState('');
   const [lateFeeInput, setLateFeeInput] = useState(defaultLateFeeRate || 500);
   const [selectedGenStudentIds, setSelectedGenStudentIds] = useState<string[]>([]);
@@ -438,16 +439,34 @@ export const VouchersView: React.FC = () => {
     startIndex + itemsPerPage
   );
 
+  // Build preview data + auto-selected ids for a given scope. The single
+  // 'student' scope maps onto the existing multi-student 'students' scope
+  // restricted to the one chosen student id.
+  const buildGeneratorPreview = (newScope: typeof scope, newClassId: string, newMonth: string) => {
+    let data: ReturnType<typeof previewVoucherGeneration>;
+    if (newScope === 'student') {
+      data = previewVoucherGeneration(newMonth, 'students', undefined, selectedSingleStudentId ? [selectedSingleStudentId] : []);
+    } else {
+      data = previewVoucherGeneration(newMonth, newScope, newClassId);
+    }
+    let selected: string[] = [];
+    if (newScope === 'student') {
+      selected = selectedSingleStudentId ? [selectedSingleStudentId] : [];
+    } else {
+      selected = data.previews
+        .filter((p) => !p.isAlreadyGenerated && !p.isBlockedByPriorRule && !p.isBlockedBySkippedRule && !p.isBeforeFirstBillingMonth)
+        .map((p) => p.student.id);
+    }
+    return { data, selected };
+  };
+
   const handleOpenGenerator = () => {
     const monthToUse = activeMonth;
     setTargetMonth(monthToUse);
     setDueDateInput('');
-    const data = previewVoucherGeneration(monthToUse, scope, scopeClassId);
+    const { data, selected } = buildGeneratorPreview(scope, scopeClassId, monthToUse);
     setPreviewsData(data);
-    const eligible = data.previews
-      .filter((p) => !p.isAlreadyGenerated && !p.isBlockedByPriorRule && !p.isBlockedBySkippedRule && !p.isBeforeFirstBillingMonth)
-      .map((p) => p.student.id);
-    setSelectedGenStudentIds(eligible);
+    setSelectedGenStudentIds(selected);
     setShowGeneratorModal(true);
   };
 
@@ -455,12 +474,16 @@ export const VouchersView: React.FC = () => {
     setScope(newScope);
     setScopeClassId(newClassId);
     setTargetMonth(newMonth);
-    const data = previewVoucherGeneration(newMonth, newScope, newClassId);
+    const { data, selected } = buildGeneratorPreview(newScope, newClassId, newMonth);
     setPreviewsData(data);
-    const eligible = data.previews
-      .filter((p) => !p.isAlreadyGenerated && !p.isBlockedByPriorRule && !p.isBlockedBySkippedRule && !p.isBeforeFirstBillingMonth)
-      .map((p) => p.student.id);
-    setSelectedGenStudentIds(eligible);
+    setSelectedGenStudentIds(selected);
+  };
+
+  const handleSingleStudentChange = (studentId: string) => {
+    setSelectedSingleStudentId(studentId);
+    const { data, selected } = buildGeneratorPreview('student', scopeClassId, targetMonth);
+    setPreviewsData(data);
+    setSelectedGenStudentIds(selected);
   };
 
   const handleSelectAllGen = () => {
@@ -1295,12 +1318,13 @@ export const VouchersView: React.FC = () => {
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Scope</label>
                     <select
-                      value={scope}
+                      value={scope === 'students' ? 'all' : scope}
                       onChange={(e) => handleUpdatePreview(e.target.value as any, scopeClassId, targetMonth)}
                       className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
                     >
                       <option value="all">All Active Students</option>
                       <option value="class">Single Class Only</option>
+                      <option value="student">Single Student Only</option>
                     </select>
                   </div>
 
@@ -1317,6 +1341,26 @@ export const VouchersView: React.FC = () => {
                             {c.name}
                           </option>
                         ))}
+                      </select>
+                    </div>
+                  ) : scope === 'student' ? (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Student</label>
+                      <select
+                        value={selectedSingleStudentId}
+                        onChange={(e) => handleSingleStudentChange(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      >
+                        <option value="">— Select student —</option>
+                        {students
+                          .filter((s) => s.status === 'Active')
+                          .slice()
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.regNo})
+                            </option>
+                          ))}
                       </select>
                     </div>
                   ) : null}

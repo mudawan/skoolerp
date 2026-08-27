@@ -129,41 +129,6 @@ export const SettingsView: React.FC = () => {
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [bankToDelete, setBankToDelete] = useState<BankAccount | null>(null);
 
-  useEscapeKey(() => {
-    if (isStudentDropdownOpen) {
-      setIsStudentDropdownOpen(false);
-    } else if (isClassDropdownOpen) {
-      setIsClassDropdownOpen(false);
-    } else if (showPolicyConfirmModal) {
-      setShowPolicyConfirmModal(false);
-    } else if (showResetAllModal) {
-      setShowResetAllModal(false);
-    } else if (pendingTransition) {
-      setPendingTransition(null);
-    } else if (showCsvModal) {
-      setShowCsvModal(false);
-      setParsedCsvRows([]);
-      setIsParsedPreviewExpanded(false);
-      setCsvFileName('');
-      setCsvParseError(null);
-    } else if (showUserModal) {
-      setShowUserModal(false);
-      setEditingUser(null);
-    } else if (showBankModal) {
-      setShowBankModal(false);
-      setEditingBank(null);
-    }
-  }, !!(
-    isStudentDropdownOpen ||
-    isClassDropdownOpen ||
-    showPolicyConfirmModal ||
-    showResetAllModal ||
-    pendingTransition ||
-    showCsvModal ||
-    showUserModal ||
-    showBankModal
-  ));
-
   // Sync policy drafts when context values change
   useEffect(() => {
     setSelectedPriorRule(priorMonthRule);
@@ -1421,6 +1386,44 @@ export const SettingsView: React.FC = () => {
   // User Management State
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+
+  // Close the top-most open modal/overlay when Escape is pressed. Declared
+  // after all the state it references so the active flag evaluates cleanly.
+  useEscapeKey(() => {
+    if (isStudentDropdownOpen) {
+      setIsStudentDropdownOpen(false);
+    } else if (isClassDropdownOpen) {
+      setIsClassDropdownOpen(false);
+    } else if (showPolicyConfirmModal) {
+      setShowPolicyConfirmModal(false);
+    } else if (showResetAllModal) {
+      setShowResetAllModal(false);
+    } else if (pendingTransition) {
+      setPendingTransition(null);
+    } else if (showCsvModal) {
+      setShowCsvModal(false);
+      setParsedCsvRows([]);
+      setIsParsedPreviewExpanded(false);
+      setCsvFileName('');
+      setCsvParseError(null);
+    } else if (showUserModal) {
+      setShowUserModal(false);
+      setEditingUser(null);
+    } else if (showBankModal) {
+      setShowBankModal(false);
+      setEditingBank(null);
+    }
+  }, !!(
+    isStudentDropdownOpen ||
+    isClassDropdownOpen ||
+    showPolicyConfirmModal ||
+    showResetAllModal ||
+    pendingTransition ||
+    showCsvModal ||
+    showUserModal ||
+    showBankModal
+  ));
+
   const [userFormData, setUserFormData] = useState<{
     username: string;
     password?: string;
