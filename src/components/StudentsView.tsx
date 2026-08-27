@@ -469,7 +469,7 @@ export const StudentsView: React.FC = () => {
           }
           const rawClassName = colMap.class !== -1 ? row[colMap.class] || '' : '';
           const rawGender = colMap.gender !== -1 ? row[colMap.gender] || 'Male' : 'Male';
-          const dob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '2016-01-01';
+          const dob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '';
           const bFormNo = colMap.bform !== -1 ? row[colMap.bform] || '' : '';
           const mobileNumber = colMap.mobile !== -1 ? row[colMap.mobile] || '' : '';
           const address = colMap.address !== -1 ? row[colMap.address] || '' : '';

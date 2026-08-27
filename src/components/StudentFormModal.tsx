@@ -111,7 +111,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     status: student?.status || ('Active' as StudentStatus),
 
     // 2. Other Information
-    dob: student?.dob || '2016-01-01',
+    dob: student?.dob || '',
     gender: ((student?.gender === 'Female') ? 'Female' : 'Male') as 'Male' | 'Female',
     bFormNo: student?.bFormNo || '',
     familyId: student?.familyId || '',

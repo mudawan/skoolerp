@@ -49,6 +49,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Screen Location Aware dynamic positioning state
+  const [placement, setPlacement] = useState<{
+    vertical: 'bottom' | 'top';
+    horizontal: 'left' | 'right' | 'center';
+  }>({ vertical: 'bottom', horizontal: align });
 
   // Parse value
   const parsedDate = useMemo(() => {
@@ -76,9 +83,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     parsedDate ? parsedDate.month : today.month
   );
 
-  const [isSelectingYear, setIsSelectingYear] = useState(false);
-
-  const preset = THEME_COLOR_PRESETS[themeColor] || THEME_COLOR_PRESETS.teal;
+  const preset = THEME_COLOR_PRESETS[themeColor as keyof typeof THEME_COLOR_PRESETS] || THEME_COLOR_PRESETS.teal;
 
   // Sync internal state when external value changes
   useEffect(() => {
@@ -88,24 +93,79 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
   }, [parsedDate]);
 
-  // Click outside listener
+  // Screen location awareness: detect available space above/below and left/right
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const popoverHeight = 220; // ultra-compact height
+      const popoverWidth = 216;  // ultra-compact width
+
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const spaceRight = window.innerWidth - rect.left;
+
+      const vertical = spaceBelow < popoverHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
+
+      let horizontal = align;
+      if (align === 'center') {
+        const centerPos = rect.left + rect.width / 2;
+        if (centerPos < popoverWidth / 2) horizontal = 'left';
+        else if (window.innerWidth - centerPos < popoverWidth / 2) horizontal = 'right';
+      } else if (align === 'left' && spaceRight < popoverWidth) {
+        horizontal = 'right';
+      } else if (align === 'right' && rect.right < popoverWidth) {
+        horizontal = 'left';
+      }
+
+      setPlacement({ vertical, horizontal });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen, align]);
+
+  // Click outside and Escape key listener
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
-        setIsSelectingYear(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
       }
     };
 
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen]);
 
+  // Month navigation boundaries
+  const isPrevDisabled = disabled || (viewYear <= minYear && viewMonth === 0);
+  const isNextDisabled = disabled || (viewYear >= maxYear && viewMonth === 11);
+
   const handlePrevMonth = () => {
+    if (isPrevDisabled) return;
     if (viewMonth === 0) {
       setViewMonth(11);
       setViewYear((y) => Math.max(minYear, y - 1));
@@ -115,6 +175,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   };
 
   const handleNextMonth = () => {
+    if (isNextDisabled) return;
     if (viewMonth === 11) {
       setViewMonth(0);
       setViewYear((y) => Math.min(maxYear, y + 1));
@@ -137,18 +198,26 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
 
     const dateStr = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    
+    // Guard against selecting out-of-bound disabled days
+    if (minDate && dateStr < minDate) return;
+    if (maxDate && dateStr > maxDate) return;
+
     onChange(dateStr);
     setIsOpen(false);
-    setIsSelectingYear(false);
   };
 
+  // Today shortcut check against minDate / maxDate
+  const isTodayDisabled = Boolean(
+    disabled || (minDate && today.str < minDate) || (maxDate && today.str > maxDate)
+  );
+
   const handleTodayClick = () => {
-    if (disabled) return;
+    if (disabled || isTodayDisabled) return;
     setViewYear(today.year);
     setViewMonth(today.month);
     onChange(today.str);
     setIsOpen(false);
-    setIsSelectingYear(false);
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -256,69 +325,101 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     return yrs;
   }, [minYear, maxYear]);
 
+  // Dynamic popover positioning classes based on screen location
+  const popoverPositionClass = useMemo(() => {
+    const vClass = placement.vertical === 'top' ? 'bottom-full mb-1' : 'top-full mt-1';
+    const hClass =
+      placement.horizontal === 'right'
+        ? 'right-0'
+        : placement.horizontal === 'center'
+        ? 'left-1/2 -translate-x-1/2'
+        : 'left-0';
+    return `${vClass} ${hClass}`;
+  }, [placement]);
+
   return (
     <div ref={containerRef} className={`relative inline-block w-full text-left ${className}`}>
       {/* Trigger Input */}
-      <button
-        type="button"
-        id={`${idPrefix}-trigger`}
-        disabled={disabled}
-        onClick={() => !disabled && setIsOpen(!isOpen)}
-        className={`w-full flex items-center justify-between px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer hover:border-slate-300 focus:outline-none focus:ring-2 ${
-          isOpen ? 'ring-2 border-teal-500 ring-teal-500/20' : ''
-        } ${disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'}`}
+      <div
+        style={
+          isOpen
+            ? {
+                borderColor: preset.primaryColor,
+                boxShadow: `0 0 0 2px ${preset.lightBorder}`,
+              }
+            : undefined
+        }
+        className={`w-full flex items-center justify-between px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 ${
+          disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'
+        }`}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <CalendarIcon className="w-4 h-4 text-teal-600 shrink-0" />
+        <button
+          ref={triggerRef}
+          type="button"
+          id={`${idPrefix}-trigger`}
+          disabled={disabled}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          onClick={() => !disabled && setIsOpen(!isOpen)}
+          className="flex items-center gap-1.5 min-w-0 flex-1 text-left bg-transparent border-0 p-0 focus:outline-none cursor-pointer disabled:cursor-not-allowed"
+        >
+          <CalendarIcon className="w-3.5 h-3.5 shrink-0" style={{ color: preset.primaryColor }} />
           <span className={`truncate ${!value ? 'text-slate-400 font-normal' : 'text-slate-800 font-bold'}`}>
             {displayFormatted || placeholder}
           </span>
-        </div>
+        </button>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 ml-1">
           {allowClear && !required && value && !disabled && (
-            <span
+            <button
+              type="button"
               onClick={handleClear}
               title="Clear date"
-              className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-700 transition"
+              aria-label="Clear date"
+              className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-700 transition cursor-pointer border-0 bg-transparent flex items-center justify-center focus:outline-none"
             >
-              <X className="w-3.5 h-3.5" />
-            </span>
+              <X className="w-3 h-3" />
+            </button>
           )}
-          <span className="text-[10px] font-mono uppercase bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">
+          <span className="text-[9px] font-mono uppercase bg-slate-100 text-slate-500 px-1 py-0.5 rounded pointer-events-none">
             {value || 'YYYY-MM-DD'}
           </span>
         </div>
-      </button>
+      </div>
 
-      {/* Popover Calendar Grid */}
+      {/* Popover Calendar Grid (Reduced to 2/3 size: 216px width) */}
       {isOpen && (
         <div
-          className={`absolute z-50 mt-1.5 w-76 rounded-2xl bg-white border border-slate-200/90 shadow-2xl p-3.5 text-slate-900 animate-in fade-in zoom-in-95 duration-150 ${
-            align === 'right' ? 'right-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0'
-          }`}
+          role="dialog"
+          aria-modal="true"
+          className={`absolute z-50 w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 ${popoverPositionClass}`}
         >
-          {/* Header Controls */}
-          <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+          {/* Header Controls (Compact) */}
+          <div className="flex items-center justify-between pb-1 border-b border-slate-100">
             <button
               type="button"
+              disabled={isPrevDisabled}
               onClick={handlePrevMonth}
               title="Previous Month"
-              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              className={`p-0.5 rounded transition ${
+                isPrevDisabled
+                  ? 'opacity-25 cursor-not-allowed text-slate-300'
+                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer'
+              }`}
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
 
             {/* Month & Year Selectors / Jumpers */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               <select
                 value={viewMonth}
                 onChange={(e) => setViewMonth(Number(e.target.value))}
-                className="font-extrabold text-xs text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 focus:outline-none cursor-pointer"
+                className="font-extrabold text-[10px] text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
               >
                 {MONTH_NAMES.map((name, idx) => (
                   <option key={name} value={idx}>
-                    {name}
+                    {SHORT_MONTH_NAMES[idx]}
                   </option>
                 ))}
               </select>
@@ -326,7 +427,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               <select
                 value={viewYear}
                 onChange={(e) => setViewYear(Number(e.target.value))}
-                className="font-extrabold text-xs text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 focus:outline-none cursor-pointer"
+                className="font-extrabold text-[10px] text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
               >
                 {yearsList.map((y) => (
                   <option key={y} value={y}>
@@ -338,20 +439,25 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
             <button
               type="button"
+              disabled={isNextDisabled}
               onClick={handleNextMonth}
               title="Next Month"
-              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              className={`p-0.5 rounded transition ${
+                isNextDisabled
+                  ? 'opacity-25 cursor-not-allowed text-slate-300'
+                  : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer'
+              }`}
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
           {/* Weekday Names */}
-          <div className="grid grid-cols-7 gap-1 pt-2 pb-1 text-center">
+          <div className="grid grid-cols-7 gap-0.5 pt-1 pb-0.5 text-center">
             {WEEKDAY_NAMES.map((w, idx) => (
               <span
                 key={w}
-                className={`text-[10px] font-bold tracking-wider ${
+                className={`text-[8px] font-bold tracking-wider ${
                   idx === 0 || idx === 6 ? 'text-rose-500/80' : 'text-slate-400'
                 }`}
               >
@@ -360,8 +466,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             ))}
           </div>
 
-          {/* Days Grid */}
-          <div className="grid grid-cols-7 gap-1 py-1">
+          {/* Days Grid (Ultra-compact 23px day buttons) */}
+          <div className="grid grid-cols-7 gap-0.5 py-0.5">
             {calendarDays.map((item, idx) => {
               const { day, isCurrentMonth, isSelected, isToday, isDisabled, dateStr } = item;
 
@@ -390,19 +496,19 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                       ? preset.lightBorder
                       : 'transparent',
                   }}
-                  className={`h-8 rounded-lg text-xs font-semibold flex items-center justify-center relative transition cursor-pointer border ${
+                  className={`h-5.5 rounded text-[10px] font-semibold flex items-center justify-center relative transition border ${
                     isSelected
-                      ? 'shadow-xs font-extrabold ring-2 ring-offset-1 ring-slate-200'
+                      ? 'shadow-2xs font-extrabold ring-1 ring-offset-0.5 ring-slate-200 cursor-pointer'
                       : isDisabled
-                      ? 'opacity-30 cursor-not-allowed'
-                      : 'hover:bg-slate-100'
+                      ? 'opacity-20 cursor-not-allowed'
+                      : 'hover:bg-slate-100 cursor-pointer'
                   }`}
                 >
                   <span>{day}</span>
                   {isToday && !isSelected && (
                     <span
                       style={{ backgroundColor: preset.primaryColor }}
-                      className="absolute bottom-1 w-1 h-1 rounded-full"
+                      className="absolute bottom-0.5 w-0.5 h-0.5 rounded-full"
                     />
                   )}
                 </button>
@@ -410,22 +516,25 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             })}
           </div>
 
-          {/* Footer Shortcuts */}
-          <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+          {/* Footer Shortcuts (Ultra-compact) */}
+          <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[9px]">
             <button
               type="button"
+              disabled={isTodayDisabled}
               onClick={handleTodayClick}
-              style={{ color: preset.primaryColor }}
-              className="text-[11px] font-bold hover:underline cursor-pointer flex items-center gap-1"
+              style={{ color: isTodayDisabled ? '#94a3b8' : preset.primaryColor }}
+              className={`font-bold flex items-center gap-0.5 transition ${
+                isTodayDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:underline cursor-pointer'
+              }`}
             >
-              <CalendarIcon className="w-3 h-3" />
+              <CalendarIcon className="w-2.5 h-2.5" />
               <span>Today</span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+              className="px-1.5 py-0.5 font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition cursor-pointer"
             >
               Done
             </button>

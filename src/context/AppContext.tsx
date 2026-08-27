@@ -1855,8 +1855,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    const defaultDueDate =
-      dueDate || `${month}-${new Date(month + '-01').getDate() > 15 ? '20' : '15'}`;
+    const defaultDueDate = dueDate || '';
     const issueDate = new Date().toISOString().split('T')[0];
 
     const yearStr = month.split('-')[0];

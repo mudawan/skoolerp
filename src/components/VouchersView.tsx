@@ -100,15 +100,14 @@ export const VouchersView: React.FC = () => {
   );
   const [scope, setScope] = useState<'all' | 'class' | 'students'>('all');
   const [scopeClassId, setScopeClassId] = useState(classes[0]?.id || '');
-  const [dueDateInput, setDueDateInput] = useState(`${activeMonth}-15`);
+  const [dueDateInput, setDueDateInput] = useState('');
   const [lateFeeInput, setLateFeeInput] = useState(defaultLateFeeRate || 500);
   const [selectedGenStudentIds, setSelectedGenStudentIds] = useState<string[]>([]);
   const [isParamsCollapsed, setIsParamsCollapsed] = useState(false);
 
-  // Automatically sync generator targetMonth and default dueDate when working month in header changes
+  // Automatically sync generator targetMonth when working month in header changes
   useEffect(() => {
     setTargetMonth(activeMonth);
-    setDueDateInput(`${activeMonth}-15`);
   }, [activeMonth]);
 
   useEffect(() => {
@@ -402,7 +401,7 @@ export const VouchersView: React.FC = () => {
   const handleOpenGenerator = () => {
     const monthToUse = activeMonth;
     setTargetMonth(monthToUse);
-    setDueDateInput(`${monthToUse}-15`);
+    setDueDateInput('');
     const data = previewVoucherGeneration(monthToUse, scope, scopeClassId);
     setPreviewsData(data);
     const eligible = data.previews
@@ -416,9 +415,6 @@ export const VouchersView: React.FC = () => {
     setScope(newScope);
     setScopeClassId(newClassId);
     setTargetMonth(newMonth);
-    if (newMonth !== targetMonth) {
-      setDueDateInput(`${newMonth}-15`);
-    }
     const data = previewVoucherGeneration(newMonth, newScope, newClassId);
     setPreviewsData(data);
     const eligible = data.previews
@@ -469,6 +465,11 @@ export const VouchersView: React.FC = () => {
   const handleCommitGeneration = () => {
     if (selectedGenStudentIds.length === 0) {
       showToast('Please select at least one student for voucher generation.', 'error');
+      return;
+    }
+
+    if (!dueDateInput) {
+      showToast('Please select a Due Date for the fee vouchers.', 'error');
       return;
     }
 

@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { formatMonthName } from '../utils/feeMath';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 
@@ -52,6 +52,13 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Screen Location Aware dynamic positioning state
+  const [placement, setPlacement] = useState<{
+    vertical: 'bottom' | 'top';
+    horizontal: 'left' | 'right' | 'center';
+  }>({ vertical: 'bottom', horizontal: align });
 
   // Parse current selected year and month
   const parsedParts = (value || '').split('-').map(Number);
@@ -61,7 +68,7 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
   // Viewing year in the calendar grid
   const [viewYear, setViewYear] = useState<number>(selectedYear);
 
-  const preset = THEME_COLOR_PRESETS[themeColor] || THEME_COLOR_PRESETS.teal;
+  const preset = THEME_COLOR_PRESETS[themeColor as keyof typeof THEME_COLOR_PRESETS] || THEME_COLOR_PRESETS.teal;
 
   // Sync viewYear when value changes externally
   useEffect(() => {
@@ -70,7 +77,47 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
     }
   }, [selectedYear]);
 
-  // Click outside listener to dismiss popover
+  // Screen location awareness: detect available space above/below and left/right
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const popoverHeight = 180; // ultra-compact month picker height
+      const popoverWidth = 190;  // ultra-compact width
+
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const spaceRight = window.innerWidth - rect.left;
+
+      const vertical = spaceBelow < popoverHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
+
+      let horizontal = align;
+      if (align === 'center') {
+        const centerPos = rect.left + rect.width / 2;
+        if (centerPos < popoverWidth / 2) horizontal = 'left';
+        else if (window.innerWidth - centerPos < popoverWidth / 2) horizontal = 'right';
+      } else if (align === 'left' && spaceRight < popoverWidth) {
+        horizontal = 'right';
+      } else if (align === 'right' && rect.right < popoverWidth) {
+        horizontal = 'left';
+      }
+
+      setPlacement({ vertical, horizontal });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen, align]);
+
+  // Click outside and Escape key listener to dismiss popover
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
@@ -78,11 +125,22 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
       }
     };
 
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen]);
 
@@ -138,24 +196,46 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
       : `${formatMonthName(value)}`
     : placeholder;
 
+  const popoverPositionClass = useMemo(() => {
+    const vClass = placement.vertical === 'top' ? 'bottom-full mb-1' : 'top-full mt-1';
+    const hClass =
+      placement.horizontal === 'right'
+        ? 'right-0'
+        : placement.horizontal === 'center'
+        ? 'left-1/2 -translate-x-1/2'
+        : 'left-0';
+    return `${vClass} ${hClass}`;
+  }, [placement]);
+
   return (
     <div ref={containerRef} className={`relative inline-block text-left ${className}`}>
       {/* Trigger: Input Variant (for forms / modals) */}
       {variant === 'input' ? (
         <button
+          ref={triggerRef}
           type="button"
           id={`${idPrefix}-trigger`}
           disabled={disabled}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
           onClick={() => !disabled && setIsOpen(!isOpen)}
-          className={`w-full flex items-center justify-between px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer hover:border-slate-300 focus:outline-none focus:ring-2 ${
-            isOpen ? 'ring-2 border-teal-500 ring-teal-500/20' : ''
-          } ${disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'}`}
+          style={
+            isOpen
+              ? {
+                  borderColor: preset.primaryColor,
+                  boxShadow: `0 0 0 2px ${preset.lightBorder}`,
+                }
+              : undefined
+          }
+          className={`w-full flex items-center justify-between px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 focus:outline-none ${
+            disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'
+          }`}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <CalendarIcon className="w-4 h-4 text-teal-600 shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-0">
+            <CalendarIcon className="w-3.5 h-3.5 shrink-0" style={{ color: preset.primaryColor }} />
             <span className="truncate">{displayLabel}</span>
           </div>
-          <span className="text-[10px] font-mono uppercase bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shrink-0">
+          <span className="text-[9px] font-mono uppercase bg-slate-100 text-slate-500 px-1 py-0.5 rounded shrink-0">
             {value || 'YYYY-MM'}
           </span>
         </button>
@@ -182,9 +262,12 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
           )}
 
           <button
+            ref={triggerRef}
             type="button"
             id={`${idPrefix}-trigger`}
             disabled={disabled}
+            aria-expanded={isOpen}
+            aria-haspopup="dialog"
             onClick={() => !disabled && setIsOpen(!isOpen)}
             className="flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg font-extrabold text-xs tracking-wide transition cursor-pointer"
             style={{ color: isLight ? preset.textColor : '#ffffff' }}
@@ -212,31 +295,31 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
         </div>
       )}
 
-      {/* Popover Calendar Grid */}
+      {/* Popover Calendar Grid (Reduced to 2/3 size: 190px width) */}
       {isOpen && (
         <div
-          className={`absolute z-50 mt-2 w-72 rounded-2xl bg-white border border-slate-200/90 shadow-2xl p-3.5 text-slate-900 animate-in fade-in zoom-in-95 duration-150 ${
-            align === 'right' ? 'right-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'left-0'
-          }`}
+          role="dialog"
+          aria-modal="true"
+          className={`absolute z-50 w-[190px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 ${popoverPositionClass}`}
         >
-          {/* Header with Year Selector */}
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          {/* Header with Year Selector (Compact) */}
+          <div className="flex items-center justify-between pb-1 border-b border-slate-100">
             <button
               type="button"
               onClick={handlePrevYear}
               disabled={viewYear <= minYear}
               title="Previous Year"
-              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition cursor-pointer disabled:opacity-30"
+              className="p-0.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded transition cursor-pointer disabled:opacity-30"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
 
-            <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm text-slate-900 tracking-tight">
+            <div className="flex items-center gap-1">
+              <span className="font-extrabold text-[11px] text-slate-900 tracking-tight">
                 {viewYear}
               </span>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                Billing Year
+              <span className="text-[8px] uppercase font-bold tracking-wider px-1 py-0.2 rounded bg-slate-100 text-slate-600">
+                Year
               </span>
             </div>
 
@@ -245,14 +328,14 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
               onClick={handleNextYear}
               disabled={viewYear >= maxYear}
               title="Next Year"
-              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition cursor-pointer disabled:opacity-30"
+              className="p-0.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded transition cursor-pointer disabled:opacity-30"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          {/* 12 Months Grid */}
-          <div className="grid grid-cols-3 gap-2 py-3">
+          {/* 12 Months Grid (Ultra-compact) */}
+          <div className="grid grid-cols-3 gap-1 py-1">
             {MONTH_NAMES.map((mName, idx) => {
               const monthNum = idx + 1;
               const monthStr = `${viewYear}-${String(monthNum).padStart(2, '0')}`;
@@ -283,33 +366,33 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
                       ? preset.textColor
                       : '#334155',
                   }}
-                  className={`relative py-2.5 px-2 rounded-xl text-xs font-bold transition flex flex-col items-center justify-center cursor-pointer border ${
+                  className={`relative py-1 px-1 rounded text-[10px] font-bold transition flex flex-col items-center justify-center cursor-pointer border ${
                     isSelected
-                      ? 'shadow-md ring-2 ring-offset-1 ring-slate-200 font-extrabold'
+                      ? 'shadow-2xs ring-1 ring-offset-0.5 ring-slate-200 font-extrabold'
                       : 'hover:bg-slate-100 border-transparent hover:border-slate-200'
                   }`}
                   title={`${FULL_MONTH_NAMES[idx]} ${viewYear}${isClosed ? ' (Closed)' : ''}`}
                 >
-                  <span className="text-xs">{mName}</span>
+                  <span>{mName}</span>
 
                   {/* Indicator badges (Closed / Has Vouchers / Current month) */}
-                  <div className="flex items-center gap-1 mt-1">
+                  <div className="flex items-center gap-0.5 mt-0.5">
                     {isCurrent && !isSelected && (
                       <span
                         style={{ backgroundColor: preset.primaryColor }}
-                        className="w-1.5 h-1.5 rounded-full"
+                        className="w-1 h-1 rounded-full"
                         title="Current Calendar Month"
                       />
                     )}
                     {hasData && !isSelected && !isCurrent && (
                       <span
-                        className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                        className="w-1 h-1 rounded-full bg-slate-300"
                         title="Vouchers / Records Exist"
                       />
                     )}
                     {isClosed && (
                       <span
-                        className={`text-[8px] font-bold px-1 rounded ${
+                        className={`text-[7px] font-bold px-0.5 rounded ${
                           isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
                         }`}
                       >
@@ -322,22 +405,22 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
             })}
           </div>
 
-          {/* Footer Quick Actions */}
-          <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+          {/* Footer Quick Actions (Ultra-compact) */}
+          <div className="pt-1 border-t border-slate-100 flex items-center justify-between text-[9px]">
             <button
               type="button"
               onClick={handleQuickCurrent}
               style={{ color: preset.primaryColor }}
-              className="text-[11px] font-bold hover:underline cursor-pointer flex items-center gap-1"
+              className="font-bold hover:underline cursor-pointer flex items-center gap-0.5"
             >
-              <CalendarIcon className="w-3 h-3" />
-              <span>Current Month</span>
+              <CalendarIcon className="w-2.5 h-2.5" />
+              <span>Current</span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+              className="px-1.5 py-0.5 font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition cursor-pointer"
             >
               Close
             </button>
