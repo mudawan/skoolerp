@@ -32,6 +32,14 @@ function MainApp() {
   } = useApp();
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [reportStudentId, setReportStudentId] = useState<string | undefined>(undefined);
+  const [reportType, setReportType] = useState<'classSummary' | 'outstanding' | 'studentLedger'>('classSummary');
+
+  const handleNavigateToLedger = (studentId: string) => {
+    setReportStudentId(studentId);
+    setReportType('studentLedger');
+    setActiveTab('reports');
+  };
 
   if (!isAuthenticated) {
     return <LoginView />;
@@ -137,14 +145,21 @@ function MainApp() {
         {/* Main Viewport Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-16 max-w-7xl w-full mx-auto">
           {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
-          {activeTab === 'students' && <StudentsView />}
+          {activeTab === 'students' && <StudentsView onNavigateToLedger={handleNavigateToLedger} />}
           {activeTab === 'families' && <FamiliesView />}
           {activeTab === 'classes' && <ClassesView />}
           {activeTab === 'vouchers' && <VouchersView />}
           {activeTab === 'collections' && <CollectionsView />}
           {activeTab === 'defaulters' && <DefaultersView />}
           {activeTab === 'transport' && <TransportView />}
-          {activeTab === 'reports' && <ReportsView />}
+          {activeTab === 'reports' && (
+            <ReportsView
+              initialReportType={reportType}
+              initialStudentId={reportStudentId}
+              onReportTypeChange={setReportType}
+              onStudentIdChange={setReportStudentId}
+            />
+          )}
           {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>

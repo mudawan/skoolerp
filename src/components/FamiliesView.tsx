@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Family } from '../types';
 import { downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
@@ -87,6 +88,17 @@ export const FamiliesView: React.FC = () => {
     setStudentPickerSearch('');
     setIsStudentPickerOpen(false);
   };
+
+  useEscapeKey(() => {
+    if (isStudentPickerOpen) {
+      setIsStudentPickerOpen(false);
+    } else if (memberModalFamily) {
+      handleCloseMemberModal();
+    } else if (showAddModal || editingFamily) {
+      setShowAddModal(false);
+      setEditingFamily(null);
+    }
+  }, !!(isStudentPickerOpen || memberModalFamily || showAddModal || editingFamily));
 
   const filteredFamilies = useMemo(() => {
     return families.filter((f) => {

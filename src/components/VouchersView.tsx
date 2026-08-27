@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp, DownstreamConflict } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, VoucherPreviewCalculation } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
@@ -257,6 +258,38 @@ export const VouchersView: React.FC = () => {
   useEffect(() => {
     setCarryFineAmount(defaultLateFeeRate || 500);
   }, [defaultLateFeeRate]);
+
+  useEscapeKey(() => {
+    if (policyConfirmModal) {
+      setPolicyConfirmModal(null);
+    } else if (deleteModal) {
+      setDeleteModal(null);
+    } else if (undoCarryModal) {
+      setUndoCarryModal(null);
+    } else if (carryModal) {
+      setCarryModal(null);
+    } else if (printingVoucher) {
+      setPrintingVoucher(null);
+    } else if (exportPdfVouchers) {
+      setExportPdfVouchers(null);
+    } else if (collectingVoucher) {
+      setCollectingVoucher(null);
+    } else if (detailVoucher) {
+      setDetailVoucher(null);
+    } else if (showGeneratorModal) {
+      setShowGeneratorModal(false);
+    }
+  }, !!(
+    policyConfirmModal ||
+    deleteModal ||
+    undoCarryModal ||
+    carryModal ||
+    printingVoucher ||
+    exportPdfVouchers ||
+    collectingVoucher ||
+    detailVoucher ||
+    showGeneratorModal
+  ));
 
   const handleOpenUndoCarryModal = (v: FeeVoucher) => {
     // Check if any future vouchers exist for this student
@@ -1607,8 +1640,8 @@ export const VouchersView: React.FC = () => {
 
       {/* Collect Payment Modal */}
       {collectingVoucher && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto sm:my-8 animate-in fade-in duration-200 border border-slate-200/80">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">

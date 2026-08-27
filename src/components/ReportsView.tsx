@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
@@ -6,11 +6,49 @@ import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { BarChart3, BookOpen, Building2, Download, FileSpreadsheet, History, Printer, Users } from 'lucide-react';
 
-export const ReportsView: React.FC = () => {
+export interface ReportsViewProps {
+  initialReportType?: 'classSummary' | 'outstanding' | 'studentLedger';
+  initialStudentId?: string;
+  onReportTypeChange?: (type: 'classSummary' | 'outstanding' | 'studentLedger') => void;
+  onStudentIdChange?: (id: string | undefined) => void;
+}
+
+export const ReportsView: React.FC<ReportsViewProps> = ({
+  initialReportType,
+  initialStudentId,
+  onReportTypeChange,
+  onStudentIdChange,
+}) => {
   const { activeMonth, classes, vouchers, students, institute } = useApp();
 
-  const [reportType, setReportType] = useState<'classSummary' | 'outstanding' | 'studentLedger'>('classSummary');
-  const [selectedStudentForLedger, setSelectedStudentForLedger] = useState<string | undefined>(undefined);
+  const [reportType, setReportType] = useState<'classSummary' | 'outstanding' | 'studentLedger'>(
+    initialReportType || 'classSummary'
+  );
+  const [selectedStudentForLedger, setSelectedStudentForLedger] = useState<string | undefined>(
+    initialStudentId
+  );
+
+  useEffect(() => {
+    if (initialReportType) {
+      setReportType(initialReportType);
+    }
+  }, [initialReportType]);
+
+  useEffect(() => {
+    if (initialStudentId !== undefined) {
+      setSelectedStudentForLedger(initialStudentId);
+    }
+  }, [initialStudentId]);
+
+  const handleTabChange = (type: 'classSummary' | 'outstanding' | 'studentLedger') => {
+    setReportType(type);
+    onReportTypeChange?.(type);
+  };
+
+  const handleSelectStudentForLedger = (studentId: string | undefined) => {
+    setSelectedStudentForLedger(studentId);
+    onStudentIdChange?.(studentId);
+  };
 
   const monthVouchers = vouchers.filter((v) => v.month === activeMonth && v.status !== 'Reversed');
 
@@ -221,7 +259,7 @@ export const ReportsView: React.FC = () => {
       {/* Tabs Switcher */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto print:hidden">
         <button
-          onClick={() => setReportType('classSummary')}
+          onClick={() => handleTabChange('classSummary')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
             reportType === 'classSummary'
               ? 'bg-teal-600 text-white shadow-xs'
@@ -232,7 +270,7 @@ export const ReportsView: React.FC = () => {
           Per-Class Monthly Collection Summary
         </button>
         <button
-          onClick={() => setReportType('studentLedger')}
+          onClick={() => handleTabChange('studentLedger')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
             reportType === 'studentLedger'
               ? 'bg-teal-600 text-white shadow-xs'
@@ -243,7 +281,7 @@ export const ReportsView: React.FC = () => {
           Student Fee Collections Ledger
         </button>
         <button
-          onClick={() => setReportType('outstanding')}
+          onClick={() => handleTabChange('outstanding')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
             reportType === 'outstanding'
               ? 'bg-teal-600 text-white shadow-xs'
@@ -424,8 +462,8 @@ export const ReportsView: React.FC = () => {
                       <td className="p-3 text-center">
                         <button
                           onClick={() => {
-                            setSelectedStudentForLedger(r.studentId);
-                            setReportType('studentLedger');
+                            handleSelectStudentForLedger(r.studentId);
+                            handleTabChange('studentLedger');
                           }}
                           className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold rounded-lg transition text-[11px] cursor-pointer"
                         >

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
 import { normalizePaymentMode } from '../utils/paymentMode';
@@ -127,6 +128,14 @@ export const CollectionsView: React.FC = () => {
     }[]
   >([]);
 
+  useEscapeKey(() => {
+    if (showDirectModal) {
+      setShowDirectModal(false);
+    } else if (showBulkModal) {
+      setShowBulkModal(false);
+    }
+  }, showDirectModal || showBulkModal);
+
   // Filtered & Sorted Collections (Sr# 1 = oldest transaction of the month by default)
   const sortedCollections = useMemo(() => {
     const filtered = collections.filter(
@@ -183,19 +192,11 @@ export const CollectionsView: React.FC = () => {
 
   // Open Direct Collection Modal
   const handleOpenDirectCollection = (preSelectedVoucher?: FeeVoucher) => {
-    let targetV: FeeVoucher | undefined = preSelectedVoucher;
-    if (!targetV) {
-      targetV =
-        availableVouchers.find((v) => v.month === activeMonth && v.amountPaid < v.netDue) ||
-        availableVouchers.find((v) => v.month === activeMonth) ||
-        availableVouchers[0];
-    }
-
-    if (targetV) {
-      setSelectedVoucherId(targetV.id);
-      setDirectItems(targetV.particulars.map((p) => ({ ...p })));
-      const remaining = Math.max(0, targetV.netDue - targetV.amountPaid);
-      setDirectAmount(remaining > 0 ? remaining : targetV.netDue);
+    if (preSelectedVoucher) {
+      setSelectedVoucherId(preSelectedVoucher.id);
+      setDirectItems(preSelectedVoucher.particulars.map((p) => ({ ...p })));
+      const remaining = Math.max(0, preSelectedVoucher.netDue - preSelectedVoucher.amountPaid);
+      setDirectAmount(remaining > 0 ? remaining : preSelectedVoucher.netDue);
     } else {
       setSelectedVoucherId('');
       setDirectItems([]);
@@ -219,6 +220,7 @@ export const CollectionsView: React.FC = () => {
       setDirectAmount(remaining > 0 ? remaining : v.netDue);
     } else {
       setDirectItems([]);
+      setDirectAmount('');
     }
   };
 
@@ -1088,8 +1090,8 @@ export const CollectionsView: React.FC = () => {
 
       {/* Direct Payment / Single Collection Modal */}
       {showDirectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-auto sm:my-8 animate-in fade-in duration-200 border border-slate-200/80">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
@@ -1130,8 +1132,11 @@ export const CollectionsView: React.FC = () => {
                         value={selectedVoucherId}
                         onChange={(e) => handleSelectVoucher(e.target.value)}
                         className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-800 text-xs"
-                        size={searchedVouchers.length > 4 ? 3 : Math.max(2, searchedVouchers.length)}
+                        size={searchedVouchers.length > 4 ? 4 : Math.max(3, searchedVouchers.length + 1)}
                       >
+                        <option value="" className="text-slate-400 font-normal">
+                          -- Select a Student / Fee Voucher ({searchedVouchers.length} found) --
+                        </option>
                         {searchedVouchers.map((v) => {
                           const s = students.find((stu) => stu.id === v.studentId);
                           const rem = Math.max(0, v.netDue - v.amountPaid);

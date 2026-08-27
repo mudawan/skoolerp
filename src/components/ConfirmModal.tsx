@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Info, Trash2, X } from 'lucide-react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 export interface ConfirmModalProps {
   isOpen: boolean;
@@ -57,6 +58,8 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   };
 
   const { icon, iconBg, btnBg } = getVariantStyles();
+
+  useEscapeKey(onClose, isOpen);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">

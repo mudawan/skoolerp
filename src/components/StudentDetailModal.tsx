@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student } from '../types';
 import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
@@ -77,6 +78,17 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       showToast(res.error || 'Failed to generate admission voucher', 'error');
     }
   };
+
+  // Handle escape key: inner sub-modals take precedence, then close main modal
+  useEscapeKey(() => {
+    if (previewDoc) {
+      setPreviewDoc(null);
+    } else if (showAdmVoucherModal) {
+      setShowAdmVoucherModal(false);
+    } else {
+      onClose();
+    }
+  }, true);
 
   const studentClass = classes.find((c) => c.id === student.classId);
   const studentFamily = families.find((f) => f.id === student.familyId);

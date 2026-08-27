@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { SchoolClass } from '../types';
 import { formatCurrency } from '../utils/feeMath';
 import { ConfirmModal } from './ConfirmModal';
@@ -50,6 +51,11 @@ export const ClassesView: React.FC = () => {
   });
 
   const [formError, setFormError] = useState('');
+
+  useEscapeKey(() => {
+    setShowAddModal(false);
+    setEditingClass(null);
+  }, showAddModal || !!editingClass);
 
   const filteredClasses = classes.filter((cls) =>
     cls.name.toLowerCase().includes(searchQuery.toLowerCase().trim())

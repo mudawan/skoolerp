@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
 import { exportSingleCombinedPdf, exportZipIndividualPdfs } from '../utils/pdfGenerator';
@@ -47,6 +48,8 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
       setIsExporting(false);
     }
   };
+
+  useEscapeKey(onClose, !isExporting);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">

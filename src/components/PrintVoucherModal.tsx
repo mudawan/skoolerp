@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, ParticularKind, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
 import { exportSingleFeeVoucherPdf, printFeeVoucherPdf } from '../utils/pdfGenerator';
@@ -108,9 +109,11 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
     }
   };
 
+  useEscapeKey(onClose, true);
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-auto">
+    <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-start justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-6 shadow-2xl space-y-4 my-auto sm:my-6">
         {/* Modal Top Toolbar (Hidden on Print) */}
         <div className="flex items-center justify-between border-b border-slate-200 pb-3 print:hidden">
           <div className="flex items-center gap-3">

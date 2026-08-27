@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
@@ -102,6 +103,20 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   const [collectNotes, setCollectNotes] = useState('');
   const [collectItems, setCollectItems] = useState<VoucherItem[]>([]);
   const [activeTxnDetail, setActiveTxnDetail] = useState<PaymentTransaction | null>(null);
+
+  useEscapeKey(() => {
+    if (selectedVoucherForPrint) {
+      setSelectedVoucherForPrint(null);
+    } else if (collectModalVoucher) {
+      setCollectModalVoucher(null);
+    } else if (activeTxnDetail) {
+      setActiveTxnDetail(null);
+    } else if (isDropdownOpen) {
+      setIsDropdownOpen(false);
+    } else if (inModal && onClose) {
+      onClose();
+    }
+  }, !!(selectedVoucherForPrint || collectModalVoucher || activeTxnDetail || isDropdownOpen || (inModal && onClose)));
 
   // Dynamic calculations for the collect modal
   const collectDynamicNetDue = useMemo(() => {
@@ -1124,8 +1139,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
       {/* Direct Deposit Collection Modal */}
       {collectModalVoucher && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto print:hidden">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 border border-slate-100 my-6 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 overflow-y-auto print:hidden">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-5 sm:p-6 shadow-2xl space-y-4 border border-slate-200/80 my-auto sm:my-8 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">

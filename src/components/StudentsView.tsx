@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentStatus } from '../types';
 import { formatCurrency, formatStudentAge, calculateAge } from '../utils/feeMath';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
@@ -63,7 +64,11 @@ interface PreviewRow {
   validationMessage: string;
 }
 
-export const StudentsView: React.FC = () => {
+interface StudentsViewProps {
+  onNavigateToLedger?: (studentId: string) => void;
+}
+
+export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }) => {
   const {
     students,
     classes,
@@ -110,6 +115,32 @@ export const StudentsView: React.FC = () => {
     message: string | null;
     error: string | null;
   }>({ message: null, error: null });
+
+  useEscapeKey(() => {
+    if (viewLedgerStudentId) {
+      setViewLedgerStudentId(null);
+    } else if (showImportModal) {
+      setShowImportModal(false);
+      setPreviewRows([]);
+    } else if (studentToDelete || isBulkDeleting) {
+      setStudentToDelete(null);
+      setIsBulkDeleting(false);
+    } else if (editingStudent) {
+      setEditingStudent(null);
+    } else if (detailStudent) {
+      setDetailStudent(null);
+    } else if (showFormModal) {
+      setShowFormModal(false);
+    }
+  }, !!(
+    viewLedgerStudentId ||
+    showImportModal ||
+    studentToDelete ||
+    isBulkDeleting ||
+    editingStudent ||
+    detailStudent ||
+    showFormModal
+  ));
 
   // Filter students
   const filteredStudents = students.filter((s) => {
@@ -1071,8 +1102,14 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                       <td className="p-2 text-center whitespace-nowrap">
                         <div className="grid grid-cols-2 gap-1 w-fit mx-auto">
                           <button
-                            onClick={() => setViewLedgerStudentId(s.id)}
-                            title="View Fee Collections & Ledger"
+                            onClick={() => {
+                              if (onNavigateToLedger) {
+                                onNavigateToLedger(s.id);
+                              } else {
+                                setViewLedgerStudentId(s.id);
+                              }
+                            }}
+                            title="View Fee Collections & Ledger in Reports"
                             className="p-1.5 text-slate-500 hover:text-teal-700 hover:bg-teal-50 rounded-lg transition cursor-pointer"
                           >
                             <History className="w-3.5 h-3.5" />
@@ -1198,7 +1235,11 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
           }}
           onViewLedger={(id) => {
             setDetailStudent(null);
-            setViewLedgerStudentId(id);
+            if (onNavigateToLedger) {
+              onNavigateToLedger(id);
+            } else {
+              setViewLedgerStudentId(id);
+            }
           }}
         />
       )}
@@ -1216,7 +1257,15 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
           }}
           onConfirmDelete={handleConfirmSingleDelete}
           onConfirmBulkDelete={handleConfirmBulkDelete}
-          onViewLedger={(id) => setViewLedgerStudentId(id)}
+          onViewLedger={(id) => {
+            setStudentToDelete(null);
+            setIsBulkDeleting(false);
+            if (onNavigateToLedger) {
+              onNavigateToLedger(id);
+            } else {
+              setViewLedgerStudentId(id);
+            }
+          }}
         />
       )}
 
@@ -1676,7 +1725,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
       {/* Student Fee Collections & Ledger Modal */}
       {viewLedgerStudentId && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-slate-100 rounded-3xl max-w-5xl w-full p-4 sm:p-6 shadow-2xl space-y-4 my-6 max-h-[92vh] overflow-y-auto border border-slate-200">
+          <div className="bg-slate-100 rounded-3xl max-w-5xl w-full p-4 sm:p-6 shadow-2xl space-y-4 my-6 border border-slate-200 animate-in fade-in duration-200">
             <div className="flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-xl bg-teal-50 text-teal-700">

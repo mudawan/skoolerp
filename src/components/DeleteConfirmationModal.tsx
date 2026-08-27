@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student } from '../types';
 import { StudentAvatar } from './StudentAvatar';
 import {
@@ -84,6 +85,8 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
       onClose();
     }
   };
+
+  useEscapeKey(onClose, true);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { DataCleanupOptions } from '../types';
 import {
   AlertCircle,
@@ -80,6 +81,16 @@ export const DataCleanupView: React.FC = () => {
   const [hasAcknowledgedRisk, setHasAcknowledgedRisk] = useState<boolean>(false);
   const [confirmationPhrase, setConfirmationPhrase] = useState<string>('');
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
+
+  useEscapeKey(() => {
+    if (showConfirmModal) {
+      setShowConfirmModal(false);
+      setHasAcknowledgedRisk(false);
+      setConfirmationPhrase('');
+    } else if (showDemoResetModal) {
+      setShowDemoResetModal(false);
+    }
+  }, (showConfirmModal || showDemoResetModal) && !isExecuting);
 
   // Security Gate: Check if user has admin privileges
   const isAdmin = currentUser?.role === 'Admin' || hasPermission('settings.manage');

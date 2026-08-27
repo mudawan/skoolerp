@@ -571,19 +571,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [vouchers, setVouchers] = useState<FeeVoucher[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_vouchers`);
     const rawVouchers: FeeVoucher[] = saved ? JSON.parse(saved) : INITIAL_VOUCHERS;
-    return rawVouchers.map((v) => ({
-      ...v,
-      particulars: v.particulars.map((p) => {
-        if (
-          p.kind === 'Transport' ||
-          /transport/i.test(p.label) ||
-          /school bus/i.test(p.label)
-        ) {
-          return { ...p, kind: 'Transport' as const, label: 'Transport Fee' };
-        }
-        return p;
-      }),
-    }));
+    return rawVouchers.map((v) => {
+      // Auto-settle vouchers where netDue is 0 or less and status is still Issued
+      const isZeroDue = v.netDue <= 0;
+      const effectiveStatus = isZeroDue && v.status === 'Issued' ? 'Paid' : v.status;
+      return {
+        ...v,
+        status: effectiveStatus,
+        particulars: v.particulars.map((p) => {
+          if (
+            p.kind === 'Transport' ||
+            /transport/i.test(p.label) ||
+            /school bus/i.test(p.label)
+          ) {
+            return { ...p, kind: 'Transport' as const, label: 'Transport Fee' };
+          }
+          return p;
+        }),
+      };
+    });
   });
 
   const [collections, setCollections] = useState<FeeCollection[]>(() => {
@@ -1717,19 +1723,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Month Closure Check Helper
   const getMonthClosureStatus = (month: string): MonthClosureStatus => {
-    const monthVouchers = vouchers.filter((v) => v.month === month);
+    const monthVouchers = vouchers.filter((v) => v.month === month && v.status !== 'Reversed');
     const totalVouchers = monthVouchers.length;
 
-    // Uncarried unpaid vouchers are Issued or Partial vouchers that haven't been carried forward
+    // Uncarried unpaid vouchers are non-carried vouchers where netDue > 0 and amountPaid < netDue
     const uncarriedUnpaid = monthVouchers.filter(
-      (v) => (v.status === 'Issued' || v.status === 'Partial') && v.amountPaid < v.netDue
+      (v) => (v.status === 'Issued' || v.status === 'Partial') && v.netDue > 0 && v.amountPaid < v.netDue
     );
 
-    const paidCount = monthVouchers.filter((v) => v.status === 'Paid').length;
+    const paidCount = monthVouchers.filter(
+      (v) => v.status === 'Paid' || (v.netDue <= 0 && v.status !== 'Carried')
+    ).length;
     const carriedCount = monthVouchers.filter((v) => v.status === 'Carried').length;
-    const reversedCount = monthVouchers.filter((v) => v.status === 'Reversed').length;
+    const reversedCount = vouchers.filter((v) => v.month === month && v.status === 'Reversed').length;
 
-    // A month is closed if there are NO uncarried unpaid vouchers
+    // A month is closed if there are vouchers generated and NO uncarried unpaid vouchers
     const isClosed = totalVouchers > 0 && uncarriedUnpaid.length === 0;
 
     return {
@@ -1879,7 +1887,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       lateFeeRate: options.lateFeeRate ?? defaultLateFeeRate,
       netDue,
       amountPaid: 0,
-      status: 'Issued',
+      status: netDue <= 0 ? 'Paid' : 'Issued',
       voucherType: 'Admission',
       notes: options.notes,
       createdDate: issueDate,
@@ -1996,7 +2004,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lateFeeRate: appliedLateFee,
         netDue: prev.netDue,
         amountPaid: 0,
-        status: 'Issued',
+        status: prev.netDue <= 0 ? 'Paid' : 'Issued',
         createdDate: issueDate,
       };
     });
@@ -2060,7 +2068,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const netDue = Math.max(0, cleanParticulars.reduce((sum, p) => sum + p.amount, 0));
 
             let status = v.status;
-            if (v.amountPaid >= netDue) {
+            if (v.amountPaid >= netDue && netDue > 0) {
+              status = 'Paid';
+            } else if (netDue <= 0) {
               status = 'Paid';
             } else if (v.amountPaid > 0) {
               status = 'Partial';

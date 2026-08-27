@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
 import { calculateTransportFee, formatCurrency, formatMonthName, getDaysInMonth, roundBusFareUp } from '../utils/feeMath';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
@@ -144,6 +145,39 @@ export const TransportView: React.FC = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isStudentComboOpen]);
+
+  useEscapeKey(() => {
+    if (isStudentComboOpen) {
+      setIsStudentComboOpen(false);
+    } else if (showBulkStopsModal) {
+      setShowBulkStopsModal(false);
+      setBulkStopsPreviewRows([]);
+      setBulkStopsCsvFile(null);
+    } else if (showBulkCsvModal) {
+      setShowBulkCsvModal(false);
+      setBulkPreviewRows([]);
+      setBulkCsvFile(null);
+    } else if (showAsgnModal || editingAsgn) {
+      setShowAsgnModal(false);
+      setEditingAsgn(null);
+    } else if (showStopModal || editingStop) {
+      setShowStopModal(false);
+      setEditingStop(null);
+    } else if (showBusModal || editingBus) {
+      setShowBusModal(false);
+      setEditingBus(null);
+    }
+  }, !!(
+    isStudentComboOpen ||
+    showBulkStopsModal ||
+    showBulkCsvModal ||
+    showAsgnModal ||
+    editingAsgn ||
+    showStopModal ||
+    editingStop ||
+    showBusModal ||
+    editingBus
+  ));
 
   // Sorting state for assignments list
   type AsgnSortField = 'student' | 'class' | 'bus' | 'stop' | 'tripType' | 'days' | 'discount' | 'fare';

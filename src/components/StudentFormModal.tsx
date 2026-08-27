@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentDocument, StudentStatus } from '../types';
 import { formatCurrency, calculateAge } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
@@ -184,6 +185,15 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
   // Document preview state
   const [previewDoc, setPreviewDoc] = useState<{ title: string; fileData?: string; fileType?: string } | null>(null);
+
+  // Close top-level modal on Escape if no preview doc is open, or close previewDoc if open
+  useEscapeKey(() => {
+    if (previewDoc) {
+      setPreviewDoc(null);
+    } else {
+      onClose();
+    }
+  }, true);
 
   const normalizeCnic = (cnic: string) => cnic.replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
 
