@@ -62,11 +62,11 @@ export function calculateAge(
   if (!dob || typeof dob !== 'string' || dob.trim() === '') return null;
   const parts = dob.trim().split('-');
   if (parts.length < 3) return null;
-  
+
   const birthYear = parseInt(parts[0], 10);
   const birthMonth = parseInt(parts[1], 10) - 1; // 0-indexed
   const birthDay = parseInt(parts[2], 10);
-  
+
   if (isNaN(birthYear) || isNaN(birthMonth) || isNaN(birthDay)) return null;
 
   const birthDate = new Date(birthYear, birthMonth, birthDay);
@@ -185,6 +185,17 @@ export interface VoucherPreviewCalculation {
   skippedBlockReason?: string;
   isBeforeFirstBillingMonth?: boolean;
   firstBillingMonthBlockReason?: string;
+  // The prior voucher (if any) whose balance was folded into this preview's
+  // prevBalance. Exposed so the commit step can mark it Carried -- without
+  // this, a source voucher (e.g. an unpaid pre-billing-start Admission
+  // voucher) has its balance folded into the new voucher's total but is
+  // itself never updated, leaving it as a permanent unpaid "ghost" record
+  // even after the debt has effectively been collected via the new voucher.
+  priorVoucherId?: string;
+  // True only when priorVoucherId represents actual unpaid/partial debt
+  // being folded forward (not an already-Paid voucher's advance-credit case,
+  // which shouldn't be marked Carried since nothing is owed on it).
+  priorVoucherShouldCarry?: boolean;
 }
 
 /**
@@ -341,7 +352,7 @@ export function calculateStudentVoucherPreview(
   }
 
   const particulars: VoucherItem[] = [];
-  
+
   // 3-Way Hierarchy Template Partition:
   // 1. Student-level overrides (highest precedence)
   const studentTemplates = templates.filter(
@@ -446,15 +457,19 @@ export function calculateStudentVoucherPreview(
     amount: transportFee,
   });
 
-  // 8. Previous Balance & Carried Fine (prior month outstanding or unconsumed advance)
-  const prevMonthStr = getPreviousMonthString(month);
-
-  const priorVoucher = existingVouchers.find(
-    (v) =>
-      v.studentId === student.id &&
-      (v.month === prevMonthStr || v.carryForwardMonth === month) &&
-      v.status !== 'Reversed'
+  // 8. Previous Balance & Carried Fine
+  // Search for either a voucher explicitly carried-forward to this month, OR
+  // the most-recent non-reversed prior voucher for this student regardless of
+  // how many months back it sits (handles June admission voucher → August gap).
+  const carriedToThisMonth = existingVouchers.find(
+    (v) => v.studentId === student.id && v.carryForwardMonth === month && v.status !== 'Reversed'
   );
+
+  const latestPriorVoucher = existingVouchers
+    .filter((v) => v.studentId === student.id && v.month < month && v.status !== 'Reversed')
+    .sort((a, b) => b.month.localeCompare(a.month))[0]; // newest-first → [0] is the closest prior
+
+  const priorVoucher = carriedToThisMonth ?? latestPriorVoucher;
 
   let prevBalance = 0;
   let carriedFine = 0;
@@ -590,6 +605,9 @@ export function calculateStudentVoucherPreview(
     skippedMonths,
     isBlockedBySkippedRule,
     skippedBlockReason,
+    priorVoucherId: priorVoucher?.id,
+    priorVoucherShouldCarry:
+      !!priorVoucher && (priorVoucher.status === 'Issued' || priorVoucher.status === 'Partial'),
   };
 }
 

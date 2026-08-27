@@ -94,8 +94,15 @@ export const VouchersView: React.FC = () => {
   // Generator Wizard State
   const [showGeneratorModal, setShowGeneratorModal] = useState(false);
   const [targetMonth, setTargetMonth] = useState(activeMonth);
-  const availableTargetMonths = useMemo(
+  // See HeaderBar.tsx for why these are kept separate: the picker window
+  // alone doesn't mean data exists for those months, so it must not feed the
+  // "Vouchers / Records Exist" indicator dot.
+  const pickerWindowMonths = useMemo(
     () => mergeWithDataMonths(getMonthPickerWindow(), vouchers.map((v) => v.month)),
+    [vouchers]
+  );
+  const monthsWithData = useMemo(
+    () => Array.from(new Set(vouchers.map((v) => v.month))),
     [vouchers]
   );
   const [scope, setScope] = useState<'all' | 'class' | 'students'>('all');
@@ -956,7 +963,12 @@ export const VouchersView: React.FC = () => {
                           className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
                         />
                       </td>
-                      <td className="p-3 font-mono font-bold text-slate-900 whitespace-nowrap">{v.voucherNo}</td>
+                      <td className="p-3 font-mono font-bold text-slate-900 whitespace-nowrap">
+                        <span>{v.voucherNo}</span>
+                        {v.voucherType === 'Admission' && (
+                          <span className="ml-1.5 text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 align-middle">ADM</span>
+                        )}
+                      </td>
                       <td className="p-3 whitespace-nowrap">
                         <span className="font-mono font-semibold text-teal-700 bg-teal-50/80 px-2 py-0.5 rounded border border-teal-100/80 text-[11px] inline-block">
                           {student?.regNo || '-'}
@@ -1235,8 +1247,8 @@ export const VouchersView: React.FC = () => {
                     <MonthPicker
                       value={targetMonth}
                       onChange={(newMonth) => handleUpdatePreview(scope, scopeClassId, newMonth)}
-                      availableMonths={availableTargetMonths}
-                      closedMonths={availableTargetMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+                      availableMonths={monthsWithData}
+                      closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
                       themeColor={themeConfig?.color || 'teal'}
                       isLight={true}
                       showSteppers={false}

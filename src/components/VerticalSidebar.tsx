@@ -77,12 +77,14 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         : 'bg-[#131416] text-zinc-50 border-zinc-800'
       : 'bg-slate-900 text-slate-100 border-slate-800';
 
-  const availableMonths = mergeWithDataMonths(
+  // See HeaderBar.tsx for why these are kept separate: the picker window
+  // alone doesn't mean data exists for those months, so it must not feed the
+  // "Vouchers / Records Exist" indicator dot.
+  const pickerWindowMonths = mergeWithDataMonths(
     getMonthPickerWindow(),
     vouchers.map((v) => v.month)
   );
-
-  const currentIdx = availableMonths.indexOf(activeMonth);
+  const monthsWithData = Array.from(new Set(vouchers.map((v) => v.month)));
 
   // Route month switches through the shared guard (SettingsView may veto while
   // it has unsaved template drafts open).
@@ -214,8 +216,8 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             <MonthPicker
               value={activeMonth}
               onChange={changeMonth}
-              availableMonths={availableMonths}
-              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              availableMonths={monthsWithData}
+              closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
               themeColor={themeConfig?.color || 'teal'}
               isLight={isLight}
               className="w-full"
@@ -228,12 +230,11 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             <MonthPicker
               value={activeMonth}
               onChange={changeMonth}
-              availableMonths={availableMonths}
-              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              availableMonths={monthsWithData}
+              closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
               themeColor={themeConfig?.color || 'teal'}
               isLight={isLight}
-              className="w-full"
-              compact={true}
+              variant="icon"
               idPrefix="sidebar-collapsed-month-picker"
               align="left"
             />

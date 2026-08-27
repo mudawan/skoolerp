@@ -1,20 +1,23 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student } from '../types';
-import { formatCurrency, calculateAge, formatStudentAge, formatMonthName } from '../utils/feeMath';
+import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
+import { MonthPicker } from './MonthPicker';
 import {
   Calendar,
   CreditCard,
   Download,
   Edit2,
   Eye,
+  FileCheck2,
   FileText,
   FolderKanban,
   History,
   Home,
   IdCard,
   Phone,
+  Receipt,
   Sparkles,
   User,
   X,
@@ -33,12 +36,47 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   onEdit,
   onViewLedger,
 }) => {
-  const { classes, families, hasPermission } = useApp();
+  const { classes, families, hasPermission, generateAdmissionVoucher, showToast, vouchers, activeMonth } = useApp();
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     fileData?: string;
     fileType?: string;
   } | null>(null);
+
+  // Admission Voucher mini-modal state
+  const [showAdmVoucherModal, setShowAdmVoucherModal] = useState(false);
+  const [admMonth, setAdmMonth] = useState<string>(() => {
+    // Default to the month of admission, or the current active month
+    if (student.admissionDate) return student.admissionDate.substring(0, 7);
+    return getCurrentMonthString();
+  });
+
+  // True when student has a future firstBillingMonth (i.e. admitted before classes start)
+  const hasFutureBilling = !!(student.firstBillingMonth && student.firstBillingMonth > getCurrentMonthString());
+
+  // Admission voucher month range: cannot be earlier than admission month,
+  // and must fall strictly before the first regular tuition (billing) month
+  // -- once billing starts, that month's balance belongs on the regular
+  // monthly voucher instead.
+  const admMonthMin = student.admissionDate ? student.admissionDate.substring(0, 7) : undefined;
+  const admMonthMax = student.firstBillingMonth ? getPreviousMonthString(student.firstBillingMonth) : undefined;
+  const admRangeInvalid = Boolean(admMonthMin && admMonthMax && admMonthMin > admMonthMax);
+
+  // Check if admission voucher already issued for this student in chosen month
+  const existingAdmVoucher = useMemo(
+    () => vouchers.find((v) => v.studentId === student.id && v.month === admMonth && v.status !== 'Reversed'),
+    [vouchers, student.id, admMonth]
+  );
+
+  const handleGenerateAdmVoucher = () => {
+    const res = generateAdmissionVoucher(student.id, admMonth);
+    if (res.success && res.voucher) {
+      showToast(`Admission Voucher ${res.voucher.voucherNo} generated for ${formatMonthName(admMonth)}!`, 'success');
+      setShowAdmVoucherModal(false);
+    } else {
+      showToast(res.error || 'Failed to generate admission voucher', 'error');
+    }
+  };
 
   const studentClass = classes.find((c) => c.id === student.classId);
   const studentFamily = families.find((f) => f.id === student.familyId);
@@ -407,7 +445,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
         {/* Footer Actions */}
         <div className="flex items-center justify-between border-t border-slate-200 pt-3 shrink-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => {
                 onClose();
@@ -418,6 +456,15 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               <History className="w-3.5 h-3.5" />
               View Collections & Ledger
             </button>
+            {hasPermission('fees.generate') && student.firstBillingMonth && (
+              <button
+                onClick={() => setShowAdmVoucherModal(true)}
+                className="px-3.5 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-amber-200"
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                Admission Voucher
+              </button>
+            )}
             {hasPermission('students.manage') && (
               <button
                 onClick={() => {
@@ -440,6 +487,96 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Admission Voucher Modal */}
+      {showAdmVoucherModal && (
+        <div className="fixed inset-0 z-70 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-amber-600" />
+              Generate Admission Voucher
+            </h3>
+            <p className="text-slate-500 text-xs leading-relaxed">
+              Issue a one-time admission fee voucher for{' '}
+              <span className="font-bold text-slate-700">{student.name}</span>. This voucher contains
+              only admission charges (Admission Fee, Registration Fee, etc.) — no tuition or transport.
+              Any unpaid balance will automatically carry forward to the first regular billing month.
+            </p>
+
+            {/* Month Picker */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                Issue for Month
+              </label>
+              <MonthPicker
+                value={admMonth}
+                onChange={setAdmMonth}
+                variant="input"
+                minMonth={admMonthMin}
+                maxMonth={admMonthMax}
+                disabled={admRangeInvalid}
+              />
+            </div>
+
+            {/* Explain the allowed range */}
+            {!admRangeInvalid && (admMonthMin || admMonthMax) && (
+              <p className="text-[11px] text-slate-500">
+                Allowed range:{' '}
+                <span className="font-semibold text-slate-700">
+                  {admMonthMin ? formatMonthName(admMonthMin) : 'Any month'}
+                </span>{' '}
+                through{' '}
+                <span className="font-semibold text-slate-700">
+                  {admMonthMax ? formatMonthName(admMonthMax) : 'Any month'}
+                </span>
+                {' '}(before {student.firstBillingMonth ? formatMonthName(student.firstBillingMonth) : 'billing starts'}).
+              </p>
+            )}
+
+            {/* Range is empty: admission month is on/after first billing month, so
+                there's no month left where a standalone admission voucher makes
+                sense -- the regular monthly voucher already covers it. */}
+            {admRangeInvalid && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                <span className="font-bold">Not needed:</span> This student's admission month is on or
+                after their first billing month ({formatMonthName(student.firstBillingMonth!)}). Use the
+                regular monthly voucher generation for this student instead.
+              </div>
+            )}
+
+            {/* Warn if voucher already exists */}
+            {existingAdmVoucher && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800">
+                <span className="font-bold">Blocked:</span> Voucher{' '}
+                <span className="font-mono font-bold">{existingAdmVoucher.voucherNo}</span> already
+                exists for {formatMonthName(admMonth)}. Delete or reverse it first.
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setShowAdmVoucherModal(false)}
+                className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateAdmVoucher}
+                disabled={
+                  !!existingAdmVoucher ||
+                  admRangeInvalid ||
+                  (!!admMonthMin && admMonth < admMonthMin) ||
+                  (!!admMonthMax && admMonth > admMonthMax)
+                }
+                className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+              >
+                <FileCheck2 className="w-3.5 h-3.5" />
+                {existingAdmVoucher ? 'Already Generated' : 'Confirm & Generate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Document Preview Modal */}
       {previewDoc && (

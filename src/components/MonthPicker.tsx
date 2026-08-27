@@ -15,11 +15,13 @@ export interface MonthPickerProps {
   align?: 'left' | 'right' | 'center';
   compact?: boolean;
   showSteppers?: boolean;
-  variant?: 'pill' | 'input';
+  variant?: 'pill' | 'input' | 'icon';
   disabled?: boolean;
   minYear?: number;
   maxYear?: number;
   placeholder?: string;
+  minMonth?: string; // 'YYYY-MM' - months before this are disabled in the grid
+  maxMonth?: string; // 'YYYY-MM' - months after this are disabled in the grid
 }
 
 const MONTH_NAMES = [
@@ -49,6 +51,8 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
   minYear = 2020,
   maxYear = 2035,
   placeholder = 'Select Month',
+  minMonth,
+  maxMonth,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -147,6 +151,8 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
   const handleSelectMonth = (monthIndex: number) => {
     if (disabled) return;
     const monthStr = `${viewYear}-${String(monthIndex + 1).padStart(2, '0')}`;
+    if (minMonth && monthStr < minMonth) return;
+    if (maxMonth && monthStr > maxMonth) return;
     onChange(monthStr);
     setIsOpen(false);
   };
@@ -164,8 +170,10 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
     const now = new Date();
     const curYear = now.getFullYear();
     const curMonth = now.getMonth();
-    setViewYear(curYear);
     const monthStr = `${curYear}-${String(curMonth + 1).padStart(2, '0')}`;
+    if (minMonth && monthStr < minMonth) return;
+    if (maxMonth && monthStr > maxMonth) return;
+    setViewYear(curYear);
     onChange(monthStr);
     setIsOpen(false);
   };
@@ -184,11 +192,31 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
       y += 1;
     }
     const newMonthStr = `${y}-${String(m).padStart(2, '0')}`;
+    if (minMonth && newMonthStr < minMonth) return;
+    if (maxMonth && newMonthStr > maxMonth) return;
     onChange(newMonthStr);
   };
 
   const currentMonthDate = new Date();
   const currentMonthStr = `${currentMonthDate.getFullYear()}-${String(currentMonthDate.getMonth() + 1).padStart(2, '0')}`;
+
+  const prevStepMonthStr = (() => {
+    let y = selectedYear;
+    let m = selectedMonth - 1;
+    if (m < 1) { m = 12; y -= 1; }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  })();
+  const nextStepMonthStr = (() => {
+    let y = selectedYear;
+    let m = selectedMonth + 1;
+    if (m > 12) { m = 1; y += 1; }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  })();
+  const isPrevStepDisabled = disabled || (Boolean(minMonth) && prevStepMonthStr < (minMonth as string));
+  const isNextStepDisabled = disabled || (Boolean(maxMonth) && nextStepMonthStr > (maxMonth as string));
+  const isQuickCurrentDisabled = Boolean(
+    disabled || (minMonth && currentMonthStr < minMonth) || (maxMonth && currentMonthStr > maxMonth)
+  );
 
   const displayLabel = value
     ? compact
@@ -209,8 +237,27 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
 
   return (
     <div ref={containerRef} className={`relative inline-block text-left ${className}`}>
-      {/* Trigger: Input Variant (for forms / modals) */}
-      {variant === 'input' ? (
+      {/* Trigger: Icon Variant (for narrow/collapsed contexts, e.g. collapsed sidebar rail) */}
+      {variant === 'icon' ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          id={`${idPrefix}-trigger`}
+          disabled={disabled}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          onClick={() => !disabled && setIsOpen(!isOpen)}
+          title={value ? `${formatMonthName(value)} — click to change` : 'Click to pick month & year'}
+          style={{
+            backgroundColor: isLight ? preset.lightBg : 'rgba(0, 0, 0, 0.4)',
+            borderColor: isLight ? preset.lightBorder : preset.primaryColor + '50',
+            color: isLight ? preset.textColor : '#ffffff',
+          }}
+          className="w-9 h-9 flex items-center justify-center rounded-xl border shadow-2xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <CalendarIcon className="w-4 h-4" style={{ color: preset.primaryColor }} />
+        </button>
+      ) : variant === 'input' ? (
         <button
           ref={triggerRef}
           type="button"
@@ -252,7 +299,7 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
             <button
               type="button"
               onClick={(e) => handleStepMonth(-1, e)}
-              disabled={disabled}
+              disabled={isPrevStepDisabled}
               title="Previous Month"
               style={{ color: preset.primaryColor }}
               className="p-1 rounded-lg hover:opacity-80 active:scale-95 disabled:opacity-30 cursor-pointer transition"
@@ -284,7 +331,7 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
             <button
               type="button"
               onClick={(e) => handleStepMonth(1, e)}
-              disabled={disabled}
+              disabled={isNextStepDisabled}
               title="Next Month"
               style={{ color: preset.primaryColor }}
               className="p-1 rounded-lg hover:opacity-80 active:scale-95 disabled:opacity-30 cursor-pointer transition"
@@ -343,12 +390,14 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
               const isCurrent = currentMonthStr === monthStr;
               const hasData = availableMonths.includes(monthStr);
               const isClosed = closedMonths.includes(monthStr);
+              const isOutOfRange = Boolean((minMonth && monthStr < minMonth) || (maxMonth && monthStr > maxMonth));
 
               return (
                 <button
                   key={monthStr}
                   type="button"
                   onClick={() => handleSelectMonth(idx)}
+                  disabled={isOutOfRange}
                   style={{
                     backgroundColor: isSelected
                       ? preset.primaryColor
@@ -364,14 +413,22 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
                       ? '#ffffff'
                       : isCurrent
                       ? preset.textColor
+                      : isOutOfRange
+                      ? '#cbd5e1'
                       : '#334155',
                   }}
-                  className={`relative py-1 px-1 rounded text-[10px] font-bold transition flex flex-col items-center justify-center cursor-pointer border ${
-                    isSelected
-                      ? 'shadow-2xs ring-1 ring-offset-0.5 ring-slate-200 font-extrabold'
-                      : 'hover:bg-slate-100 border-transparent hover:border-slate-200'
+                  className={`relative py-1 px-1 rounded text-[10px] font-bold transition flex flex-col items-center justify-center border ${
+                    isOutOfRange
+                      ? 'opacity-40 cursor-not-allowed border-transparent'
+                      : isSelected
+                      ? 'shadow-2xs ring-1 ring-offset-0.5 ring-slate-200 font-extrabold cursor-pointer'
+                      : 'hover:bg-slate-100 border-transparent hover:border-slate-200 cursor-pointer'
                   }`}
-                  title={`${FULL_MONTH_NAMES[idx]} ${viewYear}${isClosed ? ' (Closed)' : ''}`}
+                  title={
+                    isOutOfRange
+                      ? `${FULL_MONTH_NAMES[idx]} ${viewYear} is outside the allowed range`
+                      : `${FULL_MONTH_NAMES[idx]} ${viewYear}${isClosed ? ' (Closed)' : ''}`
+                  }
                 >
                   <span>{mName}</span>
 
@@ -410,8 +467,11 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
             <button
               type="button"
               onClick={handleQuickCurrent}
-              style={{ color: preset.primaryColor }}
-              className="font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+              disabled={isQuickCurrentDisabled}
+              style={{ color: isQuickCurrentDisabled ? '#94a3b8' : preset.primaryColor }}
+              className={`font-bold flex items-center gap-0.5 transition ${
+                isQuickCurrentDisabled ? 'opacity-40 cursor-not-allowed' : 'hover:underline cursor-pointer'
+              }`}
             >
               <CalendarIcon className="w-2.5 h-2.5" />
               <span>Current</span>

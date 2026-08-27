@@ -160,6 +160,7 @@ export interface FeeVoucher {
   netDue: number;
   amountPaid: number;
   status: VoucherStatus;
+  voucherType?: 'Monthly' | 'Admission'; // 'Admission' = one-time pre-billing-start voucher
   carryForwardMonth?: string;
   carriedLateFine?: number; // Late fine amount applied at carry forward to be charged in targetMonth
   notes?: string;

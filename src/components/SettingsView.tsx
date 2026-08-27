@@ -1988,7 +1988,7 @@ export const SettingsView: React.FC = () => {
             </div>
 
             {/* Logo Configuration Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
               {/* Left Column: Current Logo Emblem Preview */}
               <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col items-center justify-center text-center space-y-3">
                 <div className="relative group">
@@ -2012,24 +2012,6 @@ export const SettingsView: React.FC = () => {
                     </div>
                   )}
                 </div>
-
-                <div>
-                  <h4 className="font-bold text-slate-900 text-xs">
-                    {profileData.name || 'School / Institute Crest'}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                    {profileData.logoUrl ? 'Active Emblem Configured' : 'Transparent PNG or SVG recommended'}
-                  </p>
-                </div>
-
-                {profileData.logoUrl && (
-                  <div className="w-full pt-2 border-t border-slate-200/80 flex items-center justify-center gap-2">
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/60">
-                      <Sparkles className="w-3 h-3 text-teal-600" />
-                      Live in UI & PDF
-                    </span>
-                  </div>
-                )}
               </div>
 
               {/* Right Column: Upload Tabs & Selection Controls */}
@@ -2323,9 +2305,6 @@ export const SettingsView: React.FC = () => {
                 >
                   <Sliders className="w-3.5 h-3.5 text-teal-600" />
                   <span>1. Prior Month Policy</span>
-                  {selectedPriorRule !== priorMonthRule && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  )}
                 </button>
 
                 <button
@@ -2340,9 +2319,6 @@ export const SettingsView: React.FC = () => {
                 >
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
                   <span>2. Skipped Month Policy</span>
-                  {selectedSkippedRule !== skippedMonthRule && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  )}
                 </button>
 
                 <button
@@ -2357,15 +2333,8 @@ export const SettingsView: React.FC = () => {
                 >
                   <Trash2 className="w-3.5 h-3.5 text-rose-600" />
                   <span>3. Deletion & Sequence</span>
-                  {selectedDeletionResolution !== voucherDeletionResolution && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  )}
                 </button>
               </div>
-
-              <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">
-                Click a category tab to adjust rules
-              </span>
             </div>
 
             {/* Tab 1 Content: Prior Month Voucher Generation Rules */}

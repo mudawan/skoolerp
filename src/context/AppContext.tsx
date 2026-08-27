@@ -187,6 +187,11 @@ interface AppContextType {
     dueDate?: string,
     lateFeeRate?: number
   ) => { success: boolean; generatedCount: number; error?: string };
+  generateAdmissionVoucher: (
+    studentId: string,
+    month: string,
+    options?: { dueDate?: string; lateFeeRate?: number; notes?: string }
+  ) => { success: boolean; voucher?: FeeVoucher; error?: string };
   collectVoucherPayment: (
     voucherId: string,
     amount: number,
@@ -1784,6 +1789,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { previews, monthClosureBlocked, closureMessage };
   };
 
+  // Generate Admission Voucher (one-time, pre-billing-start)
+  // Bypasses firstBillingMonth gate. Particulars: Flex1 + Flex2 (+ Flex3/4 if set).
+  // No tuition, no transport, no monthly discount.
+  const generateAdmissionVoucher = (
+    studentId: string,
+    month: string,
+    options: { dueDate?: string; lateFeeRate?: number; notes?: string } = {}
+  ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
+    const student = students.find((s) => s.id === studentId);
+    if (!student) return { success: false, error: 'Student not found.' };
+    if (student.status !== 'Active') return { success: false, error: 'Student is not active.' };
+
+    // Block if an admission or monthly voucher already exists for this month
+    const existing = vouchers.find(
+      (v) => v.studentId === studentId && v.month === month && v.status !== 'Reversed'
+    );
+    if (existing) {
+      return { success: false, error: `A voucher (${existing.voucherNo}) already exists for ${month}. Delete or reverse it first.` };
+    }
+
+    // Resolve admission-charge templates (Flex1, Flex2, Flex3, Flex4 only)
+    const studentTpls = templates.filter(
+      (t) => t.studentId === studentId && (!t.month || t.month === month)
+    );
+    const classTpls = templates.filter(
+      (t) => !t.studentId && t.classId === student.classId && (!t.month || t.month === month)
+    );
+    const globalTpls = templates.filter((t) => !t.studentId && !t.classId);
+
+    const resolve = (kind: ParticularKind, defaultLabel: string) => {
+      const tpl =
+        studentTpls.find((t) => t.kind === kind) ??
+        classTpls.find((t) => t.kind === kind) ??
+        globalTpls.find((t) => t.kind === kind);
+      return { label: tpl?.label || defaultLabel, amount: tpl?.defaultAmount || 0, sortOrder: tpl?.sortOrder ?? 99 };
+    };
+
+    const particulars: VoucherItem[] = [];
+    const kindsToInclude: { kind: ParticularKind; defaultLabel: string }[] = [
+      { kind: 'Flex1', defaultLabel: 'Admission Fee' },
+      { kind: 'Flex2', defaultLabel: 'Registration Fee' },
+      { kind: 'Flex3', defaultLabel: 'Exam Fee' },
+      { kind: 'Flex4', defaultLabel: 'Other' },
+    ];
+
+    kindsToInclude.forEach(({ kind, defaultLabel }) => {
+      const { label, amount } = resolve(kind, defaultLabel);
+      if (amount > 0) {
+        particulars.push({ kind, label, amount: roundChargeUp(amount) });
+      }
+    });
+
+    if (particulars.length === 0) {
+      return {
+        success: false,
+        error:
+          'No admission charges are configured (Admission Fee / Registration Fee / Exam Fee / Other are all zero). ' +
+          'Please set amounts in Fee Settings → Particulars before generating an Admission Voucher.',
+      };
+    }
+
+    // Sort by template sortOrder
+    const sortMap = new Map<ParticularKind, number>();
+    globalTpls.forEach((t) => sortMap.set(t.kind, t.sortOrder));
+    classTpls.forEach((t) => sortMap.set(t.kind, t.sortOrder));
+    studentTpls.forEach((t) => sortMap.set(t.kind, t.sortOrder));
+    particulars.sort((a, b) => (sortMap.get(a.kind) ?? 99) - (sortMap.get(b.kind) ?? 99));
+
+    const grossTotal = particulars.reduce((s, p) => s + p.amount, 0);
+    const netDue = grossTotal;
+
+    const issueDate = new Date().toISOString().split('T')[0];
+    const yearStr = month.split('-')[0];
+    const voucherNo = `FE${yearStr}-${(vouchers.length + 1).toString().padStart(6, '0')}`;
+
+    const newVoucher: FeeVoucher = {
+      id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      voucherNo,
+      studentId,
+      month,
+      classId: student.classId,
+      issueDate,
+      dueDate: options.dueDate || '',
+      particulars,
+      grossTotal,
+      discountTotal: 0,
+      prevBalance: 0,
+      lateFeeRate: options.lateFeeRate ?? defaultLateFeeRate,
+      netDue,
+      amountPaid: 0,
+      status: 'Issued',
+      voucherType: 'Admission',
+      notes: options.notes,
+      createdDate: issueDate,
+    };
+
+    setVouchers((prev) => [...prev, newVoucher]);
+    return { success: true, voucher: newVoucher };
+  };
+
   // Commit Voucher Generation
   const commitVoucherGeneration = (
     month: string,
@@ -1861,9 +1966,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const yearStr = month.split('-')[0];
     let seqStart = vouchers.length + 1;
 
+    // Track prior vouchers whose unpaid balance is being folded into a
+    // newly-generated voucher this round (e.g. a pre-billing-start Admission
+    // voucher rolling into the first regular monthly voucher). Without
+    // marking these Carried, they'd remain as permanent "ghost" unpaid
+    // records even after their balance has already moved to the new voucher.
+    const priorVouchersToCarry = new Map<string, string>(); // voucherId -> carryForwardMonth
+
     const newVouchers: FeeVoucher[] = ungenerated.map((prev) => {
       const voucherNo = `FE${yearStr}-${seqStart.toString().padStart(6, '0')}`;
       seqStart++;
+
+      if (prev.priorVoucherShouldCarry && prev.priorVoucherId) {
+        priorVouchersToCarry.set(prev.priorVoucherId, month);
+      }
 
       return {
         id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -1885,11 +2001,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     });
 
+    // Apply the Carried status to source vouchers in the same state update
+    // that adds the new vouchers, whichever commit path below runs.
+    const applyCarryMarks = (list: FeeVoucher[]): FeeVoucher[] => {
+      if (priorVouchersToCarry.size === 0) return list;
+      return list.map((v) =>
+        priorVouchersToCarry.has(v.id)
+          ? { ...v, status: 'Carried' as VoucherStatus, carryForwardMonth: priorVouchersToCarry.get(v.id) }
+          : v
+      );
+    };
+
     if (priorMonthRule === 'recalculate' && newVouchers.length > 0) {
       const affectedStudentIds = new Set(newVouchers.map((v) => v.studentId));
 
       setVouchers((prevVouchers) => {
-        let allVouchers = [...prevVouchers, ...newVouchers];
+        let allVouchers = applyCarryMarks([...prevVouchers, ...newVouchers]);
 
         affectedStudentIds.forEach((studentId) => {
           // Sort all non-reversed vouchers for this student chronologically
@@ -1963,7 +2090,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return allVouchers;
       });
     } else {
-      setVouchers((prev) => [...prev, ...newVouchers]);
+      setVouchers((prev) => applyCarryMarks([...prev, ...newVouchers]));
     }
     return { success: true, generatedCount: newVouchers.length };
   };
@@ -3053,6 +3180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         vouchers,
         previewVoucherGeneration,
         commitVoucherGeneration,
+        generateAdmissionVoucher,
         collectVoucherPayment,
         updateVoucherParticulars,
         bulkCsvCollection,

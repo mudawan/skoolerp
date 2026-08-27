@@ -28,10 +28,18 @@ export const HeaderBar: React.FC = () => {
 
   const [showResetModal, setShowResetModal] = useState(false);
 
-  const availableMonths = mergeWithDataMonths(
+  // `pickerWindowMonths` covers a reasonable +/- window around today, merged
+  // with any months that actually have vouchers -- used only to check
+  // closure status. `monthsWithData` is the real set of months that have
+  // vouchers, used for the "Vouchers / Records Exist" indicator dot; the
+  // window months alone don't mean data exists, so they must NOT feed that
+  // indicator (previously they did, making nearly every month in the window
+  // show the dot even when nothing existed for it).
+  const pickerWindowMonths = mergeWithDataMonths(
     getMonthPickerWindow(),
     vouchers.map((v) => v.month)
   );
+  const monthsWithData = Array.from(new Set(vouchers.map((v) => v.month)));
 
   const requestMonthChange = (next: string) => {
     if (next === activeMonth) return;
@@ -76,8 +84,8 @@ export const HeaderBar: React.FC = () => {
             <MonthPicker
               value={activeMonth}
               onChange={requestMonthChange}
-              availableMonths={availableMonths}
-              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              availableMonths={monthsWithData}
+              closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
               themeColor={themeConfig?.color || 'teal'}
               isLight={false}
               idPrefix="headerbar-month-picker"
