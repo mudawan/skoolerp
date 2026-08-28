@@ -235,10 +235,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === paginatedStudents.length && paginatedStudents.length > 0) {
-      setSelectedIds([]);
+    const pageIds = paginatedStudents.map((s) => s.id);
+    const allPageSelected =
+      pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)));
     } else {
-      setSelectedIds(paginatedStudents.map((s) => s.id));
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
     }
   };
 
@@ -872,7 +875,8 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                   <input
                     type="checkbox"
                     checked={
-                      selectedIds.length > 0 && selectedIds.length === paginatedStudents.length
+                      paginatedStudents.length > 0 &&
+                      paginatedStudents.every((s) => selectedIds.includes(s.id))
                     }
                     onChange={toggleSelectAll}
                     className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"

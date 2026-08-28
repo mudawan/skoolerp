@@ -100,6 +100,18 @@ export const DataCleanupView: React.FC = () => {
     return users.filter((u) => u.id !== currentUser.id).length;
   }, [users, currentUser]);
 
+  // Count distinct fee-template scopes (1 global baseline set + per-class + per-student
+  // override sets), rather than raw per-head rows. This reflects the "how many template
+  // groups exist" intent: 1 with defaults, N+1 once N students/classes are customized.
+  const templateScopeCount = useMemo(() => {
+    const hasGlobal = templates.some((t) => !t.studentId && !t.classId);
+    const classScopes = new Set(
+      templates.filter((t) => t.classId && !t.studentId).map((t) => t.classId)
+    );
+    const studentScopes = new Set(templates.filter((t) => t.studentId).map((t) => t.studentId));
+    return (hasGlobal ? 1 : 0) + classScopes.size + studentScopes.size;
+  }, [templates]);
+
   // Table Configuration Matrix
   const tableCards = useMemo(() => [
     {
@@ -161,8 +173,8 @@ export const DataCleanupView: React.FC = () => {
       key: 'templates' as keyof TableSelectionState,
       name: 'Fee Templates & Overrides',
       category: 'Financial Ledger',
-      count: templates.length,
-      unit: 'templates',
+      count: templateScopeCount,
+      unit: 'template set',
       icon: <FileSpreadsheet className="w-5 h-5 text-amber-600" />,
       description: 'Resets fee particular labels and amounts back to standard global 9-item baseline and wipes student/class overrides.',
       cascadingNote: 'Subsequent voucher generation will strictly use clean default global rates.',

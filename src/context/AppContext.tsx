@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { normalizePaymentMode } from '../utils/paymentMode';
+import { nextDocumentNumber, reconcileSequence } from '../utils/sequence';
 import { MIN_PASSWORD_LENGTH, sha256Hex, verifyPassword } from '../utils/passwords';
 import {
   AppThemeConfig,
@@ -69,7 +70,6 @@ interface AppContextType {
   users: User[];
   login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string; user?: User }>;
   logout: () => void;
-  switchRole: (role: UserRole) => void;
   hasPermission: (permission: string) => boolean;
   addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string }>;
   updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
@@ -190,7 +190,12 @@ interface AppContextType {
   generateAdmissionVoucher: (
     studentId: string,
     month: string,
-    options?: { dueDate?: string; lateFeeRate?: number; notes?: string }
+    options?: {
+      dueDate?: string;
+      lateFeeRate?: number;
+      notes?: string;
+      items?: { kind: ParticularKind; label: string; amount: number }[];
+    }
   ) => { success: boolean; voucher?: FeeVoucher; error?: string };
   collectVoucherPayment: (
     voucherId: string,
@@ -232,6 +237,7 @@ interface AppContextType {
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
   ) => { successCount: number };
+  undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
   getDownstreamVouchersInfo: (ids: string[]) => {
@@ -615,6 +621,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
   });
 
+  // Adopt the highest document number already present in the loaded data so
+  // the monotonic counters never re-issue a number that exists (e.g. after a
+  // restored backup or an import). Runs once on mount; the arrays are the
+  // freshly-initialized values above.
+  useEffect(() => {
+    const parseNum = (docNo: string, prefix: string) => {
+      if (!docNo || !docNo.startsWith(prefix)) return null;
+      const num = parseInt(docNo.slice(prefix.length + 1), 10);
+      const year = docNo.slice(prefix.length, prefix.length + 4);
+      return isNaN(num) || !/^\d{4}$/.test(year) ? null : { prefix, year, number: num };
+    };
+    const entries: { prefix: string; year: string; number: number }[] = [];
+    vouchers.forEach((v) => {
+      const p = parseNum(v.voucherNo, 'FE');
+      if (p) entries.push(p);
+    });
+    collections.forEach((c) => {
+      const p = parseNum(c.collectionNo, 'COL');
+      if (p) entries.push(p);
+    });
+    transactions.forEach((t) => {
+      const p = parseNum(t.txnNo, 'TXN');
+      if (p) entries.push(p);
+    });
+    reconcileSequence(entries);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [institute, setInstitute] = useState<InstituteProfile>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_institute`);
     return saved ? JSON.parse(saved) : INITIAL_INSTITUTE;
@@ -764,18 +798,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
   };
 
-  const switchRole = (role: UserRole) => {
-    const found = users.find((u) => u.role === role) || SEEDED_USERS.find((u) => u.role === role);
-    if (found) {
-      setCurrentUser(found);
-      if (isAuthenticated) {
-        localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(found));
-      }
-    }
-  };
-
   const hasPermission = (permission: string) => {
-    return currentUser.permissions?.includes(permission) ?? true;
+    return currentUser?.permissions?.includes(permission) ?? false;
   };
 
   const addUser = async (userData: Omit<User, 'id'>): Promise<{ success: boolean; error?: string }> => {
@@ -1803,7 +1827,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const generateAdmissionVoucher = (
     studentId: string,
     month: string,
-    options: { dueDate?: string; lateFeeRate?: number; notes?: string } = {}
+    options: { dueDate?: string; lateFeeRate?: number; notes?: string; items?: { kind: ParticularKind; label: string; amount: number }[] } = {}
   ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
     const student = students.find((s) => s.id === studentId);
     if (!student) return { success: false, error: 'Student not found.' };
@@ -1815,6 +1839,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     if (existing) {
       return { success: false, error: `A voucher (${existing.voucherNo}) already exists for ${month}. Delete or reverse it first.` };
+    }
+
+    const kindsToInclude: { kind: ParticularKind; defaultLabel: string }[] = [
+      { kind: 'Flex1', defaultLabel: 'Admission Fee' },
+      { kind: 'Flex2', defaultLabel: 'Registration Fee' },
+      { kind: 'Flex3', defaultLabel: 'Exam Fee' },
+      { kind: 'Flex4', defaultLabel: 'Other' },
+    ];
+
+    // When explicit items are passed (e.g. the admission modal's edited heads),
+    // use them directly so generation does not depend on template state that
+    // may not have committed yet. Otherwise fall back to template resolution.
+    if (options.items && options.items.length > 0) {
+      const particulars: VoucherItem[] = options.items
+        .filter((it) => (Number(it.amount) || 0) > 0)
+        .map((it) => ({
+          kind: it.kind,
+          label: it.label.trim(),
+          amount: roundChargeUp(Number(it.amount) || 0),
+        }))
+        .sort(
+          (a, b) =>
+            kindsToInclude.findIndex((k) => k.kind === a.kind) -
+            kindsToInclude.findIndex((k) => k.kind === b.kind)
+        );
+
+      if (particulars.length === 0) {
+        return {
+          success: false,
+          error:
+            'No admission charges are configured (Admission Fee / Registration Fee / Exam Fee / Other are all zero). ' +
+            'Please enter amounts before generating an Admission Voucher.',
+        };
+      }
+
+      const grossTotal = particulars.reduce((s, p) => s + p.amount, 0);
+      const netDue = grossTotal;
+
+      const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, options);
+      setVouchers((prev) => [...prev, returnedVoucher]);
+      return { success: true, voucher: returnedVoucher };
     }
 
     // Resolve admission-charge templates (Flex1, Flex2, Flex3, Flex4 only)
@@ -1835,12 +1900,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     const particulars: VoucherItem[] = [];
-    const kindsToInclude: { kind: ParticularKind; defaultLabel: string }[] = [
-      { kind: 'Flex1', defaultLabel: 'Admission Fee' },
-      { kind: 'Flex2', defaultLabel: 'Registration Fee' },
-      { kind: 'Flex3', defaultLabel: 'Exam Fee' },
-      { kind: 'Flex4', defaultLabel: 'Other' },
-    ];
 
     kindsToInclude.forEach(({ kind, defaultLabel }) => {
       const { label, amount } = resolve(kind, defaultLabel);
@@ -1868,14 +1927,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const grossTotal = particulars.reduce((s, p) => s + p.amount, 0);
     const netDue = grossTotal;
 
+    const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, options);
+    setVouchers((prev) => [...prev, returnedVoucher]);
+    return { success: true, voucher: returnedVoucher };
+  };
+
+  const buildAdmissionVoucher = (
+    student: Student,
+    month: string,
+    particulars: VoucherItem[],
+    grossTotal: number,
+    netDue: number,
+    options: { dueDate?: string; lateFeeRate?: number; notes?: string }
+  ): FeeVoucher => {
     const issueDate = new Date().toISOString().split('T')[0];
     const yearStr = month.split('-')[0];
-    const voucherNo = `FE${yearStr}-${(vouchers.length + 1).toString().padStart(6, '0')}`;
+    const voucherNo = nextDocumentNumber('FE', yearStr);
 
-    const newVoucher: FeeVoucher = {
+    return {
       id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       voucherNo,
-      studentId,
+      studentId: student.id,
       month,
       classId: student.classId,
       issueDate,
@@ -1892,9 +1964,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: options.notes,
       createdDate: issueDate,
     };
-
-    setVouchers((prev) => [...prev, newVoucher]);
-    return { success: true, voucher: newVoucher };
   };
 
   // Commit Voucher Generation
@@ -1972,7 +2041,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const issueDate = new Date().toISOString().split('T')[0];
 
     const yearStr = month.split('-')[0];
-    let seqStart = vouchers.length + 1;
 
     // Track prior vouchers whose unpaid balance is being folded into a
     // newly-generated voucher this round (e.g. a pre-billing-start Admission
@@ -1982,8 +2050,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const priorVouchersToCarry = new Map<string, string>(); // voucherId -> carryForwardMonth
 
     const newVouchers: FeeVoucher[] = ungenerated.map((prev) => {
-      const voucherNo = `FE${yearStr}-${seqStart.toString().padStart(6, '0')}`;
-      seqStart++;
+      const voucherNo = nextDocumentNumber('FE', yearStr);
 
       if (prev.priorVoucherShouldCarry && prev.priorVoucherId) {
         priorVouchersToCarry.set(prev.priorVoucherId, month);
@@ -2207,11 +2274,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const yearStr = new Date().getFullYear().toString();
-    const colSeq = collections.length + 1;
-    const txnSeq = transactions.length + 1;
-
-    const collectionNo = `COL${yearStr}-${colSeq.toString().padStart(6, '0')}`;
-    const txnNo = `TXN${yearStr}-${txnSeq.toString().padStart(6, '0')}`;
+    const collectionNo = nextDocumentNumber('COL', yearStr);
+    const txnNo = nextDocumentNumber('TXN', yearStr);
 
     const collectionId = `col-${Date.now()}`;
 
@@ -2296,7 +2360,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const yearStr = new Date().getFullYear().toString();
     const collectionId = `col-bulk-${Date.now()}`;
-    const collectionNo = `COL${yearStr}-${(collections.length + 1).toString().padStart(6, '0')}`;
+    const collectionNo = nextDocumentNumber('COL', yearStr);
 
     const updatedVouchersMap = new Map<string, { paid: number; status: FeeVoucher['status'] }>();
 
@@ -2388,9 +2452,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       updatedVouchersMap.set(voucher.id, { paid: newPaid, status: newStatus });
 
-      const txnNo = `TXN${yearStr}-${(transactions.length + newTxns.length + 1)
-        .toString()
-        .padStart(6, '0')}`;
+      const txnNo = nextDocumentNumber('TXN', yearStr);
 
       const rowDate = row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date : defaultDate;
       const studentRegText = matchedStudent?.regNo ? ` [Reg #${matchedStudent.regNo}]` : '';
@@ -2561,38 +2623,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
     } else {
-      // No voucher exists for this student in the target month. Create a
-      // real voucher there carrying the folded balance, so an outstanding
-      // prior / pre-billing Admission voucher's dues stay visible and
-      // collectable in the target (working) month instead of vanishing as a
-      // "hidden" source voucher. The particulars, totals and status are then
-      // normalized by recalculateVouchersSequence, which re-derives the
-      // PreviousBalance + carried late fine from the now-Carried source.
+      // No voucher exists for this student in the target month.
+      //
+      // Only auto-create a destination voucher for an Admission (ADM) voucher
+      // being carried through the pre-billing months (targetMonth before the
+      // student's firstBillingMonth). This keeps a June admission voucher for
+      // a September-starting student visible as it is carried on to July and
+      // August, with the destination voucher inheriting the Admission type so
+      // it keeps the ADM marker in the listing.
+      //
+      // A normal monthly voucher, by contrast, is simply marked Carried; its
+      // outstanding balance is not folded anywhere until the target month
+      // voucher actually exists (e.g. when September is generated normally),
+      // so carrying forward August does NOT auto-create a September voucher.
       const student = students.find((s) => s.id === voucher.studentId);
-      const yearStr = targetMonth.split('-')[0];
-      const issuedDate = new Date().toISOString().split('T')[0];
+      const shouldAutoCreate =
+        voucher.voucherType === 'Admission' &&
+        !!student?.firstBillingMonth &&
+        targetMonth < student.firstBillingMonth;
 
-      const newVoucher: FeeVoucher = {
-        id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        voucherNo: `FE${yearStr}-${(updatedList.length + 1).toString().padStart(6, '0')}`,
-        studentId: voucher.studentId,
-        month: targetMonth,
-        classId: student?.classId || voucher.classId,
-        issueDate: issuedDate,
-        dueDate: '',
-        particulars: [],
-        grossTotal: 0,
-        discountTotal: 0,
-        prevBalance: 0,
-        lateFeeRate: voucher.lateFeeRate ?? defaultLateFeeRate,
-        netDue: 0,
-        amountPaid: 0,
-        status: 'Issued',
-        voucherType: 'Monthly',
-        createdDate: issuedDate,
-      };
+      if (shouldAutoCreate) {
+        const yearStr = targetMonth.split('-')[0];
+        const issuedDate = new Date().toISOString().split('T')[0];
 
-      updatedList.push(newVoucher);
+        const newVoucher: FeeVoucher = {
+          id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          voucherNo: nextDocumentNumber('FE', yearStr),
+          studentId: voucher.studentId,
+          month: targetMonth,
+          classId: student?.classId || voucher.classId,
+          issueDate: issuedDate,
+          dueDate: '',
+          particulars: [],
+          grossTotal: 0,
+          discountTotal: 0,
+          prevBalance: 0,
+          lateFeeRate: voucher.lateFeeRate ?? defaultLateFeeRate,
+          netDue: 0,
+          amountPaid: 0,
+          status: 'Issued',
+          voucherType: voucher.voucherType,
+          createdDate: issuedDate,
+        };
+
+        updatedList.push(newVoucher);
+      }
+
       updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
     }
 
@@ -2616,6 +2692,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (res.success) successCount++;
     });
     return { successCount };
+  };
+
+  const undoCarryForwardVoucher = (
+    voucherId: string
+  ): { success: boolean; error?: string } => {
+    const baseList = vouchersRef.current;
+    const voucher = baseList.find((v) => v.id === voucherId);
+    if (!voucher) {
+      return { success: false, error: 'Voucher not found.' };
+    }
+    if (voucher.status !== 'Carried') {
+      return { success: false, error: `Voucher ${voucher.voucherNo} is not in 'Carried' status and cannot be undone.` };
+    }
+
+    // Guard against reversing a carry that has later vouchers in the ledger,
+    // mirroring the strict downstream check shown in the UI.
+    const hasDownstream = baseList.some(
+      (v) =>
+        v.studentId === voucher.studentId &&
+        v.status !== 'Reversed' &&
+        v.id !== voucher.id &&
+        v.month > voucher.month
+    );
+    if (hasDownstream) {
+      return {
+        success: false,
+        error: 'Cannot undo: a subsequent voucher already exists for this student.',
+      };
+    }
+
+    // Restore the carried voucher to its pre-carry status (Issued or Partial
+    // based on any amount already paid) and drop the carry-forward metadata.
+    // recalculateVouchersSequence then re-derives every downstream voucher so
+    // any folded Previous Balance / carried late fine is released and balances
+    // return to their pre-carry state.
+    let updatedList = baseList.map((v) => {
+      if (v.id !== voucherId) return v;
+      const restoredStatus = (v.amountPaid || 0) > 0 ? 'Partial' : 'Issued';
+      return {
+        ...v,
+        status: restoredStatus as VoucherStatus,
+        carryForwardMonth: undefined,
+        carriedLateFine: undefined,
+      };
+    });
+
+    updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
+
+    vouchersRef.current = updatedList;
+    setVouchers(updatedList);
+
+    return { success: true };
   };
 
   const recalculateVouchersSequence = (
@@ -2804,20 +2932,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (voucherTxns.length > 0 && force) {
       const colIds = [...new Set(voucherTxns.map((t) => t.collectionId))];
+      // Compute the surviving transaction set ONCE from this snapshot, then
+      // derive both the transaction removal and the collection recompute from
+      // that same result so they can never disagree under concurrent/queued
+      // updates (the recompute must not re-read the stale outer `transactions`).
+      const keptTxns = transactions.filter(
+        (t) => colIds.includes(t.collectionId) && !idsToDelete.includes(t.voucherId)
+      );
+      const collectionTotals = new Map<string, number>();
+      const collectionCounts = new Map<string, number>();
+      keptTxns.forEach((t) => {
+        collectionTotals.set(t.collectionId, (collectionTotals.get(t.collectionId) || 0) + t.amount);
+        collectionCounts.set(t.collectionId, (collectionCounts.get(t.collectionId) || 0) + 1);
+      });
+
       setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
 
       setCollections((prev) =>
         prev
           .map((c) => {
             if (colIds.includes(c.id)) {
-              const remainingTxns = transactions.filter(
-                (t) => t.collectionId === c.id && !idsToDelete.includes(t.voucherId)
-              );
-              const newTotal = remainingTxns.reduce((sum, t) => sum + t.amount, 0);
               return {
                 ...c,
-                totalAmount: newTotal,
-                transactionCount: remainingTxns.length,
+                totalAmount: collectionTotals.get(c.id) || 0,
+                transactionCount: collectionCounts.get(c.id) || 0,
               };
             }
             return c;
@@ -2888,20 +3026,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (voucherTxns.length > 0 && force) {
       const colIds = [...new Set(voucherTxns.map((t) => t.collectionId))];
+      // Compute the surviving transaction set ONCE from this snapshot, then
+      // derive both the transaction removal and the collection recompute from
+      // that same result so they can never disagree under concurrent/queued
+      // updates (the recompute must not re-read the stale outer `transactions`).
+      const keptTxns = transactions.filter(
+        (t) => colIds.includes(t.collectionId) && !idsToDelete.includes(t.voucherId)
+      );
+      const collectionTotals = new Map<string, number>();
+      const collectionCounts = new Map<string, number>();
+      keptTxns.forEach((t) => {
+        collectionTotals.set(t.collectionId, (collectionTotals.get(t.collectionId) || 0) + t.amount);
+        collectionCounts.set(t.collectionId, (collectionCounts.get(t.collectionId) || 0) + 1);
+      });
+
       setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
 
       setCollections((prev) =>
         prev
           .map((c) => {
             if (colIds.includes(c.id)) {
-              const remainingTxns = transactions.filter(
-                (t) => t.collectionId === c.id && !idsToDelete.includes(t.voucherId)
-              );
-              const newTotal = remainingTxns.reduce((sum, t) => sum + t.amount, 0);
               return {
                 ...c,
-                totalAmount: newTotal,
-                transactionCount: remainingTxns.length,
+                totalAmount: collectionTotals.get(c.id) || 0,
+                transactionCount: collectionCounts.get(c.id) || 0,
               };
             }
             return c;
@@ -3168,7 +3316,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         users,
         login,
         logout,
-        switchRole,
         hasPermission,
         addUser,
         updateUser,
@@ -3230,6 +3377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkCsvCollection,
         carryForwardDefaulter,
         bulkCarryForwardDefaulters,
+        undoCarryForwardVoucher,
         getDownstreamVouchersInfo,
         deleteVoucher,
         bulkDeleteVouchers,

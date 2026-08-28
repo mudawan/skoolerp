@@ -86,7 +86,7 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
     }
   };
 
-  useEscapeKey(onClose, true);
+  useEscapeKey(onClose, true, 1);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">

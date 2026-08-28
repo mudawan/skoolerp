@@ -95,7 +95,9 @@ export const TransportView: React.FC = () => {
   const totalDaysInMonth = getDaysInMonth(activeMonth);
   const [globalMonthDays, setGlobalMonthDays] = useState<number>(totalDaysInMonth);
 
-  // Synchronize globalMonthDays whenever activeMonth changes
+  // Synchronize globalMonthDays only when activeMonth changes. Running on every
+  // assignment/students change would re-read an arbitrary first assignment's
+  // daysCharged and silently overwrite a manually-entered global day count.
   useEffect(() => {
     const monthDays = getDaysInMonth(activeMonth);
     const currentAssignments = transportAssignments.filter(
@@ -104,7 +106,7 @@ export const TransportView: React.FC = () => {
     const firstDays = currentAssignments[0]?.daysCharged;
     const initialDays = firstDays !== undefined && !isNaN(firstDays) ? firstDays : monthDays;
     setGlobalMonthDays(Math.min(Math.max(initialDays, 0), monthDays));
-  }, [activeMonth, students, transportAssignments]);
+  }, [activeMonth]);
 
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [bulkPreviewRows, setBulkPreviewRows] = useState<BulkTransportPreviewRow[]>([]);

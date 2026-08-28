@@ -59,7 +59,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
   const { icon, iconBg, btnBg } = getVariantStyles();
 
-  useEscapeKey(onClose, isOpen);
+  useEscapeKey(onClose, isOpen, 1);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">

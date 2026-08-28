@@ -714,10 +714,13 @@ export const VouchersView: React.FC = () => {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === paginatedVouchers.length) {
-      setSelectedIds([]);
+    const pageIds = paginatedVouchers.map((v) => v.id);
+    const allPageSelected =
+      pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+    if (allPageSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.includes(id)));
     } else {
-      setSelectedIds(paginatedVouchers.map((v) => v.id));
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...pageIds])));
     }
   };
 
@@ -852,7 +855,8 @@ export const VouchersView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={
-                      selectedIds.length > 0 && selectedIds.length === paginatedVouchers.length
+                      paginatedVouchers.length > 0 &&
+                      paginatedVouchers.every((v) => selectedIds.includes(v.id))
                     }
                     onChange={toggleSelectAll}
                     className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
@@ -1804,6 +1808,16 @@ export const VouchersView: React.FC = () => {
                         className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-base text-emerald-700 focus:ring-2 focus:ring-emerald-500/20"
                       />
                     </div>
+                    {collectingVoucher &&
+                      typeof collectAmount === 'number' &&
+                      collectAmount > collectDynamicRemaining && (
+                        <div className="mt-1.5 flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md px-2 py-1">
+                          <Info className="w-3.5 h-3.5 shrink-0" />
+                          <span className="text-[11px] font-medium">
+                            Excess {formatCurrency(collectAmount - collectDynamicRemaining)} to be held as credit / advance.
+                          </span>
+                        </div>
+                      )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2.5">

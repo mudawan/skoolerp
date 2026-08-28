@@ -149,10 +149,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         'Class',
         'Father Name',
         'Father Phone',
-        'Unpaid Vouchers',
         'Overdue Months Count',
         'Overdue Months List',
-        'Outstanding Amount (Rs)',
+        'Outstanding (Net) Rs',
       ];
       const rows = studentOutstandingRows.map((r) => [
         r.regNo,
@@ -162,7 +161,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         `"${r.className}"`,
         `"${r.fatherName}"`,
         r.fatherPhone,
-        r.unpaidVoucherCount,
         r.unpaidMonthsCount,
         `"${r.formattedMonthsList}"`,
         r.totalOutstanding,
@@ -397,9 +395,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   <th className="p-3">Student Info</th>
                   <th className="p-3">Class</th>
                   <th className="p-3">Father Name & Contact</th>
-                  <th className="p-3 text-center">Unpaid Vouchers</th>
-                  <th className="p-3">Unpaid Due Months (Streak)</th>
-                  <th className="p-3 text-right">Outstanding Arrears</th>
+                  <th className="p-3">Months Unpaid (Streak)</th>
+                  <th className="p-3 text-right">Outstanding (Net)</th>
                   <th className="p-3 text-center">Action</th>
                 </tr>
               </thead>
@@ -427,11 +424,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="p-3">
                         <span className="font-semibold text-slate-900 block">{r.fatherName}</span>
                         <span className="text-[11px] text-slate-500">{r.fatherPhone}</span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className="bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded text-[11px]">
-                          {r.unpaidVoucherCount} Voucher(s)
-                        </span>
                       </td>
                       <td className="p-3">
                         <div className="flex flex-col gap-0.5">
@@ -474,7 +466,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={6} className="p-8 text-center text-slate-400 italic">
                       Zero outstanding defaulter arrears found!
                     </td>
                   </tr>

@@ -22,6 +22,7 @@ import {
   Download,
   FileSpreadsheet,
   HelpCircle,
+  Info,
   LayoutGrid,
   List,
   Plus,
@@ -1256,7 +1257,7 @@ export const CollectionsView: React.FC = () => {
                         required
                         value={directAmount}
                         onChange={(e) => setDirectAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                        placeholder="Enter payment amount"
+                        placeholder="Enter Amount"
                         className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-base text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                       />
                     </div>
@@ -1290,6 +1291,16 @@ export const CollectionsView: React.FC = () => {
                         </button>
                       </div>
                     )}
+                    {selectedVoucher &&
+                      typeof directAmount === 'number' &&
+                      directAmount > dynamicRemaining && (
+                        <div className="mt-2 flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md px-2.5 py-1.5">
+                          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span className="text-[11px] font-medium">
+                            Excess {formatCurrency(directAmount - dynamicRemaining)} to be held as credit / advance.
+                          </span>
+                        </div>
+                      )}
                   </div>
 
                   {/* Payment Mode & Date */}

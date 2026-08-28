@@ -782,7 +782,7 @@ export const DefaultersView: React.FC = () => {
                   <th className="p-3">Class</th>
                   <th className="p-3 text-right">Net Due</th>
                   <th className="p-3 text-right">Paid</th>
-                  <th className="p-3 text-right">Outstanding Arrears</th>
+                  <th className="p-3 text-right">Outstanding</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>

@@ -133,8 +133,6 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
   const handleGenerateAdmVoucher = () => {
     if (admGenerateDisabled) return;
-    // Persist the edited heads as this student's template for the chosen month,
-    // then generate -- it reads the student override we just saved.
     const items = admItems
       .filter((it) => (Number(it.amount) || 0) > 0)
       .map((it) => ({
@@ -143,10 +141,18 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
         defaultAmount: Number(it.amount) || 0,
         sortOrder: ADM_FLEX_KINDS.findIndex((k) => k.kind === it.kind) + 2,
       }));
-    if (items.some((it) => it.defaultAmount > 0)) {
-      saveStudentTemplateOverrides(student.id, admMonth, items);
+    if (items.length === 0) {
+      showToast('Please enter at least one admission charge amount.', 'error');
+      return;
     }
-    const res = generateAdmissionVoucher(student.id, admMonth);
+    // Persist the edited heads as this student's template for the chosen month,
+    // so they are reused next time. Generation below uses these exact items
+    // directly (not the possibly-just-updated template state), avoiding a
+    // stale-closure "no template" failure on the first click.
+    saveStudentTemplateOverrides(student.id, admMonth, items);
+    const res = generateAdmissionVoucher(student.id, admMonth, {
+      items: items.map((it) => ({ kind: it.kind, label: it.label, amount: it.defaultAmount })),
+    });
     if (res.success && res.voucher) {
       showToast(`Admission Voucher ${res.voucher.voucherNo} generated for ${formatMonthName(admMonth)}!`, 'success');
       setShowAdmVoucherModal(false);
@@ -164,7 +170,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     } else {
       onClose();
     }
-  }, true);
+  }, true, 1);
 
   const studentClass = classes.find((c) => c.id === student.classId);
   const studentFamily = families.find((f) => f.id === student.familyId);

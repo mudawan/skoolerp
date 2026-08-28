@@ -17,11 +17,11 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  if (vouchers.length === 0) return null;
+
   const { institute, bankAccounts, students, classes, templates } = useApp();
   const [exportMode, setExportMode] = useState<'single_pdf' | 'zip_pdfs'>('single_pdf');
   const [isExporting, setIsExporting] = useState(false);
-
-  if (vouchers.length === 0) return null;
 
   const monthLabel = vouchers[0]?.month ? formatMonthName(vouchers[0].month) : 'Vouchers';
   const defaultFilenameBase = `Fee_Vouchers_${monthLabel.replace(/\s+/g, '_')}`;
@@ -49,7 +49,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
     }
   };
 
-  useEscapeKey(onClose, !isExporting);
+  useEscapeKey(onClose, !isExporting, 1);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">

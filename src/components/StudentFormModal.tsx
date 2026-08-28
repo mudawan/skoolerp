@@ -193,7 +193,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     } else {
       onClose();
     }
-  }, true);
+  }, true, 1);
 
   const normalizeCnic = (cnic: string) => cnic.replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
 

@@ -109,7 +109,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
     }
   };
 
-  useEscapeKey(onClose, true);
+  useEscapeKey(onClose, true, 1);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-start justify-center p-2 sm:p-4 overflow-y-auto">
