@@ -21,7 +21,7 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab }) => {
-  const { vouchers, activeMonth, getMonthClosureStatus } = useApp();
+  const { vouchers, activeMonth, getMonthClosureStatus, hasPermission } = useApp();
 
   const monthStatus = getMonthClosureStatus(activeMonth);
   const monthDefaulters = vouchers.filter(
@@ -46,11 +46,43 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
+  const visibleNavItems = navItems.filter((item) => {
+    switch (item.id) {
+      case 'dashboard':
+        return hasPermission('dashboard.view');
+      case 'students':
+        return hasPermission('students.view');
+      case 'families':
+        return hasPermission('families.view');
+      case 'classes':
+        return hasPermission('classes.view');
+      case 'vouchers':
+        return hasPermission('fees.view');
+      case 'collections':
+        return hasPermission('fees.collect') || hasPermission('fees.view');
+      case 'defaulters':
+        return hasPermission('defaulters.view') || hasPermission('fees.view');
+      case 'transport':
+        return hasPermission('transport.view');
+      case 'reports':
+        return hasPermission('fees.report');
+      case 'settings':
+        return (
+          hasPermission('settings.view') ||
+          hasPermission('settings.manage') ||
+          hasPermission('users.manage') ||
+          hasPermission('system.cleanup')
+        );
+      default:
+        return true;
+    }
+  });
+
   return (
     <nav className="bg-white border-b border-slate-200 sticky top-[61px] z-20 shadow-xs print:hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex overflow-x-auto space-x-1 py-2 no-scrollbar">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (

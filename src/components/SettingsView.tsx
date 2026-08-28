@@ -20,12 +20,19 @@ import { parseCsvLine, CSV_DELIMITERS_TEMPLATE } from '../utils/csv';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
+import { UserPermissionsModal } from './UserPermissionsModal';
+import {
+  ALL_PERMISSIONS,
+  ROLE_PRESET_PERMISSIONS,
+  getEffectiveRole,
+} from '../utils/permissions';
 import {
   AlertCircle,
   AlertTriangle,
   ArrowUp,
   BookOpen,
   Building2,
+  Calendar,
   Check,
   CheckCircle,
   ChevronDown,
@@ -105,9 +112,13 @@ export const SettingsView: React.FC = () => {
     setVoucherDeletionResolution,
     defaultLateFeeRate,
     setDefaultLateFeeRate,
+    defaultDueDateEnabled,
+    defaultDueDay,
+    setDefaultDueDateSettings,
     users,
     addUser,
     updateUser,
+    updateUserPermissions,
     deleteUser,
     currentUser,
     students,
@@ -124,6 +135,8 @@ export const SettingsView: React.FC = () => {
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
   const [selectedDeletionResolution, setSelectedDeletionResolution] = useState<VoucherDeletionResolution>(voucherDeletionResolution);
   const [selectedLateFeeRate, setSelectedLateFeeRate] = useState<number>(defaultLateFeeRate);
+  const [selectedDefaultDueDateEnabled, setSelectedDefaultDueDateEnabled] = useState<boolean>(defaultDueDateEnabled);
+  const [selectedDefaultDueDay, setSelectedDefaultDueDay] = useState<number>(defaultDueDay);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -146,12 +159,26 @@ export const SettingsView: React.FC = () => {
     setSelectedLateFeeRate(defaultLateFeeRate);
   }, [defaultLateFeeRate]);
 
+  useEffect(() => {
+    setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
+  }, [defaultDueDateEnabled]);
+
+  useEffect(() => {
+    setSelectedDefaultDueDay(defaultDueDay);
+  }, [defaultDueDay]);
+
+  // Check if default due date policy has unsaved modifications
+  const isDefaultDueDateModified =
+    selectedDefaultDueDateEnabled !== defaultDueDateEnabled ||
+    (selectedDefaultDueDateEnabled && selectedDefaultDueDay !== defaultDueDay);
+
   // Check for unsaved policy modifications
   const hasPolicyChanges =
     selectedPriorRule !== priorMonthRule ||
     selectedSkippedRule !== skippedMonthRule ||
     selectedDeletionResolution !== voucherDeletionResolution ||
-    selectedLateFeeRate !== defaultLateFeeRate;
+    selectedLateFeeRate !== defaultLateFeeRate ||
+    isDefaultDueDateModified;
 
   const handleSavePolicyClick = () => {
     if (!hasPolicyChanges) {
@@ -166,6 +193,10 @@ export const SettingsView: React.FC = () => {
     setSkippedMonthRule(selectedSkippedRule);
     setVoucherDeletionResolution(selectedDeletionResolution);
     setDefaultLateFeeRate(selectedLateFeeRate);
+    setDefaultDueDateSettings({
+      enabled: selectedDefaultDueDateEnabled,
+      day: selectedDefaultDueDay,
+    });
     setShowPolicyConfirmModal(false);
     setToastMessage('Fee Voucher Policies updated and activated successfully!');
     showToast('Fee Voucher Policies updated successfully!', 'success');
@@ -176,6 +207,8 @@ export const SettingsView: React.FC = () => {
     setSelectedSkippedRule(skippedMonthRule);
     setSelectedDeletionResolution(voucherDeletionResolution);
     setSelectedLateFeeRate(defaultLateFeeRate);
+    setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
+    setSelectedDefaultDueDay(defaultDueDay);
     showToast('Policy selections reset to current saved configuration.', 'info');
   };
 
@@ -1430,13 +1463,33 @@ export const SettingsView: React.FC = () => {
     name: string;
     role: UserRole;
     email?: string;
+    permissions: string[];
   }>({
     username: '',
     password: '',
     name: '',
     role: 'Accountant',
     email: '',
+    permissions: [...ROLE_PRESET_PERMISSIONS.Accountant],
   });
+
+  const [permissionsUser, setPermissionsUser] = useState<User | null>(null);
+  const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
+
+  const handleOpenPermissionsModal = (user: User) => {
+    setPermissionsUser(user);
+    setShowPermissionsModal(true);
+  };
+
+  const handleSavePermissions = async (userId: string, permissions: string[], role: UserRole) => {
+    const res = await updateUserPermissions(userId, permissions, role);
+    if (!res.success) {
+      showToast(res.error || 'Failed to update user permissions.', 'error');
+      throw new Error(res.error);
+    }
+    const targetUser = users.find((u) => u.id === userId);
+    showToast(`Permissions for @${targetUser?.username || 'user'} updated successfully!`, 'success');
+  };
 
   const handleOpenUserModal = (user?: User) => {
     if (user) {
@@ -1447,6 +1500,10 @@ export const SettingsView: React.FC = () => {
         name: user.name,
         role: user.role,
         email: user.email || '',
+        permissions:
+          Array.isArray(user.permissions) && user.permissions.length > 0
+            ? [...user.permissions]
+            : [...(ROLE_PRESET_PERMISSIONS[user.role] || ROLE_PRESET_PERMISSIONS.Viewer)],
       });
     } else {
       setEditingUser(null);
@@ -1456,6 +1513,7 @@ export const SettingsView: React.FC = () => {
         name: '',
         role: 'Accountant',
         email: '',
+        permissions: [...ROLE_PRESET_PERMISSIONS.Accountant],
       });
     }
     setShowUserModal(true);
@@ -1474,6 +1532,7 @@ export const SettingsView: React.FC = () => {
         name: userFormData.name.trim() || userFormData.username.trim(),
         role: userFormData.role,
         email: userFormData.email?.trim() || undefined,
+        permissions: userFormData.permissions,
       };
       if (userFormData.password?.trim()) {
         updates.password = userFormData.password.trim();
@@ -1496,7 +1555,7 @@ export const SettingsView: React.FC = () => {
         name: userFormData.name.trim() || userFormData.username.trim(),
         role: userFormData.role,
         email: userFormData.email?.trim() || undefined,
-        permissions: [],
+        permissions: userFormData.permissions,
       });
       if (!res.success) {
         showToast(res.error || 'Failed to create user.', 'error');
@@ -1649,7 +1708,7 @@ export const SettingsView: React.FC = () => {
             <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
             <span>Fee Templates</span>
           </button>
-          {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
+          {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
             <button
               id="settings-tab-users"
               onClick={() => setActiveSubTab('users')}
@@ -2460,6 +2519,110 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Section: Default Voucher Due Date Policy */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl border border-teal-200/60 shrink-0">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                    Default Fee Voucher Due Date
+                    {isDefaultDueDateModified && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        Modified
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Pre-fills due date in voucher generator.
+                  </p>
+                </div>
+              </div>
+
+              {/* Toggle switch: Enable/Disable */}
+              <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+                <span className={`text-xs font-bold ${selectedDefaultDueDateEnabled ? 'text-teal-700' : 'text-slate-500'}`}>
+                  {selectedDefaultDueDateEnabled ? 'Enabled' : 'Disabled'}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={selectedDefaultDueDateEnabled}
+                  id="toggle-default-due-date"
+                  disabled={!hasPermission('settings.manage')}
+                  onClick={() => setSelectedDefaultDueDateEnabled(!selectedDefaultDueDateEnabled)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    selectedDefaultDueDateEnabled ? 'bg-teal-600' : 'bg-slate-300'
+                  }`}
+                  title={selectedDefaultDueDateEnabled ? 'Click to disable default due date' : 'Click to enable default due date'}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      selectedDefaultDueDateEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Day of Month Selector & Quick Presets (when enabled) */}
+            {selectedDefaultDueDateEnabled && (
+              <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="input-default-due-day" className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                    Due on day:
+                  </label>
+                  <div className="relative w-24">
+                    <input
+                      type="number"
+                      id="input-default-due-day"
+                      min="1"
+                      max="31"
+                      disabled={!hasPermission('settings.manage')}
+                      value={selectedDefaultDueDay}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) {
+                          setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
+                        } else if (e.target.value === '') {
+                          setSelectedDefaultDueDay(1);
+                        }
+                      }}
+                      className="w-full pl-3 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center"
+                    />
+                    <span className="absolute right-2.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">
+                      th
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 hidden sm:inline">of billing month</span>
+                </div>
+
+                {/* Quick Select Presets */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold text-slate-400 mr-1">Quick Select:</span>
+                  {[5, 10, 15, 20, 25, 31].map((day) => (
+                    <button
+                      key={day}
+                      type="button"
+                      id={`btn-preset-due-day-${day}`}
+                      disabled={!hasPermission('settings.manage')}
+                      onClick={() => setSelectedDefaultDueDay(day)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        selectedDefaultDueDay === day
+                          ? 'bg-teal-600 text-white shadow-2xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200/60'
+                      }`}
+                    >
+                      {day === 31 ? '31st (End)' : `${day}th`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Main Card: Three Category Tabs for Policies */}
@@ -4054,7 +4217,7 @@ export const SettingsView: React.FC = () => {
       )}
 
       {/* Subtab 5: Users & Authentication */}
-      {activeSubTab === 'users' && (currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
+      {activeSubTab === 'users' && (currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
             <div>
@@ -4063,10 +4226,10 @@ export const SettingsView: React.FC = () => {
                 Authorized System Operators & Passwords
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Manage accounts, assign roles (Admin, Accountant, Viewer), and update operator credentials.
+                Manage accounts, assign roles (Admin, Accountant, Viewer, Custom), and configure granular module permissions.
               </p>
             </div>
-            {hasPermission('settings.manage') && (
+            {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
               <button
                 type="button"
                 id="btn-add-system-user"
@@ -4100,7 +4263,27 @@ export const SettingsView: React.FC = () => {
                         ? 'bg-amber-100 text-amber-800 border-amber-200'
                         : u.role === 'Accountant'
                         ? 'bg-teal-100 text-teal-800 border-teal-200'
-                        : 'bg-indigo-100 text-indigo-800 border-indigo-200';
+                        : u.role === 'Viewer'
+                        ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                        : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+
+                    const userPerms = Array.isArray(u.permissions) ? u.permissions : [];
+                    const permCount = userPerms.length;
+                    const totalPerms = ALL_PERMISSIONS.length;
+                    const isFullAccess = u.role === 'Admin' || permCount === totalPerms;
+
+                    // Module access tags
+                    const activeModules: string[] = [];
+                    if (userPerms.some((p) => p.startsWith('students.'))) activeModules.push('Students');
+                    if (userPerms.some((p) => p.startsWith('families.'))) activeModules.push('Families');
+                    if (userPerms.some((p) => p.startsWith('classes.'))) activeModules.push('Classes');
+                    if (userPerms.some((p) => p.startsWith('fees.view') || p.startsWith('fees.generate') || p.startsWith('fees.edit'))) activeModules.push('Billing');
+                    if (userPerms.some((p) => p.startsWith('fees.collect') || p.startsWith('fees.reverse'))) activeModules.push('Collections');
+                    if (userPerms.some((p) => p.startsWith('defaulters.'))) activeModules.push('Defaulters');
+                    if (userPerms.some((p) => p.startsWith('transport.'))) activeModules.push('Transport');
+                    if (userPerms.some((p) => p.startsWith('fees.report'))) activeModules.push('Reports');
+                    if (userPerms.some((p) => p.startsWith('settings.'))) activeModules.push('Settings');
+                    if (userPerms.some((p) => p.startsWith('users.'))) activeModules.push('User Admin');
 
                     return (
                       <tr key={u.id} className="hover:bg-slate-50/80 transition">
@@ -4134,22 +4317,43 @@ export const SettingsView: React.FC = () => {
                           {u.email || <span className="text-slate-400 italic">Not specified</span>}
                         </td>
                         <td className="p-3">
-                          <div className="text-[11px] text-slate-600">
-                            {u.role === 'Admin' && (
-                              <span className="font-semibold text-slate-800">
-                                Full Control (Settings, Students, Vouchers, Ledger)
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`inline-flex items-center gap-1 font-bold text-[11px] px-2 py-0.5 rounded-md border ${
+                                  isFullAccess
+                                    ? 'bg-amber-50 text-amber-900 border-amber-200'
+                                    : permCount > 0
+                                    ? 'bg-teal-50 text-teal-800 border-teal-200'
+                                    : 'bg-rose-50 text-rose-800 border-rose-200'
+                                }`}
+                              >
+                                <KeyRound className="w-3 h-3 text-teal-600" />
+                                {isFullAccess
+                                  ? `Full Access (${totalPerms}/${totalPerms})`
+                                  : `${permCount} of ${totalPerms} permissions`}
                               </span>
-                            )}
-                            {u.role === 'Accountant' && (
-                              <span className="font-medium text-slate-700">
-                                Operations (Billing, Collections, Defaulters, Transport)
-                              </span>
-                            )}
-                            {u.role === 'Viewer' && (
-                              <span className="font-medium text-slate-500">
-                                Read-Only Access to Audits & Financial Reports
-                              </span>
-                            )}
+                              {u.role === 'Custom' && (
+                                <span className="text-[10px] bg-slate-100 text-slate-700 font-semibold px-1.5 py-0.2 rounded border border-slate-200">
+                                  Customized
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {activeModules.slice(0, 5).map((mod) => (
+                                <span
+                                  key={mod}
+                                  className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200/80"
+                                >
+                                  {mod}
+                                </span>
+                              ))}
+                              {activeModules.length > 5 && (
+                                <span className="text-[10px] text-slate-400 font-semibold">
+                                  +{activeModules.length - 5} more
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="p-3">
@@ -4159,12 +4363,22 @@ export const SettingsView: React.FC = () => {
                           </div>
                         </td>
                         <td className="p-3 text-right">
-                          {hasPermission('settings.manage') ? (
-                            <div className="flex items-center justify-end gap-2">
+                          {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                id={`btn-perms-user-${u.id}`}
+                                onClick={() => handleOpenPermissionsModal(u)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold text-xs rounded-lg border border-teal-200 transition cursor-pointer"
+                                title="Configure Granular Permissions"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                                <span>Permissions</span>
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => handleOpenUserModal(u)}
-                                className="text-teal-600 hover:text-teal-800 font-bold text-xs hover:underline cursor-pointer"
+                                className="px-2 py-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold text-xs rounded-lg transition cursor-pointer"
                               >
                                 Edit
                               </button>
@@ -4172,7 +4386,7 @@ export const SettingsView: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteUser(u.id, u.name)}
-                                  className="text-rose-600 hover:text-rose-800 font-bold text-xs hover:underline cursor-pointer"
+                                  className="px-2 py-1 text-rose-600 hover:text-rose-800 hover:bg-rose-50 font-bold text-xs rounded-lg transition cursor-pointer"
                                 >
                                   Delete
                                 </button>
@@ -4268,16 +4482,60 @@ export const SettingsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Assigned Role *</label>
+                <label className="block font-bold text-slate-700 mb-1">Assigned Role Preset *</label>
                 <select
                   value={userFormData.role}
-                  onChange={(e) => setUserFormData({ ...userFormData, role: e.target.value as UserRole })}
+                  onChange={(e) => {
+                    const nextRole = e.target.value as UserRole;
+                    const presetPerms =
+                      ROLE_PRESET_PERMISSIONS[nextRole] || userFormData.permissions;
+                    setUserFormData({
+                      ...userFormData,
+                      role: nextRole,
+                      permissions: nextRole === 'Custom' ? userFormData.permissions : [...presetPerms],
+                    });
+                  }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
                 >
                   <option value="Admin">Admin (Full System & Policy Access)</option>
                   <option value="Accountant">Accountant (Fee Invoicing & Collections)</option>
                   <option value="Viewer">Viewer (Read-Only Financial Auditing)</option>
+                  <option value="Custom">Custom (Granular Permissions)</option>
                 </select>
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Granular Permissions:</span>
+                    <span className="font-mono text-teal-700 font-bold">
+                      {userFormData.permissions.length} of {ALL_PERMISSIONS.length} active
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                    {userFormData.role === 'Admin'
+                      ? 'Full system privileges across all modules'
+                      : userFormData.role === 'Accountant'
+                      ? 'Standard operations, billing, and collections'
+                      : userFormData.role === 'Viewer'
+                      ? 'Read-only financial audits and reports'
+                      : 'Customized module security access'}
+                  </p>
+                </div>
+
+                {editingUser && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowUserModal(false);
+                      handleOpenPermissionsModal(editingUser);
+                    }}
+                    className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-teal-700 font-bold text-xs rounded-lg shadow-2xs transition shrink-0 cursor-pointer"
+                  >
+                    Open Matrix
+                  </button>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
@@ -4298,6 +4556,19 @@ export const SettingsView: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Granular Permission Matrix Modal */}
+      {showPermissionsModal && permissionsUser && (
+        <UserPermissionsModal
+          isOpen={showPermissionsModal}
+          user={permissionsUser}
+          onClose={() => {
+            setShowPermissionsModal(false);
+            setPermissionsUser(null);
+          }}
+          onSave={handleSavePermissions}
+        />
       )}
 
       {/* Bank Modal */}
@@ -4934,6 +5205,31 @@ export const SettingsView: React.FC = () => {
                   </div>
                   <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
                     <strong>Impact:</strong> Updates default fine pre-fill for new vouchers and month-end defaulter carry-forwards.
+                  </div>
+                </div>
+              )}
+
+              {/* Default Due Date Policy */}
+              {isDefaultDueDateModified && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-teal-600" />
+                      Default Voucher Due Date
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {defaultDueDateEnabled ? `Day ${defaultDueDay}th` : 'Disabled'}{' '}
+                      &rarr;{' '}
+                      <span className="text-teal-700 font-extrabold">
+                        {selectedDefaultDueDateEnabled ? `Day ${selectedDefaultDueDay}th` : 'Disabled'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-teal-50/80 border border-teal-200/70 rounded-lg text-[11px] text-teal-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {selectedDefaultDueDateEnabled
+                      ? `Pre-fills voucher due date to day ${selectedDefaultDueDay} of billing month in generator.`
+                      : 'Disables automatic due date pre-fill in generator.'}
                   </div>
                 </div>
               )}

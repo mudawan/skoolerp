@@ -1,4 +1,34 @@
-export type UserRole = 'Admin' | 'Accountant' | 'Viewer';
+export type UserRole = 'Admin' | 'Accountant' | 'Viewer' | 'Custom';
+
+export type PermissionCategory =
+  | 'dashboard'
+  | 'students'
+  | 'families'
+  | 'classes'
+  | 'fees'
+  | 'collections'
+  | 'defaulters'
+  | 'transport'
+  | 'reports'
+  | 'settings'
+  | 'users'
+  | 'system';
+
+export interface PermissionDefinition {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  category: PermissionCategory;
+  categoryLabel: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+}
+
+export interface PermissionCategoryInfo {
+  id: PermissionCategory;
+  label: string;
+  description: string;
+}
 
 export interface User {
   id: string;

@@ -12,6 +12,7 @@ import {
   TransportStop,
   User,
 } from '../types';
+import { ROLE_PRESET_PERMISSIONS } from '../utils/permissions';
 
 export const HASHED_DEMO_PASSWORD = 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f';
 
@@ -23,24 +24,7 @@ export const SEEDED_USERS: User[] = [
     name: 'Admin',
     role: 'Admin',
     email: 'admin@skooleracademy.edu.pk',
-    permissions: [
-      'settings.view',
-      'settings.manage',
-      'classes.view',
-      'classes.manage',
-      'students.view',
-      'students.manage',
-      'students.promote',
-      'families.view',
-      'families.manage',
-      'fees.view',
-      'fees.generate',
-      'fees.collect',
-      'fees.delete',
-      'fees.report',
-      'transport.view',
-      'transport.manage',
-    ],
+    permissions: ROLE_PRESET_PERMISSIONS.Admin,
   },
   {
     id: 'usr-accountant',
@@ -49,22 +33,7 @@ export const SEEDED_USERS: User[] = [
     name: '(Accountant)',
     role: 'Accountant',
     email: 'accountant@skooleracademy.edu.pk',
-    permissions: [
-      'settings.view',
-      'classes.view',
-      'classes.manage',
-      'students.view',
-      'students.manage',
-      'families.view',
-      'families.manage',
-      'fees.view',
-      'fees.generate',
-      'fees.collect',
-      'fees.delete',
-      'fees.report',
-      'transport.view',
-      'transport.manage',
-    ],
+    permissions: ROLE_PRESET_PERMISSIONS.Accountant,
   },
   {
     id: 'usr-viewer',
@@ -73,15 +42,7 @@ export const SEEDED_USERS: User[] = [
     name: '(Auditor/Viewer)',
     role: 'Viewer',
     email: 'viewer@skooleracademy.edu.pk',
-    permissions: [
-      'settings.view',
-      'classes.view',
-      'students.view',
-      'families.view',
-      'fees.view',
-      'fees.report',
-      'transport.view',
-    ],
+    permissions: ROLE_PRESET_PERMISSIONS.Viewer,
   },
 ];
 

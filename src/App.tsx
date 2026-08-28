@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { VerticalSidebar } from './components/VerticalSidebar';
 import { DashboardView } from './components/DashboardView';
@@ -16,10 +16,12 @@ import { MonthPicker } from './components/MonthPicker';
 import { ActiveTab } from './types';
 import { THEME_COLOR_PRESETS } from './utils/themeConfig';
 import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
-import { Building2, Calendar, Menu } from 'lucide-react';
+import { Building2, Calendar, Menu, ShieldAlert } from 'lucide-react';
 
 function MainApp() {
   const {
+    currentUser,
+    hasPermission,
     isAuthenticated,
     isSidebarCollapsed,
     institute,
@@ -40,6 +42,60 @@ function MainApp() {
     setReportType('studentLedger');
     setActiveTab('reports');
   };
+
+  const isTabAllowed = (tab: ActiveTab): boolean => {
+    switch (tab) {
+      case 'dashboard':
+        return hasPermission('dashboard.view');
+      case 'students':
+        return hasPermission('students.view');
+      case 'families':
+        return hasPermission('families.view');
+      case 'classes':
+        return hasPermission('classes.view');
+      case 'vouchers':
+        return hasPermission('fees.view');
+      case 'collections':
+        return hasPermission('fees.collect') || hasPermission('fees.view');
+      case 'defaulters':
+        return hasPermission('defaulters.view') || hasPermission('fees.view');
+      case 'transport':
+        return hasPermission('transport.view');
+      case 'reports':
+        return hasPermission('fees.report');
+      case 'settings':
+        return (
+          hasPermission('settings.view') ||
+          hasPermission('settings.manage') ||
+          hasPermission('users.manage') ||
+          hasPermission('system.cleanup')
+        );
+      default:
+        return true;
+    }
+  };
+
+  const allTabs: ActiveTab[] = [
+    'dashboard',
+    'students',
+    'families',
+    'classes',
+    'vouchers',
+    'collections',
+    'defaulters',
+    'transport',
+    'reports',
+    'settings',
+  ];
+
+  const firstAllowedTab = allTabs.find((t) => isTabAllowed(t)) || 'dashboard';
+
+  // Automatically adjust activeTab if the current tab is not allowed
+  useEffect(() => {
+    if (currentUser && !isTabAllowed(activeTab)) {
+      setActiveTab(firstAllowedTab);
+    }
+  }, [currentUser?.id, currentUser?.permissions, activeTab]);
 
   if (!isAuthenticated) {
     return <LoginView />;
@@ -144,23 +200,45 @@ function MainApp() {
 
         {/* Main Viewport Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-16 max-w-7xl w-full mx-auto">
-          {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
-          {activeTab === 'students' && <StudentsView onNavigateToLedger={handleNavigateToLedger} />}
-          {activeTab === 'families' && <FamiliesView />}
-          {activeTab === 'classes' && <ClassesView />}
-          {activeTab === 'vouchers' && <VouchersView />}
-          {activeTab === 'collections' && <CollectionsView />}
-          {activeTab === 'defaulters' && <DefaultersView />}
-          {activeTab === 'transport' && <TransportView />}
-          {activeTab === 'reports' && (
-            <ReportsView
-              initialReportType={reportType}
-              initialStudentId={reportStudentId}
-              onReportTypeChange={setReportType}
-              onStudentIdChange={setReportStudentId}
-            />
+          {!isTabAllowed(activeTab) ? (
+            <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 shadow-xs max-w-lg mx-auto mt-12 space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Module Access Restricted</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Your operator profile (@{currentUser.username} &bull; {currentUser.role}) is not granted access to the {activeTab} module.
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveTab(firstAllowedTab)}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
+              >
+                Go to Accessible Module ({firstAllowedTab})
+              </button>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
+              {activeTab === 'students' && <StudentsView onNavigateToLedger={handleNavigateToLedger} />}
+              {activeTab === 'families' && <FamiliesView />}
+              {activeTab === 'classes' && <ClassesView />}
+              {activeTab === 'vouchers' && <VouchersView />}
+              {activeTab === 'collections' && <CollectionsView />}
+              {activeTab === 'defaulters' && <DefaultersView />}
+              {activeTab === 'transport' && <TransportView />}
+              {activeTab === 'reports' && (
+                <ReportsView
+                  initialReportType={reportType}
+                  initialStudentId={reportStudentId}
+                  onReportTypeChange={setReportType}
+                  onStudentIdChange={setReportStudentId}
+                />
+              )}
+              {activeTab === 'settings' && <SettingsView />}
+            </>
           )}
-          {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>
     </div>

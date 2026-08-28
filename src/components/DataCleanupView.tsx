@@ -90,7 +90,7 @@ export const DataCleanupView: React.FC = () => {
     } else if (showDemoResetModal) {
       setShowDemoResetModal(false);
     }
-  }, (showConfirmModal || showDemoResetModal) && !isExecuting);
+  }, (showConfirmModal || showDemoResetModal) && !isExecuting, 1);
 
   // Security Gate: Check if user has admin privileges
   const isAdmin = currentUser?.role === 'Admin' || hasPermission('settings.manage');
@@ -652,168 +652,183 @@ export const DataCleanupView: React.FC = () => {
         </div>
       </div>
 
-      {/* Safety Confirmation Modal */}
+      {/* Safety Confirmation Modal (Compact) */}
       {showConfirmModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-rose-100 flex items-center justify-between bg-rose-50/80">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center font-bold shrink-0">
-                  <ShieldAlert className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Compact Modal Header */}
+            <div className="px-3.5 py-2.5 border-b border-rose-100/90 flex items-center justify-between bg-rose-50/70">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center font-bold shrink-0">
+                  <ShieldAlert className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Confirm Permanent Database Reset</h3>
-                  <p className="text-xs text-rose-700 font-medium">Irreversible Table Deletion</p>
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5 leading-tight">
+                    Confirm Database Reset
+                    <span className="text-[9px] font-bold text-rose-600 bg-rose-100/80 px-1.5 py-0.5 rounded">Permanent</span>
+                  </h3>
+                  <p className="text-[10px] text-slate-500 leading-tight">
+                    Purging {selectedCount} selected table{selectedCount !== 1 ? 's' : ''} ({totalRecordsToClear} records)
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
+                id="btn-close-cleanup-modal"
                 onClick={() => setShowConfirmModal(false)}
-                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg transition cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-rose-100/50 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-4 text-xs">
-              <div className="p-3.5 bg-rose-50 rounded-xl border border-rose-200 text-rose-900 space-y-1.5">
-                <div className="font-bold flex items-center gap-1.5">
-                  <AlertCircle className="w-4 h-4 text-rose-700 shrink-0" />
-                  Warning: Action Cannot Be Undone
-                </div>
-                <p className="text-[11px] leading-relaxed">
-                  Executing this operation will permanently purge all records in the selected tables from local storage and memory.
-                </p>
+            {/* Compact Modal Body */}
+            <div className="p-3.5 space-y-2.5 text-xs overflow-y-auto">
+              <div className="flex items-center gap-2 px-2.5 py-1.5 bg-rose-50/80 border border-rose-200/70 rounded-lg text-rose-800 text-[11px] leading-snug">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <span>Permanently purges records in selected tables. Cannot be undone.</span>
               </div>
 
-              {/* Items Breakdown */}
-              <div className="space-y-1.5">
-                <span className="font-bold text-slate-800 block">Tables to be purged ({selectedCount}):</span>
-                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100 max-h-40 overflow-y-auto">
+              {/* Compact Tables Chips */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] font-bold text-slate-600 px-0.5">
+                  <span>Selected Tables ({selectedCount})</span>
+                  <span className="text-[10px] font-semibold text-rose-600">{totalRecordsToClear} records</span>
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto p-1.5 bg-slate-50/80 border border-slate-200/80 rounded-lg">
                   {tableCards
                     .filter((t) => selectedTables[t.key])
                     .map((t) => (
-                      <div key={t.key} className="p-2.5 flex items-center justify-between bg-slate-50/50">
-                        <span className="font-semibold text-slate-900">{t.name}</span>
-                        <span className="font-mono font-bold text-rose-700">
-                          {t.count} {t.unit}
-                        </span>
-                      </div>
+                      <span
+                        key={t.key}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-rose-200/70 rounded-md text-[10px] font-medium text-slate-800 shadow-2xs"
+                      >
+                        <span className="truncate max-w-[130px]">{t.name}</span>
+                        <span className="font-mono font-bold text-rose-600">({t.count})</span>
+                      </span>
                     ))}
                 </div>
               </div>
 
-              {/* Cascading Notice Summary in Modal */}
+              {/* Compact Cascading Notice */}
               {integrityWarnings.length > 0 && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[11px] space-y-1 font-medium">
-                  <strong className="block font-bold">Cascading Notice:</strong>
-                  {integrityWarnings.map((w, idx) => (
-                    <div key={idx}>• {w}</div>
-                  ))}
+                <div className="p-2 bg-amber-50/80 rounded-lg border border-amber-200/70 text-amber-900 text-[10px] space-y-0.5">
+                  <div className="font-bold flex items-center gap-1 text-[10px] text-amber-800">
+                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                    Cascading Notice ({integrityWarnings.length}):
+                  </div>
+                  <p className="text-[10px] font-medium leading-tight text-amber-800/90 pl-4">
+                    {integrityWarnings.join(' • ')}
+                  </p>
                 </div>
               )}
 
-              {/* Mandatory Checkbox */}
-              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+              {/* Compact Mandatory Checkbox */}
+              <label className="flex items-center gap-2 p-1.5 rounded-lg bg-slate-50 border border-slate-200/80 cursor-pointer hover:bg-slate-100/60 transition">
                 <input
                   type="checkbox"
+                  id="checkbox-cleanup-acknowledge"
                   checked={hasAcknowledgedRisk}
                   onChange={(e) => setHasAcknowledgedRisk(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 text-rose-600 rounded border-slate-300 focus:ring-rose-500 cursor-pointer"
+                  className="w-3.5 h-3.5 text-rose-600 rounded border-slate-300 focus:ring-rose-500 cursor-pointer shrink-0"
                 />
-                <span className="text-[11px] text-slate-700 font-semibold leading-relaxed">
-                  I understand and accept full responsibility for cascading data integrity and orphaned record relationships resulting from this table purge.
+                <span className="text-[10px] text-slate-700 font-medium leading-tight">
+                  I accept responsibility for cascading data integrity and orphaned references.
                 </span>
               </label>
 
-              {/* Type to Confirm Field */}
-              <div className="space-y-1.5">
-                <label className="block font-bold text-slate-700 text-[11px]">
-                  Type <span className="font-mono text-rose-600 font-bold">RESET DATA</span> below to confirm:
+              {/* Compact Confirmation Field */}
+              <div className="flex items-center gap-2 pt-0.5">
+                <label htmlFor="input-cleanup-confirm" className="text-[10px] font-semibold text-slate-700 whitespace-nowrap">
+                  Type <span className="font-mono font-bold text-rose-600">RESET DATA</span>:
                 </label>
                 <input
                   type="text"
+                  id="input-cleanup-confirm"
                   value={confirmationPhrase}
                   onChange={(e) => setConfirmationPhrase(e.target.value)}
                   placeholder="RESET DATA"
-                  className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-mono text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 placeholder:text-slate-300 uppercase"
                 />
               </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+            {/* Compact Modal Footer */}
+            <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
               <button
                 type="button"
+                id="btn-cleanup-cancel"
                 onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200/80 rounded-lg transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                id="btn-cleanup-execute"
                 disabled={!hasAcknowledgedRisk || confirmationPhrase.trim().toUpperCase() !== 'RESET DATA' || isExecuting}
                 onClick={handleExecuteReset}
-                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1 text-xs font-bold bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
               >
-                <Trash2 className="w-4 h-4" />
-                {isExecuting ? 'Purging Tables...' : `Execute Reset (${selectedCount} Tables)`}
+                <Trash2 className="w-3.5 h-3.5" />
+                {isExecuting ? 'Purging...' : `Execute Reset (${selectedCount})`}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Restore Demo Data Modal */}
+      {/* Restore Demo Data Modal (Compact) */}
       {showDemoResetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-teal-50/50">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
-                  <Sparkles className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+            <div className="px-3.5 py-2.5 border-b border-teal-100 flex items-center justify-between bg-teal-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold shrink-0">
+                  <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Restore Sample Demo Data?</h3>
-                  <p className="text-xs text-slate-500">Seed Database Initialization</p>
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-tight">Restore Sample Demo Data?</h3>
+                  <p className="text-[10px] text-slate-500 leading-tight">Seed Database Initialization</p>
                 </div>
               </div>
               <button
                 type="button"
+                id="btn-close-demo-modal"
                 onClick={() => setShowDemoResetModal(false)}
-                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg transition"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-teal-100/50 transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-5 space-y-3 text-xs text-slate-600">
-              <p>
+            <div className="p-3.5 space-y-2.5 text-xs text-slate-600">
+              <p className="text-[11px]">
                 This will re-initialize your system with complete sample demo data:
               </p>
-              <ul className="list-disc pl-5 space-y-1 text-slate-700 font-medium">
+              <ul className="list-disc pl-4 space-y-0.5 text-slate-700 font-medium text-[11px]">
                 <li>Sample student roster with multiple classes</li>
                 <li>Families, guardian links, and transport fleet</li>
                 <li>Standard 9-item fee particulars roster</li>
                 <li>Pre-generated demo vouchers and collections</li>
               </ul>
-              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[11px] font-medium mt-2">
+              <div className="p-2 bg-amber-50 rounded-lg border border-amber-200/80 text-amber-900 text-[10px] font-medium leading-relaxed">
                 Note: All existing custom data will be replaced by the seed template.
               </div>
             </div>
-            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+            <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
               <button
                 type="button"
+                id="btn-demo-cancel"
                 onClick={() => setShowDemoResetModal(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200/80 rounded-lg transition cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                id="btn-demo-restore"
                 onClick={handleConfirmRestoreDemo}
-                className="px-4 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Restore Sample Data

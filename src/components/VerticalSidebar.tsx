@@ -50,6 +50,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     vouchers,
     getMonthClosureStatus,
     logout,
+    hasPermission,
     isSidebarCollapsed,
     setIsSidebarCollapsed,
     themeConfig,
@@ -120,6 +121,38 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const visibleNavItems = navItems.filter((item) => {
+    switch (item.id) {
+      case 'dashboard':
+        return hasPermission('dashboard.view');
+      case 'students':
+        return hasPermission('students.view');
+      case 'families':
+        return hasPermission('families.view');
+      case 'classes':
+        return hasPermission('classes.view');
+      case 'vouchers':
+        return hasPermission('fees.view');
+      case 'collections':
+        return hasPermission('fees.collect') || hasPermission('fees.view');
+      case 'defaulters':
+        return hasPermission('defaulters.view') || hasPermission('fees.view');
+      case 'transport':
+        return hasPermission('transport.view');
+      case 'reports':
+        return hasPermission('fees.report');
+      case 'settings':
+        return (
+          hasPermission('settings.view') ||
+          hasPermission('settings.manage') ||
+          hasPermission('users.manage') ||
+          hasPermission('system.cleanup')
+        );
+      default:
+        return true;
+    }
+  });
 
   const handleNavClick = (tabId: ActiveTab) => {
     setActiveTab(tabId);
@@ -243,7 +276,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
         {/* Navigation Items Links */}
         <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 no-scrollbar">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             const isCollapsed = isSidebarCollapsed && !mobileOpen;
@@ -325,6 +358,8 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                       ? 'bg-amber-500/15 text-amber-500 border-amber-500/30'
                       : currentUser.role === 'Accountant'
                       ? `${preset.sampleBadgeClass}`
+                      : currentUser.role === 'Custom'
+                      ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
                       : isLight
                       ? 'bg-slate-100 text-slate-600 border-slate-300'
                       : 'bg-slate-700/50 text-slate-300 border-slate-600/50'

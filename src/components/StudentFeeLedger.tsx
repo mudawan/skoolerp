@@ -961,7 +961,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                               </button>
 
                               {/* Quick Collect Deposit (if allowed) */}
-                              {hasPermission('vouchers:edit') &&
+                              {(hasPermission('fees.collect') || hasPermission('fees.edit')) &&
                                 entry.voucher.status !== 'Carried' &&
                                 entry.voucher.status !== 'Reversed' && (
                                 <button

@@ -23,6 +23,7 @@ export const HeaderBar: React.FC = () => {
     themeConfig,
     resetToDemoData,
     logout,
+    hasPermission,
     showToast,
   } = useApp();
 
@@ -122,9 +123,11 @@ export const HeaderBar: React.FC = () => {
                   ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                   : currentUser.role === 'Accountant'
                   ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
+                  : currentUser.role === 'Custom'
+                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
                   : 'bg-slate-700/50 text-slate-300 border-slate-600/50'
               }`}
-              title={`Role: ${currentUser.role}`}
+              title={`Role: ${currentUser.role} (${currentUser.permissions?.length || 0} active permissions)`}
             >
               <Shield className="w-3 h-3 shrink-0" />
               <span>{currentUser.role}</span>
@@ -149,14 +152,16 @@ export const HeaderBar: React.FC = () => {
             </button>
           </div>
 
-          {/* Reset Demo Data */}
-          <button
-            onClick={() => setShowResetModal(true)}
-            title="Reset system data to initial demo state"
-            className="p-1.5 text-slate-400 hover:text-rose-300 hover:bg-slate-800 rounded-lg border border-transparent hover:border-slate-700 transition cursor-pointer"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+          {/* Reset Demo Data (Admin or system.cleanup only) */}
+          {(currentUser.role === 'Admin' || hasPermission('system.cleanup')) && (
+            <button
+              onClick={() => setShowResetModal(true)}
+              title="Reset system data to initial demo state"
+              className="p-1.5 text-slate-400 hover:text-rose-300 hover:bg-slate-800 rounded-lg border border-transparent hover:border-slate-700 transition cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

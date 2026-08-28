@@ -6,6 +6,8 @@ import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCur
 import { StudentAvatar } from './StudentAvatar';
 import { MonthPicker } from './MonthPicker';
 import {
+  AlertCircle,
+  AlertTriangle,
   Calendar,
   CreditCard,
   Download,
@@ -17,6 +19,7 @@ import {
   History,
   Home,
   IdCard,
+  Info,
   Phone,
   Receipt,
   Sparkles,
@@ -584,35 +587,76 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
       {/* Admission Voucher Modal */}
       {showAdmVoucherModal && (
-        <div className="fixed inset-0 z-70 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-amber-600" />
-                Admission Voucher
-                <span className="text-[10px] font-semibold text-slate-400">— {student.name}</span>
-              </h3>
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4.5 my-auto border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3.5">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-200/80 shrink-0">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-bold text-slate-900 leading-snug">
+                      Generate Admission Voucher
+                    </h3>
+                    <span className="font-mono bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded text-[11px] border border-slate-200">
+                      {student.regNo}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Issue a one-time admission fee voucher for{' '}
+                    <span className="font-semibold text-slate-700">{student.name}</span>.
+                  </p>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => setShowAdmVoucherModal(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                title="Close"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             {admRangeInvalid ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[11px] text-amber-800">
-                <span className="font-bold">Not needed:</span> admission is on/after first billing month (
-                {student.firstBillingMonth ? formatMonthName(student.firstBillingMonth) : ''}). Use the regular
-                monthly voucher generation instead.
+              <div className="space-y-4">
+                <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    <span className="font-bold block text-amber-900 mb-0.5">
+                      Admission Voucher Not Required
+                    </span>
+                    This student's admission date ({student.admissionDate || 'N/A'}) falls on or after their first billing month ({student.firstBillingMonth ? formatMonthName(student.firstBillingMonth) : ''}). Admission charges belong on regular monthly vouchers instead.
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end border-t border-slate-100 pt-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdmVoucherModal(false)}
+                    className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-100 font-semibold text-xs transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             ) : (
               <>
-                {/* Issue month + picker in the same horizontal row */}
-                <div className="flex items-center gap-3">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">
-                    Issue for Month
-                  </label>
+                {/* Issue Month Selector */}
+                <div className="bg-slate-50/70 rounded-xl border border-slate-200 p-3 sm:p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                      Target Billing Month
+                    </label>
+                    {!admRangeInvalid && (admMonthMin || admMonthMax) && (
+                      <span className="text-[11px] text-slate-500">
+                        Valid Range: <span className="font-semibold text-slate-700">{admMonthMin ? formatMonthName(admMonthMin) : 'Any'}</span> – <span className="font-semibold text-slate-700">{admMonthMax ? formatMonthName(admMonthMax) : 'Any'}</span>
+                      </span>
+                    )}
+                  </div>
                   <MonthPicker
                     value={admMonth}
                     onChange={handleAdmMonthChange}
@@ -620,78 +664,111 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     minMonth={admMonthMin}
                     maxMonth={admMonthMax}
                     disabled={admRangeInvalid}
+                    className="w-full"
                   />
                 </div>
 
+                {/* Existing Voucher Warning Banner */}
                 {existingAdmVoucher && (
-                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5 text-[11px] text-rose-800">
-                    <span className="font-bold">Blocked:</span> Voucher{' '}
-                    <span className="font-mono font-bold">{existingAdmVoucher.voucherNo}</span> already exists
-                    for {formatMonthName(admMonth)}. Delete or reverse it first.
+                  <div className="bg-rose-50 border border-rose-200/80 rounded-xl p-3 text-xs text-rose-800 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="leading-relaxed">
+                      <span className="font-bold">Voucher Already Generated:</span> Voucher{' '}
+                      <span className="font-mono font-bold">{existingAdmVoucher.voucherNo}</span> already exists
+                      for {formatMonthName(admMonth)}. Please delete or reverse it before generating a new one.
+                    </div>
                   </div>
                 )}
 
-                <p className="text-[11px] text-slate-500">
-                  Enter heads and amounts below. Saved as this student's template for the selected month.
-                </p>
+                {/* Fee Particulars & Amounts */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Fee Particulars & Amounts
+                    </label>
+                    <span className="text-[11px] text-slate-500">
+                      One-time admission charges
+                    </span>
+                  </div>
 
-                {/* Editable heads */}
-                <div className="space-y-1.5">
-                  {admItems.map((it, idx) => (
-                    <div key={it.kind} className="flex items-center gap-2">
-                      <span className="w-14 shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                        Head {idx + 1}
-                      </span>
-                      <input
-                        type="text"
-                        value={it.label}
-                        onChange={(e) =>
-                          setAdmItems((prev) =>
-                            prev.map((p) => (p.kind === it.kind ? { ...p, label: e.target.value } : p))
-                          )
-                        }
-                        placeholder={it.defaultLabel}
-                        className="flex-1 min-w-0 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-none focus:border-amber-400 placeholder:text-slate-300"
-                      />
-                      <span className="shrink-0 text-xs font-bold text-slate-400">Rs</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={it.amount}
-                        onChange={(e) =>
-                          setAdmItems((prev) =>
-                            prev.map((p) => (p.kind === it.kind ? { ...p, amount: e.target.value } : p))
-                          )
-                        }
-                        placeholder="0"
-                        className="w-24 shrink-0 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 text-right focus:outline-none focus:border-amber-400 placeholder:text-slate-300"
-                      />
+                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                    <div className="px-3.5 py-2 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      <span>Particular Description</span>
+                      <span className="w-32 text-right">Amount (Rs)</span>
                     </div>
-                  ))}
+                    <div className="divide-y divide-slate-100 p-2.5 space-y-2">
+                      {admItems.map((it) => (
+                        <div key={it.kind} className="flex items-center gap-2.5 pt-1.5 first:pt-0">
+                          <div className="flex-1 min-w-0">
+                            <input
+                              type="text"
+                              value={it.label}
+                              onChange={(e) =>
+                                setAdmItems((prev) =>
+                                  prev.map((p) => (p.kind === it.kind ? { ...p, label: e.target.value } : p))
+                                )
+                              }
+                              placeholder={it.defaultLabel}
+                              className="w-full px-3 py-1.5 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-400 transition"
+                            />
+                          </div>
+                          <div className="relative w-32 shrink-0">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                              Rs
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={it.amount}
+                              onChange={(e) =>
+                                setAdmItems((prev) =>
+                                  prev.map((p) => (p.kind === it.kind ? { ...p, amount: e.target.value } : p))
+                                )
+                              }
+                              placeholder="0"
+                              className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-300 transition"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Total Voucher Amount
+                      </span>
+                      <span className="font-mono font-extrabold text-amber-700 text-base">
+                        {formatCurrency(admTotal)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    Particulars are saved as this student's template for {formatMonthName(admMonth)}.
+                  </p>
                 </div>
 
-                {/* Dynamic total */}
-                <div className="flex items-center justify-between border-t border-slate-200 pt-2">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Total</span>
-                  <span className="font-mono font-extrabold text-slate-900 text-sm">
-                    {formatCurrency(admTotal)}
-                  </span>
-                </div>
-
-                <div className="flex gap-2 pt-1">
+                {/* Modal Footer Actions */}
+                <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 pt-3.5">
                   <button
+                    type="button"
                     onClick={() => setShowAdmVoucherModal(false)}
-                    className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-xs cursor-pointer transition"
+                    className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-100 font-semibold text-xs transition cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleGenerateAdmVoucher}
                     disabled={admGenerateDisabled}
-                    className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 cursor-pointer transition"
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-2 transition cursor-pointer shadow-xs"
                   >
-                    <FileCheck2 className="w-3.5 h-3.5" />
-                    {admTotal <= 0 ? 'Enter an Amount' : existingAdmVoucher ? 'Already Generated' : 'Generate'}
+                    <FileCheck2 className="w-4 h-4" />
+                    {admTotal <= 0
+                      ? 'Enter an Amount'
+                      : existingAdmVoucher
+                      ? 'Voucher Already Exists'
+                      : 'Generate Voucher'}
                   </button>
                 </div>
               </>
@@ -702,8 +779,8 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
       {/* Document Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto border border-slate-200 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
               <h4 className="font-bold text-slate-900 text-sm truncate flex items-center gap-2">
                 <FileText className="w-4 h-4 text-teal-600" />

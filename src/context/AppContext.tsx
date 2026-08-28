@@ -45,8 +45,14 @@ import {
   SEEDED_USERS,
 } from '../data/seedData';
 import {
+  isPermissionAllowed,
+  ROLE_PRESET_PERMISSIONS,
+  getEffectiveRole,
+} from '../utils/permissions';
+import {
   calculateStudentVoucherPreview,
   getCurrentMonthString,
+  getDaysInMonth,
   getNextMonthString,
   getPreviousMonthString,
   roundBusFareUp,
@@ -73,6 +79,7 @@ interface AppContextType {
   hasPermission: (permission: string) => boolean;
   addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string }>;
   updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
+  updateUserPermissions: (id: string, permissions: string[], role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => { success: boolean; error?: string };
 
   // Active Month
@@ -240,6 +247,13 @@ interface AppContextType {
   undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
+  defaultDueDateEnabled: boolean;
+  defaultDueDay: number;
+  setDefaultDueDateSettings: (settings: {
+    enabled: boolean;
+    day?: number;
+  }) => void;
+  getComputedDefaultDueDate: (month: string) => string;
   getDownstreamVouchersInfo: (ids: string[]) => {
     hasDownstream: boolean;
     conflicts: DownstreamConflict[];
@@ -424,6 +438,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDefaultLateFeeRateState(rate);
     localStorage.setItem(`${STORAGE_KEY}_default_late_fee_rate`, String(rate));
   };
+
+  const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_default_due_date_enabled`);
+    return saved === 'true';
+  });
+
+  const [defaultDueDay, setDefaultDueDayState] = useState<number>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_default_due_day`);
+    const parsed = saved ? parseInt(saved, 10) : 10;
+    return isNaN(parsed) || parsed < 1 || parsed > 31 ? 10 : parsed;
+  });
+
+  const setDefaultDueDateSettings = useCallback(
+    (settings: {
+      enabled: boolean;
+      day?: number;
+    }) => {
+      setDefaultDueDateEnabledState(settings.enabled);
+      localStorage.setItem(`${STORAGE_KEY}_default_due_date_enabled`, String(settings.enabled));
+
+      if (settings.day !== undefined) {
+        const cleanDay = Math.min(Math.max(1, settings.day), 31);
+        setDefaultDueDayState(cleanDay);
+        localStorage.setItem(`${STORAGE_KEY}_default_due_day`, String(cleanDay));
+      }
+    },
+    []
+  );
+
+  const getComputedDefaultDueDate = useCallback(
+    (month: string): string => {
+      if (!defaultDueDateEnabled) return '';
+      if (!month || !month.includes('-')) return '';
+      const daysInMonth = getDaysInMonth(month);
+      const clampedDay = Math.min(Math.max(1, defaultDueDay), daysInMonth);
+      return `${month}-${String(clampedDay).padStart(2, '0')}`;
+    },
+    [defaultDueDateEnabled, defaultDueDay]
+  );
 
   // Core domain state
   const [classes, setClasses] = useState<SchoolClass[]>(() => {
@@ -799,7 +852,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const hasPermission = (permission: string) => {
-    return currentUser?.permissions?.includes(permission) ?? false;
+    return isPermissionAllowed(currentUser, permission);
   };
 
   const addUser = async (userData: Omit<User, 'id'>): Promise<{ success: boolean; error?: string }> => {
@@ -813,19 +866,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const hashedPassword = await sha256Hex(plainPassword);
 
+    const defaultRolePerms = ROLE_PRESET_PERMISSIONS[userData.role] || ROLE_PRESET_PERMISSIONS.Viewer;
+    const finalPermissions =
+      Array.isArray(userData.permissions) && userData.permissions.length > 0
+        ? userData.permissions
+        : defaultRolePerms;
+
     const newUser: User = {
       ...userData,
       id: `usr-${Date.now()}`,
       username: userData.username.trim(),
       name: userData.name.trim() || userData.username.trim(),
       password: hashedPassword,
-      permissions: userData.permissions || (
-        userData.role === 'Admin'
-          ? SEEDED_USERS[0].permissions
-          : userData.role === 'Accountant'
-          ? SEEDED_USERS[1].permissions
-          : SEEDED_USERS[2].permissions
-      ),
+      permissions: finalPermissions,
     };
 
     setUsers((prev) => [...prev, newUser]);
@@ -840,13 +893,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (exists) return { success: false, error: 'Username is already taken by another user.' };
     }
 
-    let finalUpdates = updates;
+    let finalUpdates: Partial<User> = { ...updates };
     if (updates.password !== undefined) {
       const plainPassword = updates.password.trim();
       if (plainPassword.length < MIN_PASSWORD_LENGTH) {
         return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
       }
-      finalUpdates = { ...updates, password: await sha256Hex(plainPassword) };
+      finalUpdates.password = await sha256Hex(plainPassword);
     }
 
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...finalUpdates } : u)));
@@ -861,6 +914,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
     return { success: true };
+  };
+
+  const updateUserPermissions = async (
+    id: string,
+    permissions: string[],
+    role?: UserRole
+  ): Promise<{ success: boolean; error?: string }> => {
+    const userToUpdate = users.find((u) => u.id === id);
+    if (!userToUpdate) return { success: false, error: 'User not found.' };
+
+    const determinedRole = role || getEffectiveRole(permissions);
+    return updateUser(id, { permissions, role: determinedRole });
   };
 
   const deleteUser = (id: string) => {
@@ -1951,7 +2016,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       month,
       classId: student.classId,
       issueDate,
-      dueDate: options.dueDate || '',
+      dueDate: options.dueDate || (defaultDueDateEnabled ? getComputedDefaultDueDate(month) : ''),
       particulars,
       grossTotal,
       discountTotal: 0,
@@ -2037,7 +2102,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    const defaultDueDate = dueDate || '';
+    const defaultDueDate = dueDate || (defaultDueDateEnabled ? getComputedDefaultDueDate(month) : '');
     const issueDate = new Date().toISOString().split('T')[0];
 
     const yearStr = month.split('-')[0];
@@ -3319,6 +3384,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hasPermission,
         addUser,
         updateUser,
+        updateUserPermissions,
         deleteUser,
         activeMonth,
         setActiveMonth,
@@ -3397,6 +3463,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setVoucherDeletionResolution,
         defaultLateFeeRate,
         setDefaultLateFeeRate,
+        defaultDueDateEnabled,
+        defaultDueDay,
+        setDefaultDueDateSettings,
+        getComputedDefaultDueDate,
         institute,
         updateInstitute,
         bankAccounts,

@@ -71,6 +71,8 @@ export const VouchersView: React.FC = () => {
     skippedMonthRule,
     voucherDeletionResolution,
     defaultLateFeeRate,
+    defaultDueDateEnabled,
+    getComputedDefaultDueDate,
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -463,7 +465,8 @@ export const VouchersView: React.FC = () => {
   const handleOpenGenerator = () => {
     const monthToUse = activeMonth;
     setTargetMonth(monthToUse);
-    setDueDateInput('');
+    const initialDue = defaultDueDateEnabled ? getComputedDefaultDueDate(monthToUse) : '';
+    setDueDateInput(initialDue);
     const { data, selected } = buildGeneratorPreview(scope, scopeClassId, monthToUse);
     setPreviewsData(data);
     setSelectedGenStudentIds(selected);
@@ -473,7 +476,12 @@ export const VouchersView: React.FC = () => {
   const handleUpdatePreview = (newScope = scope, newClassId = scopeClassId, newMonth = targetMonth) => {
     setScope(newScope);
     setScopeClassId(newClassId);
-    setTargetMonth(newMonth);
+    if (newMonth !== targetMonth) {
+      setTargetMonth(newMonth);
+      if (defaultDueDateEnabled) {
+        setDueDateInput(getComputedDefaultDueDate(newMonth));
+      }
+    }
     const { data, selected } = buildGeneratorPreview(newScope, newClassId, newMonth);
     setPreviewsData(data);
     setSelectedGenStudentIds(selected);
@@ -1370,7 +1378,15 @@ export const VouchersView: React.FC = () => {
                   ) : null}
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Due Date</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-bold text-slate-600">Due Date</label>
+                      {defaultDueDateEnabled && dueDateInput && (
+                        <span className="text-[10px] font-semibold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200/80 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          Default Applied
+                        </span>
+                      )}
+                    </div>
                     <DatePicker
                       value={dueDateInput}
                       themeColor={themeConfig?.color || 'teal'}
