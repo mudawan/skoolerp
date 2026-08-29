@@ -707,7 +707,6 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <input
                   type="number"
                   required
-                  step="10"
                   min="0"
                   placeholder="0"
                   value={formData.monthlyDiscount}

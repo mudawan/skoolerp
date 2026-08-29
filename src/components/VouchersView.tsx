@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp, DownstreamConflict } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, VoucherPreviewCalculation } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, roundUpToMultiple, VoucherPreviewCalculation } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { PrintVoucherModal } from './PrintVoucherModal';
@@ -73,6 +73,8 @@ export const VouchersView: React.FC = () => {
     defaultLateFeeRate,
     defaultDueDateEnabled,
     getComputedDefaultDueDate,
+    roundingMultiple,
+    roundingEnabled,
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -149,10 +151,11 @@ export const VouchersView: React.FC = () => {
   // Calculations for collecting voucher
   const collectDynamicNetDue = useMemo(() => {
     if (collectItems.length > 0) {
-      return Math.max(0, collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0));
+      const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
+      return roundUpToMultiple(collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult);
     }
     return collectingVoucher ? collectingVoucher.netDue : 0;
-  }, [collectItems, collectingVoucher]);
+  }, [collectItems, collectingVoucher, roundingEnabled, roundingMultiple]);
 
   const collectDynamicRemaining = useMemo(() => {
     if (!collectingVoucher) return 0;
@@ -1401,7 +1404,6 @@ export const VouchersView: React.FC = () => {
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">Late Fine (Rs.)</label>
                     <input
                       type="number"
-                      step="50"
                       value={lateFeeInput}
                       onChange={(e) => setLateFeeInput(Number(e.target.value))}
                       className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
@@ -1497,7 +1499,11 @@ export const VouchersView: React.FC = () => {
                         <span className="font-bold text-emerald-800">{selectedGenStudentIds.length}</span>
                       </div>
                       <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 text-[11px] shadow-2xs">
-                        <span className="text-teal-700 font-semibold">Est. Net Due:</span>
+                        <span className="text-teal-700 font-semibold">
+                          {roundingEnabled
+                            ? `Est. Net Due (Rounded to ${roundingMultiple ?? 10}):`
+                            : 'Est. Net Due:'}
+                        </span>
                         <span className="font-bold text-teal-800 font-mono">{formatCurrency(selectedTotalNetDue)}</span>
                       </div>
                       {alreadyGenCount > 0 && (
@@ -1552,7 +1558,11 @@ export const VouchersView: React.FC = () => {
                               {tpl.label}
                             </th>
                           ))}
-                          <th className="py-2 px-2.5 text-right font-bold whitespace-nowrap bg-slate-50 min-w-[100px]">Net Due</th>
+                          <th className="py-2 px-2.5 text-right font-bold whitespace-nowrap bg-slate-50 min-w-[100px]">
+                          {roundingEnabled
+                            ? `Net Due (Rounded to ${roundingMultiple ?? 10})`
+                            : 'Net Due'}
+                        </th>
                           <th className="py-2 px-2.5 text-center whitespace-nowrap bg-slate-50 min-w-[140px]">Status</th>
                         </tr>
                       </thead>
@@ -1734,7 +1744,8 @@ export const VouchersView: React.FC = () => {
                   items={collectItems}
                   onChange={(updated) => {
                     setCollectItems(updated);
-                    const newNet = Math.max(0, updated.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+                    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
+                    const newNet = Math.max(0, roundUpToMultiple(updated.reduce((s, p) => s + (Number(p.amount) || 0), 0), mult));
                     const newRem = Math.max(0, newNet - (collectingVoucher.amountPaid || 0));
                     if (Number(collectAmount) === collectDynamicRemaining && newRem > 0) {
                       setCollectAmount(newRem);
@@ -1939,7 +1950,11 @@ export const VouchersView: React.FC = () => {
                   </tbody>
                   <tfoot className="divide-y divide-slate-200">
                     <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
-                      <td className="p-2">NET DUE AMOUNT:</td>
+                      <td className="p-2">
+                        {getEffectiveMultiple(roundingEnabled, roundingMultiple, detailVoucher?.roundingMultiple) > 1
+                          ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, detailVoucher?.roundingMultiple)}):`
+                          : 'NET DUE AMOUNT:'}
+                      </td>
                       <td className="p-2 text-right text-teal-700 font-bold">
                         {formatCurrency(detailVoucher.netDue)}
                       </td>
@@ -1947,7 +1962,7 @@ export const VouchersView: React.FC = () => {
                     <tr className="bg-rose-50 font-bold text-rose-900 border-t border-rose-200">
                       <td className="p-2">PAYABLE AFTER DUE DATE:</td>
                       <td className="p-2 text-right text-rose-700 font-bold">
-                        {formatCurrency(detailVoucher.netDue + (detailVoucher.lateFeeRate || 0))}
+                        {formatCurrency(detailVoucher.netDue + getAppliedFineAmount(detailVoucher, roundingMultiple))}
                       </td>
                     </tr>
                   </tfoot>
@@ -2411,7 +2426,6 @@ export const VouchersView: React.FC = () => {
                 <input
                   type="number"
                   min="0"
-                  step="50"
                   disabled={!addLateFine}
                   value={carryFineAmount}
                   onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}

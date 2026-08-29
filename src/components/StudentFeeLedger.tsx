@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, formatStudentAge, calculateAge, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
 import { exportStudentFeeLedgerPdf, printStudentFeeLedgerPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
@@ -55,6 +55,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     institute,
     bankAccounts,
     templates,
+    roundingMultiple,
+    roundingEnabled,
     collectVoucherPayment,
     updateVoucherParticulars,
     hasPermission,
@@ -121,10 +123,11 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   // Dynamic calculations for the collect modal
   const collectDynamicNetDue = useMemo(() => {
     if (collectItems.length > 0) {
-      return Math.max(0, collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0));
+      const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectModalVoucher?.roundingMultiple);
+      return roundUpToMultiple(collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult);
     }
     return collectModalVoucher ? collectModalVoucher.netDue : 0;
-  }, [collectItems, collectModalVoucher]);
+  }, [collectItems, collectModalVoucher, roundingEnabled, roundingMultiple]);
 
   const collectDynamicRemaining = useMemo(() => {
     if (!collectModalVoucher) return 0;
@@ -276,7 +279,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       e.status,
     ]);
 
-    const titleInfo = `FEE COLLECTIONS LEDGER - ${currentStudent.name} (Reg #: ${currentStudent.regNo}) - Class: ${currentClass?.name || 'N/A'}\nTotal Billed: Rs. ${totalBilled} | Total Deposited: Rs. ${totalDeposited} | Outstanding Balance: Rs. ${totalBalance}\n\n`;
+    const titleInfo = `FEE COLLECTIONS LEDGER - ${currentStudent.name} (Reg #: ${currentStudent.regNo}) - Class: ${currentClass?.name || 'N/A'}\nTotal Billed: Rs. ${Math.round(totalBilled)} | Total Deposited: Rs. ${Math.round(totalDeposited)} | Outstanding Balance: Rs. ${Math.round(totalBalance)}\n\n`;
 
     const textContent =
       titleInfo +
@@ -345,14 +348,14 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   // 3. Export PDF
   const handleExportPdf = async () => {
     if (!currentStudent || ledgerEntries.length === 0) return;
-    const context = { institute, bankAccounts, students, classes, templates };
+    const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
     await exportStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
   };
 
   // 4. Quick Print (Prints the dedicated clean PDF ledger layout directly)
   const handlePrint = async () => {
     if (!currentStudent || ledgerEntries.length === 0) return;
-    const context = { institute, bankAccounts, students, classes, templates };
+    const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
     await printStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
   };
 
@@ -1168,7 +1171,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                   items={collectItems}
                   onChange={(updated) => {
                     setCollectItems(updated);
-                    const newNet = Math.max(0, updated.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+                    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectModalVoucher?.roundingMultiple);
+                    const newNet = Math.max(0, roundUpToMultiple(updated.reduce((s, p) => s + (Number(p.amount) || 0), 0), mult));
                     const newRem = Math.max(0, newNet - (collectModalVoucher.amountPaid || 0));
                     if (Number(collectAmount) === collectDynamicRemaining && newRem > 0) {
                       setCollectAmount(newRem);

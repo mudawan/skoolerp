@@ -19,7 +19,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
 }) => {
   if (vouchers.length === 0) return null;
 
-  const { institute, bankAccounts, students, classes, templates } = useApp();
+  const { institute, bankAccounts, students, classes, templates, roundingMultiple, roundingEnabled } = useApp();
   const [exportMode, setExportMode] = useState<'single_pdf' | 'zip_pdfs'>('single_pdf');
   const [isExporting, setIsExporting] = useState(false);
 
@@ -29,7 +29,7 @@ export const ExportPdfModal: React.FC<ExportPdfModalProps> = ({
   const handleExecuteExport = async () => {
     setIsExporting(true);
     try {
-      const context = { institute, bankAccounts, students, classes, templates };
+      const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
 
       if (exportMode === 'single_pdf') {
         const filename = `${defaultFilenameBase}.pdf`;

@@ -12,35 +12,47 @@ import {
 } from '../types';
 
 /**
- * Charges round UP to nearest multiple of 10 (e.g. 3042 -> 3050)
+ * Rounds a positive amount UP to the nearest multiple (e.g. 3042/10 -> 3050,
+ * 1273.5/10 -> 1280). Negative amounts and zero are returned unchanged: a
+ * family credit / advance is never rounded up.
  */
-export function roundChargeUp(amount: number): number {
-  if (amount <= 0) return 0;
-  const remainder = amount % 10;
+export function roundUpToMultiple(amount: number, multiple: number): number {
+  if (amount <= 0) return amount;
+  const m = multiple > 0 ? multiple : 1;
+  const remainder = amount % m;
   if (remainder === 0) return amount;
-  return amount + (10 - remainder);
-}
-
-/**
- * Bus / Transport Fare rounds UP to nearest multiple of 50 (e.g. 1205 -> 1250, 1200 -> 1200, 1251 -> 1300)
- */
-export function roundBusFareUp(amount: number): number {
-  if (amount <= 0) return 0;
-  return Math.ceil(amount / 50) * 50;
-}
-
-/**
- * Discounts round DOWN to nearest multiple of 10 (e.g. 255 -> 250)
- */
-export function roundDiscountDown(amount: number): number {
-  if (amount <= 0) return 0;
-  return Math.floor(amount / 10) * 10;
+  return amount + (m - remainder);
 }
 
 export function formatCurrency(amount: number): string {
   const isNegative = amount < 0;
-  const absVal = Math.abs(amount).toLocaleString('en-PK');
+  const absVal = Math.round(Math.abs(amount)).toLocaleString('en-PK');
   return isNegative ? `- Rs. ${absVal}` : `Rs. ${absVal}`;
+}
+
+/**
+ * The late fine that is actually applied to a voucher: the Fine line item(s)
+ * present in its particulars (already rounded up), otherwise the voucher's
+ * late-fee rate rounded up to its rounding multiple.
+ */
+export function getAppliedFineAmount(voucher: FeeVoucher, defaultMultiple = 10): number {
+  const fineLines = voucher.particulars.filter((p) => p.kind === 'Fine');
+  const boundFine = fineLines.reduce((sum, p) => sum + p.amount, 0);
+  if (boundFine > 0) {
+    return boundFine;
+  }
+  return roundUpToMultiple(voucher.lateFeeRate || 0, voucher.roundingMultiple ?? defaultMultiple);
+}
+
+/**
+ * The multiple actually used for a voucher's net due rounding.
+ * A voucher's own stored multiple (when > 1) always wins so that
+ * historical vouchers keep their original rounding; otherwise the global
+ * rounding switch decides: enabled -> configured multiple, disabled -> 1.
+ */
+export function getEffectiveMultiple(roundingEnabled: boolean, configuredMultiple: number, storedMultiple?: number): number {
+  if (storedMultiple && storedMultiple > 1) return storedMultiple;
+  return roundingEnabled ? configuredMultiple : 1;
 }
 
 export interface StudentAgeResult {
@@ -141,7 +153,8 @@ export function getDaysInMonth(month: string): number {
 /**
  * Calculates transport fee for a student in a month based on assignment & stop fare.
  * Exact formula: (baseStopFare - discount) * (daysAvailed / daysInMonth) * tripFactor
- * Result is rounded up to the nearest multiple of 50.
+ * The raw figure is returned; the voucher's final net due is rounded up to the
+ * configured multiple at voucher-generation time.
  */
 export function calculateTransportFee(
   assignment: TransportAssignment | undefined,
@@ -160,9 +173,7 @@ export function calculateTransportFee(
 
   const tripFactor = assignment.tripType === 'OneWay' ? 0.5 : 1.0;
 
-  const calculatedFee = baseDiscounted * daysRatio * tripFactor;
-
-  return roundBusFareUp(calculatedFee);
+  return baseDiscounted * daysRatio * tripFactor;
 }
 
 export interface VoucherPreviewCalculation {
@@ -265,7 +276,8 @@ export function calculateStudentVoucherPreview(
   stops: TransportStop[],
   existingVouchers: FeeVoucher[],
   priorMonthRule: PriorMonthVoucherRule = 'strict',
-  skippedMonthRule: SkippedMonthVoucherRule = 'warning'
+  skippedMonthRule: SkippedMonthVoucherRule = 'warning',
+  roundingMultiple: number = 10
 ): VoucherPreviewCalculation {
   const existingVoucher = existingVouchers.find(
     (v) => v.studentId === student.id && v.month === month && v.status !== 'Reversed'
@@ -410,7 +422,7 @@ export function calculateStudentVoucherPreview(
   } else {
     rawTuitionAmount = tuitionInfo.amount || 0;
   }
-  const tuitionAmount = roundChargeUp(rawTuitionAmount);
+  const tuitionAmount = rawTuitionAmount;
 
   particulars.push({
     kind: 'Tuition',
@@ -423,7 +435,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex1',
     label: flex1Info.label,
-    amount: roundChargeUp(flex1Info.amount || 0),
+    amount: flex1Info.amount || 0,
   });
 
   // 3. Flex2 (Registration Fee)
@@ -431,7 +443,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex2',
     label: flex2Info.label,
-    amount: roundChargeUp(flex2Info.amount || 0),
+    amount: flex2Info.amount || 0,
   });
 
   // 4. Transport Fee (Student Override > Class Override > Stop Calculation)
@@ -445,9 +457,9 @@ export function calculateStudentVoucherPreview(
 
   let transportFee = calculatedTransportFee;
   if (transportStudentOverride && transportStudentOverride.defaultAmount > 0) {
-    transportFee = roundBusFareUp(transportStudentOverride.defaultAmount);
+    transportFee = transportStudentOverride.defaultAmount;
   } else if (transportClassOverride && transportClassOverride.defaultAmount > 0) {
-    transportFee = roundBusFareUp(transportClassOverride.defaultAmount);
+    transportFee = transportClassOverride.defaultAmount;
   }
 
   const transportInfo = getTemplateInfo('Transport', 'Transport Fee');
@@ -503,13 +515,13 @@ export function calculateStudentVoucherPreview(
 
   let baseFine = 0;
   if (fineStudentOverride && fineStudentOverride.defaultAmount > 0) {
-    baseFine = roundChargeUp(fineStudentOverride.defaultAmount);
+    baseFine = fineStudentOverride.defaultAmount;
   } else if (fineClassOverride && fineClassOverride.defaultAmount > 0) {
-    baseFine = roundChargeUp(fineClassOverride.defaultAmount);
+    baseFine = fineClassOverride.defaultAmount;
   } else {
-    baseFine = roundChargeUp(fineInfo.amount || 0);
+    baseFine = fineInfo.amount || 0;
   }
-  const totalFine = baseFine + carriedFine;
+  const totalFine = roundUpToMultiple(baseFine + carriedFine, roundingMultiple);
   particulars.push({
     kind: 'Fine',
     label: carriedFine > 0 && baseFine === 0 ? 'Late Payment Carry Fine' : (fineInfo.label || 'Fine / Late Fee'),
@@ -521,7 +533,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex3',
     label: flex3Info.label,
-    amount: roundChargeUp(flex3Info.amount || 0),
+    amount: flex3Info.amount || 0,
   });
 
   // 7. Flex4 (Other)
@@ -529,7 +541,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex4',
     label: flex4Info.label,
-    amount: roundChargeUp(flex4Info.amount || 0),
+    amount: flex4Info.amount || 0,
   });
 
   // Push Previous Balance
@@ -552,11 +564,10 @@ export function calculateStudentVoucherPreview(
   } else {
     rawDiscount = student.monthlyDiscount || 0;
   }
-  const discountAmount = roundDiscountDown(rawDiscount);
   particulars.push({
     kind: 'Discount',
     label: discountInfo.label || 'Discount in Fee',
-    amount: -discountAmount,
+    amount: -rawDiscount,
   });
 
   // Sort particulars according to the templates sort order (or standard order)
@@ -586,7 +597,10 @@ export function calculateStudentVoucherPreview(
     .filter((p) => p.amount < 0 && p.kind === 'Discount')
     .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-  const netDue = particulars.reduce((sum, p) => sum + p.amount, 0);
+  const netDue = roundUpToMultiple(
+    particulars.reduce((sum, p) => sum + p.amount, 0),
+    roundingMultiple
+  );
 
   return {
     student,
@@ -595,7 +609,7 @@ export function calculateStudentVoucherPreview(
     grossTotal,
     discountTotal,
     prevBalance,
-    netDue: Math.max(0, netDue),
+    netDue,
     isAlreadyGenerated: false,
     isBlockedByPriorRule,
     blockReason,

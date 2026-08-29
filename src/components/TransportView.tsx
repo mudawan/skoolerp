@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
-import { calculateTransportFee, formatCurrency, formatMonthName, getDaysInMonth, roundBusFareUp } from '../utils/feeMath';
+import { calculateTransportFee, formatCurrency, formatMonthName, getDaysInMonth } from '../utils/feeMath';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
@@ -989,7 +989,7 @@ export const TransportView: React.FC = () => {
           if (rawFare.trim()) {
             const numFare = parseFloat(rawFare.replace(/[^0-9.]/g, ''));
             if (!isNaN(numFare) && numFare >= 0) {
-              monthlyFare = roundBusFareUp(numFare);
+              monthlyFare = numFare;
             }
           } else if (existingStop) {
             monthlyFare = existingStop.monthlyFare;
@@ -1983,7 +1983,7 @@ export const TransportView: React.FC = () => {
                 Student Transport Assignments ({activeMonth})
               </h3>
               <p className="text-[11px] text-slate-500">
-                Prorated fare formula: (Base Stop Fare − Discount) × (Days Availed ÷ {totalDaysInMonth} Days) × Trip Factor (rounded up to nearest multiple of 50)
+                Prorated fare formula: (Base Stop Fare − Discount) × (Days Availed ÷ {totalDaysInMonth} Days) × Trip Factor
               </p>
             </div>
 
@@ -2451,7 +2451,6 @@ export const TransportView: React.FC = () => {
                 <label className="block font-bold mb-1">Monthly Fare (Rs.) *</label>
                 <input
                   type="number"
-                  step="50"
                   required
                   value={stopData.monthlyFare}
                   onChange={(e) => setStopData({ ...stopData, monthlyFare: Number(e.target.value) })}
@@ -2843,7 +2842,7 @@ export const TransportView: React.FC = () => {
                   const baseDiscounted = Math.max(0, baseFare - discount);
                   const daysAvailed = Math.min(Math.max(Number(asgnData.daysCharged) || 0, 0), totalDaysInMonth);
                   const tripFactor = asgnData.tripType === 'OneWay' ? 0.5 : 1.0;
-                  const calculatedFare = roundBusFareUp(baseDiscounted * (daysAvailed / totalDaysInMonth) * tripFactor);
+                  const calculatedFare = baseDiscounted * (daysAvailed / totalDaysInMonth) * tripFactor;
 
                   return (
                     <div className="space-y-3 flex flex-col justify-between">
@@ -2912,7 +2911,6 @@ export const TransportView: React.FC = () => {
                           <input
                             type="number"
                             min="0"
-                            step="50"
                             value={asgnData.discount}
                             onChange={(e) =>
                               setAsgnData({
@@ -2959,7 +2957,7 @@ export const TransportView: React.FC = () => {
                           <span className="text-base font-extrabold text-teal-700">{formatCurrency(calculatedFare)}</span>
                         </div>
                         <div className="text-[9.5px] text-slate-400 font-mono text-center truncate">
-                          ({baseFare} − {discount}) × ({daysAvailed}/{totalDaysInMonth}) × {tripFactor} = Rs. {calculatedFare.toLocaleString()} (rounded up to 50)
+                          ({baseFare} − {discount}) × ({daysAvailed}/{totalDaysInMonth}) × {tripFactor} = Rs. {Math.round(calculatedFare).toLocaleString()}
                         </div>
                       </div>
                     </div>

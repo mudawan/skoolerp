@@ -53,11 +53,10 @@ import {
   calculateStudentVoucherPreview,
   getCurrentMonthString,
   getDaysInMonth,
+  getEffectiveMultiple,
   getNextMonthString,
   getPreviousMonthString,
-  roundBusFareUp,
-  roundChargeUp,
-  roundDiscountDown,
+  roundUpToMultiple,
   VoucherPreviewCalculation,
 } from '../utils/feeMath';
 
@@ -247,6 +246,10 @@ interface AppContextType {
   undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
+  roundingMultiple: number;
+  setRoundingMultiple: (multiple: number) => void;
+  roundingEnabled: boolean;
+  setRoundingEnabled: (enabled: boolean) => void;
   defaultDueDateEnabled: boolean;
   defaultDueDay: number;
   setDefaultDueDateSettings: (settings: {
@@ -437,6 +440,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setDefaultLateFeeRate = (rate: number) => {
     setDefaultLateFeeRateState(rate);
     localStorage.setItem(`${STORAGE_KEY}_default_late_fee_rate`, String(rate));
+  };
+
+  const [roundingMultiple, setRoundingMultipleState] = useState<number>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_rounding_multiple`);
+    const parsed = saved ? Number(saved) : 0;
+    return parsed > 0 && Number.isInteger(parsed) ? parsed : 10;
+  });
+
+  const setRoundingMultiple = (multiple: number) => {
+    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 10;
+    setRoundingMultipleState(clean);
+    localStorage.setItem(`${STORAGE_KEY}_rounding_multiple`, String(clean));
+  };
+
+  const [roundingEnabled, setRoundingEnabledState] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_rounding_enabled`);
+    return saved === null || saved === 'true';
+  });
+
+  const setRoundingEnabled = (enabled: boolean) => {
+    setRoundingEnabledState(enabled);
+    localStorage.setItem(`${STORAGE_KEY}_rounding_enabled`, String(enabled));
   };
 
   const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(() => {
@@ -948,7 +973,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newClass: SchoolClass = {
       id: `cls-${Date.now()}`,
       name: name.trim(),
-      monthlyFee: roundChargeUp(monthlyFee),
+      monthlyFee,
       sortOrder,
       active: true,
     };
@@ -976,7 +1001,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const patchedFields: Partial<SchoolClass> = {
       ...updates,
-      monthlyFee: updates.monthlyFee !== undefined ? roundChargeUp(updates.monthlyFee) : current.monthlyFee,
+      monthlyFee: updates.monthlyFee !== undefined ? updates.monthlyFee : current.monthlyFee,
     };
 
     // If the Sort Position # was manually changed, resequence the whole list
@@ -1106,7 +1131,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: generateUniqueId('stu'),
       studentNo,
       regNo,
-      monthlyDiscount: roundDiscountDown(studentData.monthlyDiscount || 0),
       familyId,
       createdDate: new Date().toISOString().split('T')[0],
     };
@@ -1174,15 +1198,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudents((prev) =>
       prev.map((s) => {
         if (s.id !== id) return s;
-        const updatedDiscount =
-          updates.monthlyDiscount !== undefined
-            ? roundDiscountDown(updates.monthlyDiscount)
-            : s.monthlyDiscount;
         return {
           ...s,
           ...updates,
           familyId: newFamilyId,
-          monthlyDiscount: updatedDiscount,
         };
       })
     );
@@ -1361,7 +1380,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newStop: TransportStop = {
       ...stop,
       id: `stop-${Date.now()}`,
-      monthlyFare: roundBusFareUp(stop.monthlyFare),
+      monthlyFare: stop.monthlyFare,
     };
     // Insert at the requested position and resequence, same rationale as
     // addClass/addBus above.
@@ -1385,7 +1404,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const patchedFields: Partial<TransportStop> = {
       ...updates,
-      monthlyFare: updates.monthlyFare !== undefined ? roundBusFareUp(updates.monthlyFare) : current.monthlyFare,
+      monthlyFare: updates.monthlyFare !== undefined ? updates.monthlyFare : current.monthlyFare,
     };
 
     // If the Sort Position # was manually changed, resequence the whole
@@ -1451,7 +1470,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             (item.id && s.id === item.id) ||
             s.name.toLowerCase() === cleanName.toLowerCase()
         );
-        const fare = roundBusFareUp(item.monthlyFare || 0);
+        const fare = item.monthlyFare || 0;
 
         if (existingIdx >= 0) {
           currentStops[existingIdx] = {
@@ -1653,7 +1672,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newTpl: FeeTemplate = {
         ...template,
         id: `tpl-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        defaultAmount: roundChargeUp(template.defaultAmount),
+        defaultAmount: template.defaultAmount,
       };
       setTemplates((prev) => [...prev, newTpl].sort((a, b) => a.sortOrder - b.sortOrder));
     }
@@ -1681,7 +1700,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTemplates((prev) =>
         prev.map((t) =>
           t.id === existing.id
-            ? { ...t, label, defaultAmount: roundChargeUp(amount), month: month || t.month }
+            ? { ...t, label, defaultAmount: amount, month: month || t.month }
             : t
         )
       );
@@ -1692,7 +1711,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         month,
         kind,
         label,
-        defaultAmount: roundChargeUp(amount),
+        defaultAmount: amount,
         sortOrder: 10,
       };
       setTemplates((prev) => [...prev, newTpl]);
@@ -1715,7 +1734,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         month,
         kind: item.kind,
         label: item.label,
-        defaultAmount: roundChargeUp(item.defaultAmount),
+        defaultAmount: item.defaultAmount,
         sortOrder: item.sortOrder,
       }));
       return [...filtered, ...newOverrides];
@@ -1746,7 +1765,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         month,
         kind: item.kind,
         label: item.label,
-        defaultAmount: roundChargeUp(item.defaultAmount),
+        defaultAmount: item.defaultAmount,
         sortOrder: item.sortOrder,
       }));
       return [...filtered, ...newOverrides];
@@ -1776,7 +1795,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             month,
             kind: item.kind,
             label: item.label,
-            defaultAmount: roundChargeUp(item.defaultAmount),
+            defaultAmount: item.defaultAmount,
             sortOrder: item.sortOrder,
           });
         });
@@ -1879,7 +1898,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         stops,
         vouchers,
         priorMonthRule,
-        skippedMonthRule
+        skippedMonthRule,
+        roundingEnabled ? roundingMultiple : 1
       );
     });
 
@@ -1922,7 +1942,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .map((it) => ({
           kind: it.kind,
           label: it.label.trim(),
-          amount: roundChargeUp(Number(it.amount) || 0),
+          amount: Number(it.amount) || 0,
         }))
         .sort(
           (a, b) =>
@@ -1940,9 +1960,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const grossTotal = particulars.reduce((s, p) => s + p.amount, 0);
-      const netDue = grossTotal;
+      const generationMult = roundingEnabled ? roundingMultiple : 1;
+      const netDue = roundUpToMultiple(grossTotal, generationMult);
 
-      const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, options);
+      const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
       setVouchers((prev) => [...prev, returnedVoucher]);
       return { success: true, voucher: returnedVoucher };
     }
@@ -1969,7 +1990,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     kindsToInclude.forEach(({ kind, defaultLabel }) => {
       const { label, amount } = resolve(kind, defaultLabel);
       if (amount > 0) {
-        particulars.push({ kind, label, amount: roundChargeUp(amount) });
+        particulars.push({ kind, label, amount });
       }
     });
 
@@ -1990,9 +2011,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     particulars.sort((a, b) => (sortMap.get(a.kind) ?? 99) - (sortMap.get(b.kind) ?? 99));
 
     const grossTotal = particulars.reduce((s, p) => s + p.amount, 0);
-    const netDue = grossTotal;
+    const generationMult = roundingEnabled ? roundingMultiple : 1;
+    const netDue = roundUpToMultiple(grossTotal, generationMult);
 
-    const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, options);
+    const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
     setVouchers((prev) => [...prev, returnedVoucher]);
     return { success: true, voucher: returnedVoucher };
   };
@@ -2003,6 +2025,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     particulars: VoucherItem[],
     grossTotal: number,
     netDue: number,
+    roundingMultipleValue: number,
     options: { dueDate?: string; lateFeeRate?: number; notes?: string }
   ): FeeVoucher => {
     const issueDate = new Date().toISOString().split('T')[0];
@@ -2022,6 +2045,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       discountTotal: 0,
       prevBalance: 0,
       lateFeeRate: options.lateFeeRate ?? defaultLateFeeRate,
+      roundingMultiple: roundingMultipleValue,
       netDue,
       amountPaid: 0,
       status: netDue <= 0 ? 'Paid' : 'Issued',
@@ -2134,6 +2158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         discountTotal: prev.discountTotal,
         prevBalance: prev.prevBalance,
         lateFeeRate: appliedLateFee,
+        roundingMultiple: roundingEnabled ? roundingMultiple : 1,
         netDue: prev.netDue,
         amountPaid: 0,
         status: prev.netDue <= 0 ? 'Paid' : 'Issued',
@@ -2197,7 +2222,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               .filter((p) => p.amount < 0 && p.kind === 'Discount')
               .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-            const netDue = Math.max(0, cleanParticulars.reduce((sum, p) => sum + p.amount, 0));
+            const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
+            const netDue = roundUpToMultiple(
+              cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
+              mult
+            );
 
             let status = v.status;
             if (v.amountPaid >= netDue && netDue > 0) {
@@ -2218,6 +2247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               grossTotal,
               discountTotal,
               prevBalance: newPrevBalance,
+              roundingMultiple: mult,
               netDue,
               status,
             };
@@ -2267,14 +2297,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .filter((p) => p.amount < 0 && p.kind === 'Discount')
       .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-    const netDue = Math.max(0, cleanParticulars.reduce((sum, p) => sum + p.amount, 0));
+    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
+    const netDue = roundUpToMultiple(
+      cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
+      mult
+    );
 
     let newStatus = voucher.status;
     if (voucher.amountPaid >= netDue && netDue > 0) {
       newStatus = 'Paid';
     } else if (voucher.amountPaid > 0) {
       newStatus = 'Partial';
-    } else if (netDue === 0 && voucher.amountPaid === 0) {
+    } else if (netDue <= 0 && voucher.amountPaid === 0) {
       newStatus = 'Paid';
     } else {
       newStatus = 'Issued';
@@ -2285,6 +2319,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       particulars: cleanParticulars,
       grossTotal,
       discountTotal,
+      roundingMultiple: mult,
       netDue,
       status: newStatus,
     };
@@ -2335,7 +2370,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       discountTotal = cleanParticulars
         .filter((p) => p.amount < 0 && p.kind === 'Discount')
         .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-      netDue = Math.max(0, cleanParticulars.reduce((sum, p) => sum + p.amount, 0));
+      const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
+      netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
     }
 
     const yearStr = new Date().getFullYear().toString();
@@ -2375,7 +2411,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       newStatus = 'Paid';
     } else if (updatedPaid > 0) {
       newStatus = 'Partial';
-    } else if (netDue === 0 && updatedPaid === 0) {
+    } else if (netDue <= 0 && updatedPaid === 0) {
       newStatus = 'Paid';
     } else {
       newStatus = 'Issued';
@@ -2596,8 +2632,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'Voucher has no outstanding balance to carry forward.' };
     }
 
+    // Check if target month voucher already exists for this student
+    const existingTargetVoucher = baseList.find(
+      (v) => v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed'
+    );
+
+    const targetMult = getEffectiveMultiple(roundingEnabled, roundingMultiple, existingTargetVoucher?.roundingMultiple);
+
     const fineAmountToApply = addLateFine
-      ? (customFineAmount !== undefined ? customFineAmount : (voucher.lateFeeRate || defaultLateFeeRate))
+      ? roundUpToMultiple(
+          customFineAmount !== undefined ? customFineAmount : (voucher.lateFeeRate || defaultLateFeeRate),
+          targetMult
+        )
       : 0;
 
     // Mark current voucher as Carried and update or recalculate target/future
@@ -2616,11 +2662,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         carriedLateFine: fineAmountToApply,
       };
     });
-
-    // Check if target month voucher already exists for this student
-    const existingTargetVoucher = updatedList.find(
-      (v) => v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed'
-    );
 
     if (existingTargetVoucher) {
       let targetParticulars = existingTargetVoucher.particulars.filter(
@@ -2658,7 +2699,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .filter((p) => p.amount < 0 && p.kind === 'Discount')
         .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-      const netDue = Math.max(0, targetParticulars.reduce((sum, p) => sum + p.amount, 0));
+      const netDue = roundUpToMultiple(
+        targetParticulars.reduce((sum, p) => sum + p.amount, 0),
+        targetMult
+      );
 
       let targetStatus = existingTargetVoucher.status;
       if (existingTargetVoucher.amountPaid >= netDue) {
@@ -2677,6 +2721,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         grossTotal,
         discountTotal,
         prevBalance: outstandingBalance,
+        roundingMultiple: targetMult,
         netDue,
         status: targetStatus,
       };
@@ -2724,6 +2769,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           discountTotal: 0,
           prevBalance: 0,
           lateFeeRate: voucher.lateFeeRate ?? defaultLateFeeRate,
+          roundingMultiple: roundingEnabled ? roundingMultiple : 1,
           netDue: 0,
           amountPaid: 0,
           status: 'Issued',
@@ -2827,6 +2873,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let newPrevBalance = 0;
         let carriedFine = 0;
 
+        const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
+
         if (idx > 0) {
           const prevVoucher = studentVouchers[idx - 1];
           if (
@@ -2836,7 +2884,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ) {
             newPrevBalance = Math.max(0, prevVoucher.netDue - prevVoucher.amountPaid);
             if (prevVoucher.status === 'Carried' && prevVoucher.carriedLateFine && prevVoucher.carriedLateFine > 0) {
-              carriedFine = prevVoucher.carriedLateFine;
+              carriedFine = roundUpToMultiple(prevVoucher.carriedLateFine, mult);
             }
           } else if (prevVoucher.status === 'Paid') {
             const excess = prevVoucher.amountPaid - prevVoucher.netDue;
@@ -2878,7 +2926,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .filter((p) => p.amount < 0 && p.kind === 'Discount')
           .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-        const netDue = Math.max(0, cleanParticulars.reduce((sum, p) => sum + p.amount, 0));
+        const netDue = roundUpToMultiple(
+          cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
+          mult
+        );
 
         let status = v.status;
         if (v.amountPaid >= netDue) {
@@ -2897,6 +2948,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           grossTotal,
           discountTotal,
           prevBalance: newPrevBalance,
+          roundingMultiple: mult,
           netDue,
           status,
         };
@@ -3463,6 +3515,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setVoucherDeletionResolution,
         defaultLateFeeRate,
         setDefaultLateFeeRate,
+        roundingMultiple,
+        setRoundingMultiple,
+        roundingEnabled,
+        setRoundingEnabled,
         defaultDueDateEnabled,
         defaultDueDay,
         setDefaultDueDateSettings,

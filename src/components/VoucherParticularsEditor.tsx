@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { VoucherItem, ParticularKind } from '../types';
 import { RotateCcw, Tag, Save } from 'lucide-react';
-import { formatCurrency } from '../utils/feeMath';
+import { formatCurrency, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
 import { useApp } from '../context/AppContext';
 
 interface VoucherParticularsEditorProps {
@@ -131,7 +131,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
   readOnly = false,
   studentId,
 }) => {
-  const { templates, students, hasPermission, activeMonth } = useApp();
+  const { templates, students, hasPermission, activeMonth, roundingMultiple, roundingEnabled } = useApp();
 
   // Check if current user has permission to edit voucher amounts / particulars
   const canEdit =
@@ -226,7 +226,10 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
     .filter((p) => p.kind === 'Discount' || (p.amount < 0 && p.kind !== 'PreviousBalance'))
     .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
-  const netDue = Math.max(0, reconciledItems.reduce((sum, p) => sum + p.amount, 0));
+  const netDue = roundUpToMultiple(
+    reconciledItems.reduce((sum, p) => sum + p.amount, 0),
+    getEffectiveMultiple(roundingEnabled, roundingMultiple)
+  );
 
   const handleAmountChange = (kind: ParticularKind, valStr: string) => {
     // Only Flex1-4 heads and values are editable
@@ -395,7 +398,9 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
           </div>
         </div>
         <div className="bg-teal-50 px-2 py-1 rounded border border-teal-200">
-          <div className="text-[9px] text-teal-800 font-sans font-bold">Net Due</div>
+          <div className="text-[9px] text-teal-800 font-sans font-bold">
+            {roundingEnabled ? `Net Due (Rounded to ${roundingMultiple ?? 10})` : 'Net Due'}
+          </div>
           <div className="font-black text-teal-900 text-xs">{formatCurrency(netDue)}</div>
         </div>
       </div>

@@ -539,7 +539,6 @@ export const ClassesView: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">Standard Monthly Fee (Rs.) *</label>
                 <input
                   type="number"
-                  step="10"
                   required
                   min="0"
                   value={formData.monthlyFee}

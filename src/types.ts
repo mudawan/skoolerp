@@ -187,6 +187,7 @@ export interface FeeVoucher {
   discountTotal: number;
   prevBalance: number; // Can be negative if student has advance
   lateFeeRate: number; // e.g. 200 / 500
+  roundingMultiple?: number; // The "round net due up to nearest multiple" setting used when this voucher's netDue was computed
   netDue: number;
   amountPaid: number;
   status: VoucherStatus;

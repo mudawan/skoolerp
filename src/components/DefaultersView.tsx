@@ -9,7 +9,10 @@ import { RecordsPerPageSelector } from './RecordsPerPageSelector';
 import {
   formatCurrency,
   formatMonthName,
+  getAppliedFineAmount,
+  getEffectiveMultiple,
   getNextMonthString,
+  roundUpToMultiple,
 } from '../utils/feeMath';
 import {
   AlertTriangle,
@@ -44,6 +47,8 @@ export const DefaultersView: React.FC = () => {
     hasPermission,
     themeConfig,
     defaultLateFeeRate,
+    roundingMultiple,
+    roundingEnabled,
   } = useApp();
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -179,10 +184,11 @@ export const DefaultersView: React.FC = () => {
   // Dynamic calculations for collect modal
   const collectDynamicNetDue = useMemo(() => {
     if (collectItems.length > 0) {
-      return Math.max(0, collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0));
+      const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
+      return roundUpToMultiple(collectItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult);
     }
     return collectingVoucher ? collectingVoucher.netDue : 0;
-  }, [collectItems, collectingVoucher]);
+  }, [collectItems, collectingVoucher, roundingEnabled, roundingMultiple]);
 
   const collectDynamicRemaining = useMemo(() => {
     if (!collectingVoucher) return 0;
@@ -629,7 +635,6 @@ export const DefaultersView: React.FC = () => {
                 <input
                   type="number"
                   min="0"
-                  step="50"
                   id="input-carry-fine-amount"
                   disabled={!addLateFine}
                   value={addLateFine ? carryFineAmount : 0}
@@ -1131,7 +1136,11 @@ export const DefaultersView: React.FC = () => {
                   </tbody>
                   <tfoot className="divide-y divide-slate-200">
                     <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
-                      <td className="p-2">NET DUE AMOUNT:</td>
+                      <td className="p-2">
+                        {getEffectiveMultiple(roundingEnabled, roundingMultiple, inspectVoucher?.roundingMultiple) > 1
+                          ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, inspectVoucher?.roundingMultiple)}):`
+                          : 'NET DUE AMOUNT:'}
+                      </td>
                       <td className="p-2 text-right text-teal-700 font-bold">
                         {formatCurrency(inspectVoucher.netDue)}
                       </td>
@@ -1139,7 +1148,7 @@ export const DefaultersView: React.FC = () => {
                     <tr className="bg-rose-50 font-bold text-rose-900 border-t border-rose-200">
                       <td className="p-2">PAYABLE AFTER DUE DATE:</td>
                       <td className="p-2 text-right text-rose-700 font-bold">
-                        {formatCurrency(inspectVoucher.netDue + (inspectVoucher.lateFeeRate || 0))}
+                        {formatCurrency(inspectVoucher.netDue + getAppliedFineAmount(inspectVoucher, roundingMultiple))}
                       </td>
                     </tr>
                   </tfoot>
@@ -1192,7 +1201,8 @@ export const DefaultersView: React.FC = () => {
                   items={collectItems}
                   onChange={(updated) => {
                     setCollectItems(updated);
-                    const newNet = Math.max(0, updated.reduce((sum, p) => sum + (Number(p.amount) || 0), 0));
+                    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
+                    const newNet = Math.max(0, roundUpToMultiple(updated.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult));
                     const newRem = Math.max(0, newNet - (collectingVoucher.amountPaid || 0));
                     if (Number(collectAmount) === collectDynamicRemaining && newRem > 0) {
                       setCollectAmount(newRem);
@@ -1394,7 +1404,6 @@ export const DefaultersView: React.FC = () => {
                 <input
                   type="number"
                   min="0"
-                  step="50"
                   id="modal-input-carry-fine-amount"
                   disabled={!addLateFine}
                   value={addLateFine ? carryFineAmount : 0}

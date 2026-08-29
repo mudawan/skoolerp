@@ -39,6 +39,7 @@ import {
   ChevronUp,
   Clock,
   CreditCard,
+  Calculator,
   Database,
   Download,
   Edit3,
@@ -112,6 +113,10 @@ export const SettingsView: React.FC = () => {
     setVoucherDeletionResolution,
     defaultLateFeeRate,
     setDefaultLateFeeRate,
+    roundingMultiple,
+    setRoundingMultiple,
+    roundingEnabled,
+    setRoundingEnabled,
     defaultDueDateEnabled,
     defaultDueDay,
     setDefaultDueDateSettings,
@@ -135,6 +140,8 @@ export const SettingsView: React.FC = () => {
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
   const [selectedDeletionResolution, setSelectedDeletionResolution] = useState<VoucherDeletionResolution>(voucherDeletionResolution);
   const [selectedLateFeeRate, setSelectedLateFeeRate] = useState<number>(defaultLateFeeRate);
+  const [selectedRoundingMultiple, setSelectedRoundingMultiple] = useState<number>(roundingMultiple);
+  const [selectedRoundingEnabled, setSelectedRoundingEnabled] = useState<boolean>(roundingEnabled);
   const [selectedDefaultDueDateEnabled, setSelectedDefaultDueDateEnabled] = useState<boolean>(defaultDueDateEnabled);
   const [selectedDefaultDueDay, setSelectedDefaultDueDay] = useState<number>(defaultDueDay);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
@@ -160,6 +167,14 @@ export const SettingsView: React.FC = () => {
   }, [defaultLateFeeRate]);
 
   useEffect(() => {
+    setSelectedRoundingMultiple(roundingMultiple);
+  }, [roundingMultiple]);
+
+  useEffect(() => {
+    setSelectedRoundingEnabled(roundingEnabled);
+  }, [roundingEnabled]);
+
+  useEffect(() => {
     setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
   }, [defaultDueDateEnabled]);
 
@@ -178,6 +193,8 @@ export const SettingsView: React.FC = () => {
     selectedSkippedRule !== skippedMonthRule ||
     selectedDeletionResolution !== voucherDeletionResolution ||
     selectedLateFeeRate !== defaultLateFeeRate ||
+    selectedRoundingMultiple !== roundingMultiple ||
+    selectedRoundingEnabled !== roundingEnabled ||
     isDefaultDueDateModified;
 
   const handleSavePolicyClick = () => {
@@ -193,6 +210,8 @@ export const SettingsView: React.FC = () => {
     setSkippedMonthRule(selectedSkippedRule);
     setVoucherDeletionResolution(selectedDeletionResolution);
     setDefaultLateFeeRate(selectedLateFeeRate);
+    setRoundingMultiple(selectedRoundingMultiple);
+    setRoundingEnabled(selectedRoundingEnabled);
     setDefaultDueDateSettings({
       enabled: selectedDefaultDueDateEnabled,
       day: selectedDefaultDueDay,
@@ -207,6 +226,8 @@ export const SettingsView: React.FC = () => {
     setSelectedSkippedRule(skippedMonthRule);
     setSelectedDeletionResolution(voucherDeletionResolution);
     setSelectedLateFeeRate(defaultLateFeeRate);
+    setSelectedRoundingMultiple(roundingMultiple);
+    setSelectedRoundingEnabled(roundingEnabled);
     setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
     setSelectedDefaultDueDay(defaultDueDay);
     showToast('Policy selections reset to current saved configuration.', 'info');
@@ -478,9 +499,11 @@ export const SettingsView: React.FC = () => {
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState<boolean>(false);
   const [isClassDropdownOpen, setIsClassDropdownOpen] = useState<boolean>(false);
+  const [isDueDayDropdownOpen, setIsDueDayDropdownOpen] = useState<boolean>(false);
   const [showResetAllModal, setShowResetAllModal] = useState<boolean>(false);
   const studentSearchDropdownRef = useRef<HTMLDivElement>(null);
   const classSearchDropdownRef = useRef<HTMLDivElement>(null);
+  const dueDayDropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedStudent = useMemo(
     () => students.find((s) => s.id === selectedStudentId),
@@ -529,6 +552,12 @@ export const SettingsView: React.FC = () => {
         !classSearchDropdownRef.current.contains(event.target as Node)
       ) {
         setIsClassDropdownOpen(false);
+      }
+      if (
+        dueDayDropdownRef.current &&
+        !dueDayDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsDueDayDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -2509,7 +2538,6 @@ export const SettingsView: React.FC = () => {
                   <input
                     type="number"
                     min="0"
-                    step="50"
                     id="input-default-late-fee-rate"
                     disabled={!hasPermission('settings.manage')}
                     value={selectedLateFeeRate}
@@ -2521,10 +2549,80 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Section: Default Voucher Due Date Policy */}
+          {/* Section: Net Due Rounding Multiple */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-200/60 shrink-0">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                    Round Net Due Up to Nearest Multiple
+                    {(selectedRoundingMultiple !== roundingMultiple || selectedRoundingEnabled !== roundingEnabled) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        Modified
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Rounds net due up to the nearest multiple (e.g. 3,042 on 10 becomes 3,050). Late fines round the same way.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3 self-end sm:self-auto shrink-0">
+                {/* Toggle switch: Enable/Disable rounding */}
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs font-bold ${selectedRoundingEnabled ? 'text-teal-700' : 'text-slate-500'}`}>
+                    {selectedRoundingEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={selectedRoundingEnabled}
+                    id="toggle-rounding-enabled"
+                    disabled={!hasPermission('settings.manage')}
+                    onClick={() => setSelectedRoundingEnabled(!selectedRoundingEnabled)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      selectedRoundingEnabled ? 'bg-teal-600' : 'bg-slate-300'
+                    }`}
+                    title={selectedRoundingEnabled ? 'Click to disable net due rounding' : 'Click to enable net due rounding'}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                        selectedRoundingEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="relative w-36">
+                  <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rs.</span>
+                  <input
+                    type="number"
+                    min="1"
+                    id="input-rounding-multiple"
+                    disabled={!hasPermission('settings.manage') || !selectedRoundingEnabled}
+                    value={selectedRoundingMultiple}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val)) {
+                        setSelectedRoundingMultiple(Math.min(10000, Math.max(1, val)));
+                      } else if (e.target.value === '') {
+                        setSelectedRoundingMultiple(1);
+                      }
+                    }}
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Default Voucher Due Date Policy */}
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl border border-teal-200/60 shrink-0">
                   <Calendar className="w-5 h-5" />
                 </div>
@@ -2537,92 +2635,98 @@ export const SettingsView: React.FC = () => {
                       </span>
                     )}
                   </h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Pre-fills due date in voucher generator.
-                  </p>
                 </div>
               </div>
 
-              {/* Toggle switch: Enable/Disable */}
-              <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
-                <span className={`text-xs font-bold ${selectedDefaultDueDateEnabled ? 'text-teal-700' : 'text-slate-500'}`}>
-                  {selectedDefaultDueDateEnabled ? 'Enabled' : 'Disabled'}
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={selectedDefaultDueDateEnabled}
-                  id="toggle-default-due-date"
-                  disabled={!hasPermission('settings.manage')}
-                  onClick={() => setSelectedDefaultDueDateEnabled(!selectedDefaultDueDateEnabled)}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                    selectedDefaultDueDateEnabled ? 'bg-teal-600' : 'bg-slate-300'
-                  }`}
-                  title={selectedDefaultDueDateEnabled ? 'Click to disable default due date' : 'Click to enable default due date'}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                      selectedDefaultDueDateEnabled ? 'translate-x-5' : 'translate-x-0'
+              <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto shrink-0">
+                {/* Toggle switch (first, like the rounding section) */}
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-bold ${selectedDefaultDueDateEnabled ? 'text-teal-700' : 'text-slate-500'}`}>
+                    {selectedDefaultDueDateEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={selectedDefaultDueDateEnabled}
+                    id="toggle-default-due-date"
+                    disabled={!hasPermission('settings.manage')}
+                    onClick={() => setSelectedDefaultDueDateEnabled(!selectedDefaultDueDateEnabled)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      selectedDefaultDueDateEnabled ? 'bg-teal-600' : 'bg-slate-300'
                     }`}
-                  />
-                </button>
+                    title={selectedDefaultDueDateEnabled ? 'Click to disable default due date' : 'Click to enable default due date'}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                        selectedDefaultDueDateEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Field combo: due-day input + quick selects (when enabled) */}
+                {selectedDefaultDueDateEnabled && (
+                  <div ref={dueDayDropdownRef} className="relative flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-700 whitespace-nowrap">Day</span>
+                    <div className="relative w-16">
+                      <input
+                        type="number"
+                        id="input-default-due-day"
+                        min="1"
+                        max="31"
+                        disabled={!hasPermission('settings.manage')}
+                        value={selectedDefaultDueDay}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value, 10);
+                          if (!isNaN(val)) {
+                            setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
+                          } else if (e.target.value === '') {
+                            setSelectedDefaultDueDay(1);
+                          }
+                        }}
+                        className="w-full py-1.5 pl-2 pr-5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                      <span className="absolute right-1.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">th</span>
+                    </div>
+
+                    {/* Quick select presets */}
+                    <button
+                      type="button"
+                      id="btn-due-day-presets"
+                      disabled={!hasPermission('settings.manage')}
+                      onClick={() => setIsDueDayDropdownOpen((prev) => !prev)}
+                      className="p-1.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                      title="Quick select due day"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+
+                    {isDueDayDropdownOpen && (
+                      <div className="absolute top-full left-0 mt-1.5 w-32 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-40 animate-in fade-in zoom-in-95 duration-100">
+                        {[5, 15, 31].map((day) => (
+                          <button
+                            key={day}
+                            type="button"
+                            disabled={!hasPermission('settings.manage')}
+                            onClick={() => {
+                              setSelectedDefaultDueDay(day);
+                              setIsDueDayDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 font-bold transition cursor-pointer ${
+                              selectedDefaultDueDay === day
+                                ? 'bg-teal-50 text-teal-700'
+                                : 'text-slate-600 hover:bg-slate-100'
+                            }`}
+                          >
+                            {day === 31 ? 'End of month' : `${day}th`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Day of Month Selector & Quick Presets (when enabled) */}
-            {selectedDefaultDueDateEnabled && (
-              <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="input-default-due-day" className="text-xs font-bold text-slate-700 whitespace-nowrap">
-                    Due on day:
-                  </label>
-                  <div className="relative w-24">
-                    <input
-                      type="number"
-                      id="input-default-due-day"
-                      min="1"
-                      max="31"
-                      disabled={!hasPermission('settings.manage')}
-                      value={selectedDefaultDueDay}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value, 10);
-                        if (!isNaN(val)) {
-                          setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
-                        } else if (e.target.value === '') {
-                          setSelectedDefaultDueDay(1);
-                        }
-                      }}
-                      className="w-full pl-3 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center"
-                    />
-                    <span className="absolute right-2.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">
-                      th
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-400 hidden sm:inline">of billing month</span>
-                </div>
-
-                {/* Quick Select Presets */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-semibold text-slate-400 mr-1">Quick Select:</span>
-                  {[5, 10, 15, 20, 25, 31].map((day) => (
-                    <button
-                      key={day}
-                      type="button"
-                      id={`btn-preset-due-day-${day}`}
-                      disabled={!hasPermission('settings.manage')}
-                      onClick={() => setSelectedDefaultDueDay(day)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                        selectedDefaultDueDay === day
-                          ? 'bg-teal-600 text-white shadow-2xs'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200/60'
-                      }`}
-                    >
-                      {day === 31 ? '31st (End)' : `${day}th`}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Main Card: Three Category Tabs for Policies */}
@@ -3613,7 +3717,7 @@ export const SettingsView: React.FC = () => {
                       Class: <span className="font-semibold text-slate-800">{selectedStudentClass?.name || 'N/A'}</span>
                       {selectedStudent.section && ` (Sec ${selectedStudent.section})`}
                       {selectedStudent.fatherName && ` • S/D/O: ${selectedStudent.fatherName}`}
-                      {selectedStudent.monthlyDiscount ? ` • Base Discount: Rs. ${selectedStudent.monthlyDiscount}` : ''}
+                      {selectedStudent.monthlyDiscount ? ` • Base Discount: Rs. ${Math.round(selectedStudent.monthlyDiscount)}` : ''}
                     </div>
                   </div>
                 </div>
@@ -3855,7 +3959,6 @@ export const SettingsView: React.FC = () => {
                                 <input
                                   type="number"
                                   min="0"
-                                  step="50"
                                   value={currentAmount === 0 ? '' : currentAmount}
                                   onChange={(e) => {
                                     const val = Math.max(0, Number(e.target.value) || 0);
@@ -5230,6 +5333,34 @@ export const SettingsView: React.FC = () => {
                     {selectedDefaultDueDateEnabled
                       ? `Pre-fills voucher due date to day ${selectedDefaultDueDay} of billing month in generator.`
                       : 'Disables automatic due date pre-fill in generator.'}
+                  </div>
+                </div>
+              )}
+
+              {/* Net Due Rounding Multiple */}
+              {(selectedRoundingMultiple !== roundingMultiple || selectedRoundingEnabled !== roundingEnabled) && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Calculator className="w-3.5 h-3.5 text-indigo-600" />
+                      Net Due Rounding
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {!selectedRoundingEnabled ? (
+                        <span className="text-rose-700 font-extrabold">Disabled</span>
+                      ) : (
+                        <>
+                          {roundingEnabled ? roundingMultiple : 'Off'} &rarr;{' '}
+                          <span className="text-teal-700 font-extrabold">{selectedRoundingMultiple}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div className="p-2 bg-indigo-50/80 border border-indigo-200/70 rounded-lg text-[11px] text-indigo-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {!selectedRoundingEnabled
+                      ? 'Net due rounding is turned OFF — new vouchers are billed at their exact amounts; late fines are not rounded.'
+                      : `Voucher net due amounts round up to the nearest multiple of ${selectedRoundingMultiple}; late fines carried forward round the same way. Negative balances remain unrounded.`}
                   </div>
                 </div>
               )}

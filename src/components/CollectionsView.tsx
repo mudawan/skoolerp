@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
 import { normalizePaymentMode } from '../utils/paymentMode';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
@@ -48,6 +48,8 @@ export const CollectionsView: React.FC = () => {
     deleteCollection,
     hasPermission,
     themeConfig,
+    roundingMultiple,
+    roundingEnabled,
   } = useApp();
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -179,10 +181,13 @@ export const CollectionsView: React.FC = () => {
   // Dynamic calculations based on edited line items
   const dynamicNetDue = useMemo(() => {
     if (directItems.length > 0) {
-      return Math.max(0, directItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0));
+      return roundUpToMultiple(
+        directItems.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
+        getEffectiveMultiple(roundingEnabled, roundingMultiple, selectedVoucher?.roundingMultiple)
+      );
     }
     return selectedVoucher ? selectedVoucher.netDue : 0;
-  }, [directItems, selectedVoucher]);
+  }, [directItems, selectedVoucher, roundingEnabled, roundingMultiple]);
 
   const dynamicRemaining = useMemo(() => {
     if (!selectedVoucher) return 0;
@@ -1144,7 +1149,7 @@ export const CollectionsView: React.FC = () => {
                           const excess = v.amountPaid > v.netDue ? v.amountPaid - v.netDue : 0;
                           return (
                             <option key={v.id} value={v.id} className="py-0.5">
-                              {v.voucherNo} &bull; {s?.name} &bull; {rem > 0 ? `Bal: Rs. ${rem.toLocaleString()}` : excess > 0 ? `Adv: Rs. ${excess.toLocaleString()}` : 'Paid'} ({v.status}) [{v.month}]
+                              {v.voucherNo} &bull; {s?.name} &bull; {rem > 0 ? `Bal: Rs. ${Math.round(rem).toLocaleString()}` : excess > 0 ? `Adv: Rs. ${Math.round(excess).toLocaleString()}` : 'Paid'} ({v.status}) [{v.month}]
                             </option>
                           );
                         })}
@@ -1158,7 +1163,8 @@ export const CollectionsView: React.FC = () => {
                       items={directItems}
                       onChange={(updated) => {
                         setDirectItems(updated);
-                        const newNet = Math.max(0, updated.reduce((s, p) => s + (Number(p.amount) || 0), 0));
+                        const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, selectedVoucher?.roundingMultiple);
+                        const newNet = Math.max(0, roundUpToMultiple(updated.reduce((s, p) => s + (Number(p.amount) || 0), 0), mult));
                         const newRem = Math.max(0, newNet - (selectedVoucher.amountPaid || 0));
                         if (Number(directAmount) === selectedRemaining && newRem > 0) {
                           setDirectAmount(newRem);

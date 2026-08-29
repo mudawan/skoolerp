@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple } from '../utils/feeMath';
 import { exportSingleFeeVoucherPdf, printFeeVoucherPdf } from '../utils/pdfGenerator';
 import { Building2, Download, Loader2, Printer, X } from 'lucide-react';
 
@@ -12,7 +12,7 @@ interface PrintVoucherModalProps {
 }
 
 export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, onClose }) => {
-  const { institute, bankAccounts, students, classes, templates } = useApp();
+  const { institute, bankAccounts, students, classes, templates, roundingMultiple, roundingEnabled } = useApp();
   const [isPrinting, setIsPrinting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
@@ -87,7 +87,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
   const handlePrint = async () => {
     try {
       setIsPrinting(true);
-      const context = { institute, bankAccounts, students, classes, templates };
+      const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
       await printFeeVoucherPdf(voucher, context);
     } catch (err) {
       console.error('Failed to print voucher PDF:', err);
@@ -100,7 +100,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
   const handleSavePdf = async () => {
     try {
       setIsExporting(true);
-      const context = { institute, bankAccounts, students, classes, templates };
+      const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
       await exportSingleFeeVoucherPdf(voucher, context);
     } catch (err) {
       console.error('Failed to export voucher PDF:', err);
@@ -263,7 +263,11 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                   </tbody>
                   <tfoot className="divide-y divide-slate-200">
                     <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
-                      <td className="p-1">NET DUE AMOUNT:</td>
+                      <td className="p-1">
+                        {getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple) > 1
+                          ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple)}):`
+                          : 'NET DUE AMOUNT:'}
+                      </td>
                       <td className="p-1 text-right text-teal-700 font-bold">
                         {formatCurrency(voucher.netDue)}
                       </td>
@@ -271,7 +275,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                     <tr className="bg-rose-50 font-bold text-rose-900 border-t border-rose-200">
                       <td className="p-1 text-[9.5px]">PAYABLE AFTER DUE DATE:</td>
                       <td className="p-1 text-right text-rose-700 font-bold">
-                        {formatCurrency(voucher.netDue + (voucher.lateFeeRate || 0))}
+                        {formatCurrency(voucher.netDue + getAppliedFineAmount(voucher, roundingMultiple))}
                       </td>
                     </tr>
                   </tfoot>

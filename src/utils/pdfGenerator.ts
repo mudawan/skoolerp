@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import JSZip from 'jszip';
 import { FeeVoucher, InstituteProfile, BankAccount, Student, SchoolClass, FeeTemplate, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName } from './feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount } from './feeMath';
 
 export interface PdfExportContext {
   institute: InstituteProfile;
@@ -9,6 +9,7 @@ export interface PdfExportContext {
   students: Student[];
   classes: SchoolClass[];
   templates?: FeeTemplate[];
+  roundingMultiple?: number;
 }
 
 export interface PdfExportOptions {
@@ -407,7 +408,14 @@ function renderVoucherToPdfPage(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(30, 41, 59); // slate-800
-    doc.text('NET DUE AMOUNT:', colX + 5, netDueY + 4.5);
+    const effectiveRoundingMultiple = voucher.roundingMultiple ?? context.roundingMultiple ?? 10;
+    doc.text(
+      effectiveRoundingMultiple > 1
+        ? `NET DUE AMOUNT (ROUNDED TO ${effectiveRoundingMultiple}):`
+        : 'NET DUE AMOUNT:',
+      colX + 5,
+      netDueY + 4.5
+    );
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
@@ -415,7 +423,7 @@ function renderVoucherToPdfPage(
     doc.text(formatCurrency(voucher.netDue), colX + colWidth - 5, netDueY + 4.5, { align: 'right' });
 
     // Payable After Due Date Line
-    const payableAfterDueDate = voucher.netDue + (voucher.lateFeeRate || 0);
+    const payableAfterDueDate = voucher.netDue + getAppliedFineAmount(voucher, effectiveRoundingMultiple);
     const afterDueY = netDueY + 7.2;
     doc.setFillColor(254, 242, 242); // rose-50
     doc.setDrawColor(254, 205, 211); // rose-200
