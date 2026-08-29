@@ -445,11 +445,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [roundingMultiple, setRoundingMultipleState] = useState<number>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_rounding_multiple`);
     const parsed = saved ? Number(saved) : 0;
-    return parsed > 0 && Number.isInteger(parsed) ? parsed : 10;
+    return parsed > 0 && Number.isInteger(parsed) ? parsed : 1;
   });
 
   const setRoundingMultiple = (multiple: number) => {
-    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 10;
+    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 1;
     setRoundingMultipleState(clean);
     localStorage.setItem(`${STORAGE_KEY}_rounding_multiple`, String(clean));
   };
@@ -2756,6 +2756,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const yearStr = targetMonth.split('-')[0];
         const issuedDate = new Date().toISOString().split('T')[0];
 
+        // Due date for the auto-created destination voucher: use the day from
+        // settings when present; otherwise inherit the same day as the source
+        // (carried) voucher for the target month.
+        const settingsDueDate = getComputedDefaultDueDate(targetMonth);
+        const sourceDay =
+          voucher.dueDate && voucher.dueDate.includes('-') ? voucher.dueDate.split('-')[2] : null;
+        const targetDueDate =
+          settingsDueDate || (sourceDay ? `${targetMonth}-${sourceDay}` : '');
+
         const newVoucher: FeeVoucher = {
           id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           voucherNo: nextDocumentNumber('FE', yearStr),
@@ -2763,7 +2772,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           month: targetMonth,
           classId: student?.classId || voucher.classId,
           issueDate: issuedDate,
-          dueDate: '',
+          dueDate: targetDueDate,
           particulars: [],
           grossTotal: 0,
           discountTotal: 0,

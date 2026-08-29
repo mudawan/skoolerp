@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp, DownstreamConflict } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
@@ -115,6 +115,9 @@ export const VouchersView: React.FC = () => {
   const [selectedSingleStudentId, setSelectedSingleStudentId] = useState<string>('');
   const [dueDateInput, setDueDateInput] = useState('');
   const [lateFeeInput, setLateFeeInput] = useState(defaultLateFeeRate || 500);
+  const [singleStudentSearchQuery, setSingleStudentSearchQuery] = useState('');
+  const [isSingleStudentComboOpen, setIsSingleStudentComboOpen] = useState(false);
+  const singleStudentComboRef = useRef<HTMLDivElement>(null);
   const [selectedGenStudentIds, setSelectedGenStudentIds] = useState<string[]>([]);
   const [isParamsCollapsed, setIsParamsCollapsed] = useState(false);
 
@@ -126,6 +129,20 @@ export const VouchersView: React.FC = () => {
   useEffect(() => {
     setLateFeeInput(defaultLateFeeRate);
   }, [defaultLateFeeRate]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (singleStudentComboRef.current && !singleStudentComboRef.current.contains(event.target as Node)) {
+        setIsSingleStudentComboOpen(false);
+      }
+    };
+    if (isSingleStudentComboOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isSingleStudentComboOpen]);
 
   // Pre-generation preview data
   const [previewsData, setPreviewsData] = useState<{
@@ -266,7 +283,9 @@ export const VouchersView: React.FC = () => {
   }, [defaultLateFeeRate]);
 
   useEscapeKey(() => {
-    if (policyConfirmModal) {
+    if (isSingleStudentComboOpen) {
+      setIsSingleStudentComboOpen(false);
+    } else if (policyConfirmModal) {
       setPolicyConfirmModal(null);
     } else if (deleteModal) {
       setDeleteModal(null);
@@ -286,6 +305,7 @@ export const VouchersView: React.FC = () => {
       setShowGeneratorModal(false);
     }
   }, !!(
+    isSingleStudentComboOpen ||
     policyConfirmModal ||
     deleteModal ||
     undoCarryModal ||
@@ -1361,22 +1381,140 @@ export const VouchersView: React.FC = () => {
                   ) : scope === 'student' ? (
                     <div>
                       <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Student</label>
-                      <select
-                        value={selectedSingleStudentId}
-                        onChange={(e) => handleSingleStudentChange(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                      >
-                        <option value="">— Select student —</option>
-                        {students
-                          .filter((s) => s.status === 'Active')
-                          .slice()
-                          .sort((a, b) => a.name.localeCompare(b.name))
-                          .map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} ({s.regNo})
-                            </option>
-                          ))}
-                      </select>
+                      {(() => {
+                        const activeStudentsList = students.filter((s) => s.status === 'Active');
+                        const term = singleStudentSearchQuery.toLowerCase().trim();
+                        const filteredCandidates = activeStudentsList.filter((s) => {
+                          if (!term) return true;
+                          const cls = classes.find((c) => c.id === s.classId);
+                          return (
+                            s.name.toLowerCase().includes(term) ||
+                            s.regNo.toLowerCase().includes(term) ||
+                            (s.studentNo && s.studentNo.toLowerCase().includes(term)) ||
+                            (s.fatherName && s.fatherName.toLowerCase().includes(term)) ||
+                            (s.mobileNumber && s.mobileNumber.includes(term)) ||
+                            (cls && cls.name.toLowerCase().includes(term))
+                          );
+                        });
+                        const selectedStudent = students.find((s) => s.id === selectedSingleStudentId);
+                        return (
+                          <div className="relative min-w-0" ref={singleStudentComboRef}>
+                            {/* Click outside backdrop */}
+                            {isSingleStudentComboOpen && (
+                              <div
+                                className="fixed inset-0 z-40 bg-transparent"
+                                onClick={() => setIsSingleStudentComboOpen(false)}
+                              />
+                            )}
+
+                            <div className="relative z-50">
+                              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                              <input
+                                type="text"
+                                placeholder="Search student by name, Reg #, roll #, class..."
+                                value={singleStudentSearchQuery}
+                                onChange={(e) => {
+                                  setSingleStudentSearchQuery(e.target.value);
+                                  handleSingleStudentChange('');
+                                  setIsSingleStudentComboOpen(true);
+                                }}
+                                onFocus={() => setIsSingleStudentComboOpen(true)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') {
+                                    setIsSingleStudentComboOpen(false);
+                                  } else if (e.key === 'Enter' && selectedStudent) {
+                                    e.preventDefault();
+                                    setIsSingleStudentComboOpen(false);
+                                  }
+                                }}
+                                className="w-full pl-9 pr-8 py-1.5 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 focus:border-teal-500 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition truncate"
+                              />
+                              {singleStudentSearchQuery || selectedStudent ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSingleStudentSearchQuery('');
+                                    handleSingleStudentChange('');
+                                    setIsSingleStudentComboOpen(false);
+                                  }}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                                  title="Clear search"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              ) : (
+                                <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                              )}
+                            </div>
+
+                            {/* Dropdown Popover List */}
+                            {isSingleStudentComboOpen && (
+                              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100 ring-1 ring-slate-900/10">
+                                {filteredCandidates.length > 0 ? (
+                                  filteredCandidates.slice(0, 50).map((s) => {
+                                    const cls = classes.find((c) => c.id === s.classId);
+                                    const isSelected = s.id === selectedSingleStudentId;
+                                    return (
+                                      <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={() => {
+                                          handleSingleStudentChange(s.id);
+                                          setSingleStudentSearchQuery(`${s.name} (${s.regNo})`);
+                                          setIsSingleStudentComboOpen(false);
+                                        }}
+                                        className={`w-full text-left p-2.5 hover:bg-teal-50/60 flex items-center justify-between gap-2.5 transition cursor-pointer ${
+                                          isSelected ? 'bg-teal-50 font-bold' : ''
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
+                                          <StudentAvatar photoUrl={s.photoUrl} name={s.name} size="xs" />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="font-bold text-slate-900 truncate text-xs" title={s.name}>
+                                                {s.name}
+                                              </span>
+                                              <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 border border-teal-200/60 px-1.5 py-0.2 rounded shrink-0">
+                                                {s.regNo}
+                                              </span>
+                                            </div>
+                                            <div className="text-[11px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                                              <span>{cls?.name || 'No Class'}</span>
+                                              {s.fatherName && <span>&bull; S/D of {s.fatherName}</span>}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
+                                          <span
+                                            className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                                              s.status === 'Active'
+                                                ? 'bg-emerald-100 text-emerald-800'
+                                                : 'bg-rose-100 text-rose-800'
+                                            }`}
+                                          >
+                                            {s.status}
+                                          </span>
+                                          {isSelected && <Check className="w-3.5 h-3.5 text-teal-600 mr-0.5" />}
+                                        </div>
+                                      </button>
+                                    );
+                                  })
+                                ) : (
+                                  <div className="p-4 text-center text-slate-400 text-xs italic">
+                                    No matching students found
+                                  </div>
+                                )}
+                                {filteredCandidates.length > 50 && (
+                                  <div className="p-2 text-center text-[10px] text-slate-400 bg-slate-50 font-medium">
+                                    Showing 50 of {filteredCandidates.length} students. Refine query to narrow down.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ) : null}
 
@@ -1384,9 +1522,9 @@ export const VouchersView: React.FC = () => {
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-[11px] font-bold text-slate-600">Due Date</label>
                       {defaultDueDateEnabled && dueDateInput && (
-                        <span className="text-[10px] font-semibold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200/80 flex items-center gap-1">
-                          <Check className="w-2.5 h-2.5" />
-                          Default Applied
+                        <span className="text-[10px] leading-none font-semibold text-teal-700 bg-teal-50 px-1.5 py-0 rounded border border-teal-200/80 flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5" />
+                          Default
                         </span>
                       )}
                     </div>

@@ -414,7 +414,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       admissionDate: formData.admissionDate,
       firstBillingMonth: formData.firstBillingMonth?.trim() || undefined,
       classId: formData.classId,
-      monthlyDiscount: Number(formData.monthlyDiscount) || 0,
+      monthlyDiscount: Math.max(0, Number(formData.monthlyDiscount) || 0),
       mobileNumber: formData.mobileNumber.trim() || undefined,
       notes: formData.notes.trim() || undefined,
       photoUrl: formData.photoUrl.trim() || undefined,
@@ -715,9 +715,6 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   }
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-bold text-emerald-700"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Rounds down to multiple of 10
-                </p>
               </div>
 
               {/* Mobile Number */}

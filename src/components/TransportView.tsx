@@ -1274,7 +1274,7 @@ export const TransportView: React.FC = () => {
         name: stopData.name.trim(),
         area: stopData.area.trim(),
         landmark: stopData.landmark.trim(),
-        monthlyFare: Number(stopData.monthlyFare) || 0,
+        monthlyFare: Math.max(0, Number(stopData.monthlyFare) || 0),
         sortOrder: Number(stopData.sortOrder) || 1,
       });
       if (res.success) {
@@ -1288,7 +1288,7 @@ export const TransportView: React.FC = () => {
         name: stopData.name.trim(),
         area: stopData.area.trim(),
         landmark: stopData.landmark.trim(),
-        monthlyFare: Number(stopData.monthlyFare) || 0,
+        monthlyFare: Math.max(0, Number(stopData.monthlyFare) || 0),
         sortOrder: Number(stopData.sortOrder) || 1,
       });
       if (res.success) {
@@ -2452,8 +2452,11 @@ export const TransportView: React.FC = () => {
                 <input
                   type="number"
                   required
+                  min="0"
                   value={stopData.monthlyFare}
-                  onChange={(e) => setStopData({ ...stopData, monthlyFare: Number(e.target.value) })}
+                  onChange={(e) =>
+                    setStopData({ ...stopData, monthlyFare: Math.max(0, Number(e.target.value) || 0) })
+                  }
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-bold"
                 />
               </div>

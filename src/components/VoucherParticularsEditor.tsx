@@ -237,7 +237,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
     if (!canEdit || !isFlex) return;
 
     const rawVal = parseFloat(valStr);
-    const numericVal = isNaN(rawVal) ? 0 : Math.max(0, rawVal);
+    const numericVal = isNaN(rawVal) ? 0 : rawVal;
 
     const updatedList = reconciledItems.map((item) => {
       if (item.kind !== kind) return item;
@@ -359,7 +359,6 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                     <input
                       type="number"
                       step="1"
-                      min="0"
                       value={displayAmount === 0 ? '' : displayAmount}
                       onChange={(e) => handleAmountChange(item.kind, e.target.value)}
                       placeholder="0"

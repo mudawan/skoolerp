@@ -400,7 +400,7 @@ export function calculateStudentVoucherPreview(
 
     return {
       label: activeTpl?.label || defaultLabel,
-      amount: activeTpl?.defaultAmount || 0,
+      amount: activeTpl?.defaultAmount ?? 0,
       source,
       isStudentOverride: !!studentOverride,
       isClassOverride: !studentOverride && !!classOverride,
@@ -435,7 +435,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex1',
     label: flex1Info.label,
-    amount: flex1Info.amount || 0,
+    amount: flex1Info.amount ?? 0,
   });
 
   // 3. Flex2 (Registration Fee)
@@ -443,7 +443,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex2',
     label: flex2Info.label,
-    amount: flex2Info.amount || 0,
+    amount: flex2Info.amount ?? 0,
   });
 
   // 4. Transport Fee (Student Override > Class Override > Stop Calculation)
@@ -533,7 +533,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex3',
     label: flex3Info.label,
-    amount: flex3Info.amount || 0,
+    amount: flex3Info.amount ?? 0,
   });
 
   // 7. Flex4 (Other)
@@ -541,7 +541,7 @@ export function calculateStudentVoucherPreview(
   particulars.push({
     kind: 'Flex4',
     label: flex4Info.label,
-    amount: flex4Info.amount || 0,
+    amount: flex4Info.amount ?? 0,
   });
 
   // Push Previous Balance

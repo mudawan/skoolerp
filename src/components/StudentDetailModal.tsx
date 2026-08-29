@@ -5,6 +5,7 @@ import { ParticularKind, Student } from '../types';
 import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
 import { MonthPicker } from './MonthPicker';
+import { DatePicker } from './DatePicker';
 import {
   AlertCircle,
   AlertTriangle,
@@ -40,7 +41,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   onEdit,
   onViewLedger,
 }) => {
-  const { classes, families, hasPermission, generateAdmissionVoucher, showToast, vouchers, activeMonth, templates, saveStudentTemplateOverrides } = useApp();
+  const { classes, families, hasPermission, generateAdmissionVoucher, showToast, vouchers, activeMonth, templates, saveStudentTemplateOverrides, getComputedDefaultDueDate, themeConfig } = useApp();
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     fileData?: string;
@@ -65,6 +66,10 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const [admItems, setAdmItems] = useState<Array<{ kind: ParticularKind; label: string; amount: string }>>(
     ADM_FLEX_KINDS.map(({ kind, defaultLabel }) => ({ kind, label: defaultLabel, amount: '' }))
   );
+
+  // Optional overridable due date for the admission voucher.
+  const [admDueDate, setAdmDueDate] = useState<string>('');
+  const [admDueDateTouched, setAdmDueDateTouched] = useState(false);
 
   // Resolve the admission head label for this student in a given month using
   // student -> class -> global precedence (matches admission voucher generation).
@@ -119,12 +124,16 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
   const handleOpenAdmVoucher = () => {
     seedAdmItems(admMonth);
+    setAdmDueDate(getComputedDefaultDueDate(admMonth));
+    setAdmDueDateTouched(false);
     setShowAdmVoucherModal(true);
   };
 
   const handleAdmMonthChange = (month: string) => {
     setAdmMonth(month);
     seedAdmItems(month);
+    // Re-seed the due date from settings unless the user already picked one.
+    if (!admDueDateTouched) setAdmDueDate(getComputedDefaultDueDate(month));
   };
 
   const admGenerateDisabled =
@@ -154,6 +163,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     // stale-closure "no template" failure on the first click.
     saveStudentTemplateOverrides(student.id, admMonth, items);
     const res = generateAdmissionVoucher(student.id, admMonth, {
+      dueDate: admDueDate || undefined,
       items: items.map((it) => ({ kind: it.kind, label: it.label, amount: it.defaultAmount })),
     });
     if (res.success && res.voucher) {
@@ -588,9 +598,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       {/* Admission Voucher Modal */}
       {showAdmVoucherModal && (
         <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl space-y-4.5 my-auto border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-5 shadow-2xl space-y-3.5 my-auto border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
-            <div className="flex items-start justify-between border-b border-slate-100 pb-3.5">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 border border-amber-200/80 shrink-0">
                   <Receipt className="w-5 h-5" />
@@ -644,28 +654,51 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               </div>
             ) : (
               <>
-                {/* Issue Month Selector */}
-                <div className="bg-slate-50/70 rounded-xl border border-slate-200 p-3 sm:p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                      Target Billing Month
-                    </label>
-                    {!admRangeInvalid && (admMonthMin || admMonthMax) && (
-                      <span className="text-[11px] text-slate-500">
-                        Valid Range: <span className="font-semibold text-slate-700">{admMonthMin ? formatMonthName(admMonthMin) : 'Any'}</span> – <span className="font-semibold text-slate-700">{admMonthMax ? formatMonthName(admMonthMax) : 'Any'}</span>
-                      </span>
-                    )}
+                {/* Date & Due Date (compact two-column) */}
+                <div className="bg-slate-50/70 rounded-xl border border-slate-200 p-3 space-y-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between h-5">
+                        <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          Issue Month
+                        </label>
+                      </div>
+                      <MonthPicker
+                        value={admMonth}
+                        onChange={handleAdmMonthChange}
+                        variant="input"
+                        minMonth={admMonthMin}
+                        maxMonth={admMonthMax}
+                        disabled={admRangeInvalid}
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between h-5">
+                        <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          Due Date
+                        </label>
+                        {admDueDate && (
+                          <span className="text-[10px] leading-none font-semibold text-teal-700 bg-teal-50 px-1.5 py-0 rounded border border-teal-200/80 flex items-center gap-1">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            Default
+                          </span>
+                        )}
+                      </div>
+                      <DatePicker
+                        value={admDueDate}
+                        themeColor={themeConfig?.color || 'teal'}
+                        onChange={(d) => {
+                          setAdmDueDateTouched(true);
+                          setAdmDueDate(d);
+                        }}
+                        idPrefix="adm-due-date-picker"
+                        placeholder="Select Due Date"
+                      />
+                    </div>
                   </div>
-                  <MonthPicker
-                    value={admMonth}
-                    onChange={handleAdmMonthChange}
-                    variant="input"
-                    minMonth={admMonthMin}
-                    maxMonth={admMonthMax}
-                    disabled={admRangeInvalid}
-                    className="w-full"
-                  />
                 </div>
 
                 {/* Existing Voucher Warning Banner */}
@@ -681,24 +714,25 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 )}
 
                 {/* Fee Particulars & Amounts */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Fee Particulars & Amounts
+                    <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                      Fee Particulars
                     </label>
-                    <span className="text-[11px] text-slate-500">
-                      One-time admission charges
+                    <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      Saved as this student's template for {formatMonthName(admMonth)}
                     </span>
                   </div>
 
                   <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
-                    <div className="px-3.5 py-2 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                    <div className="px-3 py-1.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between text-[10px] font-bold text-slate-600 uppercase tracking-wider">
                       <span>Particular Description</span>
-                      <span className="w-32 text-right">Amount (Rs)</span>
+                      <span className="w-28 text-right">Amount (Rs)</span>
                     </div>
-                    <div className="divide-y divide-slate-100 p-2.5 space-y-2">
+                    <div className="divide-y divide-slate-100 p-2 space-y-1.5">
                       {admItems.map((it) => (
-                        <div key={it.kind} className="flex items-center gap-2.5 pt-1.5 first:pt-0">
+                        <div key={it.kind} className="flex items-center gap-2 first:pt-0">
                           <div className="flex-1 min-w-0">
                             <input
                               type="text"
@@ -709,10 +743,10 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                                 )
                               }
                               placeholder={it.defaultLabel}
-                              className="w-full px-3 py-1.5 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-400 transition"
+                              className="w-full px-2.5 py-1 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-400 transition"
                             />
                           </div>
-                          <div className="relative w-32 shrink-0">
+                          <div className="relative w-28 shrink-0">
                             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
                               Rs
                             </span>
@@ -726,34 +760,29 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                                 )
                               }
                               placeholder="0"
-                              className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-300 transition"
+                              className="w-full pl-8 pr-2.5 py-1 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-300 transition"
                             />
                           </div>
                         </div>
                       ))}
                     </div>
-                    <div className="px-3.5 py-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
                         Total Voucher Amount
                       </span>
-                      <span className="font-mono font-extrabold text-amber-700 text-base">
+                      <span className="font-mono font-extrabold text-amber-700 text-sm">
                         {formatCurrency(admTotal)}
                       </span>
                     </div>
                   </div>
-
-                  <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                    <Info className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    Particulars are saved as this student's template for {formatMonthName(admMonth)}.
-                  </p>
                 </div>
 
                 {/* Modal Footer Actions */}
-                <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 pt-3.5">
+                <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 pt-3">
                   <button
                     type="button"
                     onClick={() => setShowAdmVoucherModal(false)}
-                    className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-100 font-semibold text-xs transition cursor-pointer"
+                    className="px-3.5 py-1.5 border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-100 font-semibold text-xs transition cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -761,7 +790,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     type="button"
                     onClick={handleGenerateAdmVoucher}
                     disabled={admGenerateDisabled}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-2 transition cursor-pointer shadow-xs"
+                    className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-2 transition cursor-pointer shadow-xs"
                   >
                     <FileCheck2 className="w-4 h-4" />
                     {admTotal <= 0

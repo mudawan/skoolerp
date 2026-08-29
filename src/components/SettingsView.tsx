@@ -473,12 +473,17 @@ export const SettingsView: React.FC = () => {
     setDragOverIndex(null);
   };
 
+  // Only Flex1-4 may hold a negative (adjustment) amount; all other heads
+  // (Tuition, Transport, Fine, Previous Balance, Discount) are positive-only.
+  const allowNegativeAmount = (kind: ParticularKind): boolean =>
+    kind === 'Flex1' || kind === 'Flex2' || kind === 'Flex3' || kind === 'Flex4';
+
   const saveGlobalRoster = () => {
     const updatedGlobalTemplates: FeeTemplate[] = rosterState.map((r, idx) => ({
       id: `tpl-${r.kind.toLowerCase()}-${idx + 1}`,
       kind: r.kind,
       label: r.label.trim() || STANDARD_ROSTER.find((sr) => sr.kind === r.kind)?.defaultLabel || r.kind,
-      defaultAmount: Math.max(0, Number(r.defaultAmount) || 0),
+      defaultAmount: allowNegativeAmount(r.kind) ? Number(r.defaultAmount) || 0 : Math.max(0, Number(r.defaultAmount) || 0),
       sortOrder: idx + 1,
     }));
 
@@ -718,7 +723,7 @@ export const SettingsView: React.FC = () => {
       return {
         kind: item.kind,
         label: item.label.trim() || globalItem?.label || item.kind,
-        defaultAmount: Math.max(0, Number(item.defaultAmount) || 0),
+        defaultAmount: allowNegativeAmount(item.kind) ? Number(item.defaultAmount) || 0 : Math.max(0, Number(item.defaultAmount) || 0),
         sortOrder: globalItem?.sortOrder || idx + 1,
       };
     });
@@ -750,7 +755,7 @@ export const SettingsView: React.FC = () => {
       return {
         kind: item.kind,
         label: item.label.trim() || globalItem?.label || item.kind,
-        defaultAmount: Math.max(0, Number(item.defaultAmount) || 0),
+        defaultAmount: allowNegativeAmount(item.kind) ? Number(item.defaultAmount) || 0 : Math.max(0, Number(item.defaultAmount) || 0),
         sortOrder: globalItem?.sortOrder || idx + 1,
       };
     });
@@ -1179,7 +1184,7 @@ export const SettingsView: React.FC = () => {
       if (!val) return 0;
       const clean = val.replace(/[^0-9.-]/g, '');
       const num = parseFloat(clean);
-      return isNaN(num) ? 0 : Math.max(0, num);
+      return isNaN(num) ? 0 : num;
     };
 
     const results: ParsedCsvTemplateRow[] = [];
@@ -1205,7 +1210,7 @@ export const SettingsView: React.FC = () => {
         ? classes.find((c) => c.id === matchedStudent.classId)
         : undefined;
 
-      const fineAmount = parseNum(cells[fineIdx]);
+      const fineAmount = Math.max(0, parseNum(cells[fineIdx]));
 
       const rawF1Label = (cells[flex1LabelIdx] || '').trim();
       const flex1Amount = parseNum(cells[flex1ValueIdx]);
@@ -1388,7 +1393,7 @@ export const SettingsView: React.FC = () => {
         });
       }
 
-      if (row.flex1Amount > 0 || (row.flex1Label && row.flex1Label !== globalFlex1Label)) {
+      if (row.flex1Amount !== 0 || (row.flex1Label && row.flex1Label !== globalFlex1Label)) {
         items.push({
           kind: 'Flex1',
           label: row.flex1Label,
@@ -1397,7 +1402,7 @@ export const SettingsView: React.FC = () => {
         });
       }
 
-      if (row.flex2Amount > 0 || (row.flex2Label && row.flex2Label !== globalFlex2Label)) {
+      if (row.flex2Amount !== 0 || (row.flex2Label && row.flex2Label !== globalFlex2Label)) {
         items.push({
           kind: 'Flex2',
           label: row.flex2Label,
@@ -1406,7 +1411,7 @@ export const SettingsView: React.FC = () => {
         });
       }
 
-      if (row.flex3Amount > 0 || (row.flex3Label && row.flex3Label !== globalFlex3Label)) {
+      if (row.flex3Amount !== 0 || (row.flex3Label && row.flex3Label !== globalFlex3Label)) {
         items.push({
           kind: 'Flex3',
           label: row.flex3Label,
@@ -1415,7 +1420,7 @@ export const SettingsView: React.FC = () => {
         });
       }
 
-      if (row.flex4Amount > 0 || (row.flex4Label && row.flex4Label !== globalFlex4Label)) {
+      if (row.flex4Amount !== 0 || (row.flex4Label && row.flex4Label !== globalFlex4Label)) {
         items.push({
           kind: 'Flex4',
           label: row.flex4Label,
@@ -2527,7 +2532,7 @@ export const SettingsView: React.FC = () => {
                     )}
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Pre-fills the overdue late surcharge during monthly voucher generation and student defaulter carry-forwards.
+                    Pre-fills overdue late surcharge in voucher generation and defaulter carry-forwards.
                   </p>
                 </div>
               </div>
@@ -2566,7 +2571,7 @@ export const SettingsView: React.FC = () => {
                     )}
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Rounds net due up to the nearest multiple (e.g. 3,042 on 10 becomes 3,050). Late fines round the same way.
+                    Rounds net due and late fine up to the nearest multiple (e.g. 3,042 on 10 becomes 3,050).
                   </p>
                 </div>
               </div>
@@ -2635,6 +2640,9 @@ export const SettingsView: React.FC = () => {
                       </span>
                     )}
                   </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Pre-fills the due date day when generating vouchers.
+                  </p>
                 </div>
               </div>
 
@@ -2664,67 +2672,65 @@ export const SettingsView: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Field combo: due-day input + quick selects (when enabled) */}
-                {selectedDefaultDueDateEnabled && (
-                  <div ref={dueDayDropdownRef} className="relative flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-slate-700 whitespace-nowrap">Day</span>
-                    <div className="relative w-16">
-                      <input
-                        type="number"
-                        id="input-default-due-day"
-                        min="1"
-                        max="31"
-                        disabled={!hasPermission('settings.manage')}
-                        value={selectedDefaultDueDay}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10);
-                          if (!isNaN(val)) {
-                            setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
-                          } else if (e.target.value === '') {
-                            setSelectedDefaultDueDay(1);
-                          }
-                        }}
-                        className="w-full py-1.5 pl-2 pr-5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                      <span className="absolute right-1.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">th</span>
-                    </div>
-
-                    {/* Quick select presets */}
-                    <button
-                      type="button"
-                      id="btn-due-day-presets"
-                      disabled={!hasPermission('settings.manage')}
-                      onClick={() => setIsDueDayDropdownOpen((prev) => !prev)}
-                      className="p-1.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      title="Quick select due day"
-                    >
-                      <ChevronDown className="w-4 h-4" />
-                    </button>
-
-                    {isDueDayDropdownOpen && (
-                      <div className="absolute top-full left-0 mt-1.5 w-32 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-40 animate-in fade-in zoom-in-95 duration-100">
-                        {[5, 15, 31].map((day) => (
-                          <button
-                            key={day}
-                            type="button"
-                            disabled={!hasPermission('settings.manage')}
-                            onClick={() => {
-                              setSelectedDefaultDueDay(day);
-                              setIsDueDayDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-1.5 font-bold transition cursor-pointer ${
-                              selectedDefaultDueDay === day
-                                ? 'bg-teal-50 text-teal-700'
-                                : 'text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            {day === 31 ? 'End of month' : `${day}th`}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                {/* Field combo: due-day input + quick selects */}
+                <div ref={dueDayDropdownRef} className="relative flex items-center gap-1.5">
+                  <span className={`text-xs font-bold whitespace-nowrap ${selectedDefaultDueDateEnabled ? 'text-slate-700' : 'text-slate-400'}`}>Day</span>
+                  <div className="relative w-16">
+                    <input
+                      type="number"
+                      id="input-default-due-day"
+                      min="1"
+                      max="31"
+                      disabled={!hasPermission('settings.manage') || !selectedDefaultDueDateEnabled}
+                      value={selectedDefaultDueDay}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) {
+                          setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
+                        } else if (e.target.value === '') {
+                          setSelectedDefaultDueDay(1);
+                        }
+                      }}
+                      className="w-full py-1.5 pl-2 pr-5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <span className="absolute right-1.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">th</span>
                   </div>
-                )}
+
+                  {/* Quick select presets */}
+                  <button
+                    type="button"
+                    id="btn-due-day-presets"
+                    disabled={!hasPermission('settings.manage') || !selectedDefaultDueDateEnabled}
+                    onClick={() => setIsDueDayDropdownOpen((prev) => !prev)}
+                    className="p-1.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    title="Quick select due day"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+
+                  {isDueDayDropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1.5 w-32 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-40 animate-in fade-in zoom-in-95 duration-100">
+                      {[5, 15, 31].map((day) => (
+                        <button
+                          key={day}
+                          type="button"
+                          disabled={!hasPermission('settings.manage')}
+                          onClick={() => {
+                            setSelectedDefaultDueDay(day);
+                            setIsDueDayDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-1.5 font-bold transition cursor-pointer ${
+                            selectedDefaultDueDay === day
+                              ? 'bg-teal-50 text-teal-700'
+                              : 'text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {day === 31 ? 'End of month' : `${day}th`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -3958,10 +3964,9 @@ export const SettingsView: React.FC = () => {
                                 <span className="text-slate-400 font-semibold text-xs">Rs.</span>
                                 <input
                                   type="number"
-                                  min="0"
                                   value={currentAmount === 0 ? '' : currentAmount}
                                   onChange={(e) => {
-                                    const val = Math.max(0, Number(e.target.value) || 0);
+                                    const val = Number(e.target.value) || 0;
                                     if (selectedStudent) {
                                       handleStudentRosterAmountChange(r.kind, val);
                                     } else if (selectedClass) {
@@ -5045,8 +5050,8 @@ export const SettingsView: React.FC = () => {
                                 <div className="text-[10px] text-slate-500 font-medium truncate max-w-[120px]" title={row.flex1Label}>
                                   {row.flex1Label}
                                 </div>
-                                <div className={`font-mono text-xs ${row.flex1Amount > 0 ? 'font-bold text-slate-800' : 'text-slate-400'}`}>
-                                  {row.flex1Amount > 0 ? formatCurrency(row.flex1Amount) : '—'}
+                                <div className={`font-mono text-xs ${row.flex1Amount > 0 ? 'font-bold text-slate-800' : row.flex1Amount < 0 ? 'font-bold text-rose-600' : 'text-slate-400'}`}>
+                                  {row.flex1Amount !== 0 ? formatCurrency(row.flex1Amount) : '—'}
                                 </div>
                               </div>
                             </td>
@@ -5055,8 +5060,8 @@ export const SettingsView: React.FC = () => {
                                 <div className="text-[10px] text-slate-500 font-medium truncate max-w-[120px]" title={row.flex2Label}>
                                   {row.flex2Label}
                                 </div>
-                                <div className={`font-mono text-xs ${row.flex2Amount > 0 ? 'font-bold text-slate-800' : 'text-slate-400'}`}>
-                                  {row.flex2Amount > 0 ? formatCurrency(row.flex2Amount) : '—'}
+                                <div className={`font-mono text-xs ${row.flex2Amount > 0 ? 'font-bold text-slate-800' : row.flex2Amount < 0 ? 'font-bold text-rose-600' : 'text-slate-400'}`}>
+                                  {row.flex2Amount !== 0 ? formatCurrency(row.flex2Amount) : '—'}
                                 </div>
                               </div>
                             </td>
@@ -5065,8 +5070,8 @@ export const SettingsView: React.FC = () => {
                                 <div className="text-[10px] text-slate-500 font-medium truncate max-w-[120px]" title={row.flex3Label}>
                                   {row.flex3Label}
                                 </div>
-                                <div className={`font-mono text-xs ${row.flex3Amount > 0 ? 'font-bold text-slate-800' : 'text-slate-400'}`}>
-                                  {row.flex3Amount > 0 ? formatCurrency(row.flex3Amount) : '—'}
+                                <div className={`font-mono text-xs ${row.flex3Amount > 0 ? 'font-bold text-slate-800' : row.flex3Amount < 0 ? 'font-bold text-rose-600' : 'text-slate-400'}`}>
+                                  {row.flex3Amount !== 0 ? formatCurrency(row.flex3Amount) : '—'}
                                 </div>
                               </div>
                             </td>
@@ -5075,8 +5080,8 @@ export const SettingsView: React.FC = () => {
                                 <div className="text-[10px] text-slate-500 font-medium truncate max-w-[120px]" title={row.flex4Label}>
                                   {row.flex4Label}
                                 </div>
-                                <div className={`font-mono text-xs ${row.flex4Amount > 0 ? 'font-bold text-slate-800' : 'text-slate-400'}`}>
-                                  {row.flex4Amount > 0 ? formatCurrency(row.flex4Amount) : '—'}
+                                <div className={`font-mono text-xs ${row.flex4Amount > 0 ? 'font-bold text-slate-800' : row.flex4Amount < 0 ? 'font-bold text-rose-600' : 'text-slate-400'}`}>
+                                  {row.flex4Amount !== 0 ? formatCurrency(row.flex4Amount) : '—'}
                                 </div>
                               </div>
                             </td>
