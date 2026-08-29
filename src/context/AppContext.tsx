@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { normalizePaymentMode } from '../utils/paymentMode';
 import { nextDocumentNumber, reconcileSequence } from '../utils/sequence';
-import { MIN_PASSWORD_LENGTH, sha256Hex, verifyPassword } from '../utils/passwords';
+import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from '../utils/passwords';
 import {
   AppThemeConfig,
   BankAccount,
@@ -534,8 +534,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Monotonic counter backing generateUniqueId below. Guarantees uniqueness
   // even when several ids are minted within the same millisecond (e.g. a
-  // bulk CSV import calling addStudent()/addFamily() in a synchronous loop),
-  // where Date.now() alone can return an identical value on every call.
+  // bulk CSV import, or a bulk voucher-generation/carry-forward pass calling
+  // .map() over many records in a single synchronous loop), where Date.now()
+  // alone can return an identical value on every call. Used for every
+  // client-minted entity id: students, families, transport stops/
+  // assignments, fee templates, and vouchers.
   const idSeqRef = useRef<number>(0);
 
   const generateUniqueId = useCallback((prefix: string) => {
@@ -845,21 +848,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    const verification = await verifyPassword(password, matchedUser.password);
-    if (!verification.ok) {
+    const passwordValid = await verifyPassword(password, matchedUser.password);
+    if (!passwordValid) {
       return {
         success: false,
         error: 'Invalid password. Please check your credentials and try again.',
       };
     }
 
-    let authedUser: User = { ...matchedUser, lastLogin: new Date().toISOString() };
-    if (verification.legacyPlaintext) {
-      authedUser = { ...authedUser, password: await sha256Hex(password) };
-      setUsers((prev) =>
-        prev.map((u) => (u.id === matchedUser.id ? { ...u, password: authedUser.password } : u))
-      );
-    }
+    const authedUser: User = { ...matchedUser, lastLogin: new Date().toISOString() };
 
     setCurrentUser(authedUser);
     setIsAuthenticated(true);
@@ -889,7 +886,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (plainPassword.length < MIN_PASSWORD_LENGTH) {
       return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
     }
-    const hashedPassword = await sha256Hex(plainPassword);
+    const hashedPassword = await hashPassword(plainPassword);
 
     const defaultRolePerms = ROLE_PRESET_PERMISSIONS[userData.role] || ROLE_PRESET_PERMISSIONS.Viewer;
     const finalPermissions =
@@ -924,7 +921,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (plainPassword.length < MIN_PASSWORD_LENGTH) {
         return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
       }
-      finalUpdates.password = await sha256Hex(plainPassword);
+      finalUpdates.password = await hashPassword(plainPassword);
     }
 
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...finalUpdates } : u)));
@@ -1485,7 +1482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           const nextSortOrder = item.sortOrder || currentStops.length + 1;
           const newStop: TransportStop = {
-            id: item.id || `stop-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+            id: item.id || generateUniqueId('stop'),
             name: cleanName,
             area: (item.area || '').trim(),
             landmark: (item.landmark || '').trim(),
@@ -1552,7 +1549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           updated.push({
             ...asgn,
-            id: `asgn-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+            id: generateUniqueId('asgn'),
           });
         }
       }
@@ -1624,7 +1621,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // 3. Create cloned assignment for target month with specified or full active days
       newAssignmentsToAdd.push({
-        id: `asgn-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        id: generateUniqueId('asgn'),
         studentId: prevAsgn.studentId,
         month: targetMonth,
         busId: prevAsgn.busId,
@@ -1671,7 +1668,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else {
       const newTpl: FeeTemplate = {
         ...template,
-        id: `tpl-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: generateUniqueId('tpl'),
         defaultAmount: template.defaultAmount,
       };
       setTemplates((prev) => [...prev, newTpl].sort((a, b) => a.sortOrder - b.sortOrder));
@@ -1706,7 +1703,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     } else {
       const newTpl: FeeTemplate = {
-        id: `tpl-override-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: generateUniqueId('tpl-override'),
         studentId,
         month,
         kind,
@@ -2033,7 +2030,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const voucherNo = nextDocumentNumber('FE', yearStr);
 
     return {
-      id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: generateUniqueId('vch'),
       voucherNo,
       studentId: student.id,
       month,
@@ -2146,7 +2143,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       return {
-        id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        id: generateUniqueId('vch'),
         voucherNo,
         studentId: prev.student.id,
         month,
@@ -2766,7 +2763,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           settingsDueDate || (sourceDay ? `${targetMonth}-${sourceDay}` : '');
 
         const newVoucher: FeeVoucher = {
-          id: `vch-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          id: generateUniqueId('vch'),
           voucherNo: nextDocumentNumber('FE', yearStr),
           studentId: voucher.studentId,
           month: targetMonth,

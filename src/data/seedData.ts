@@ -14,7 +14,11 @@ import {
 } from '../types';
 import { ROLE_PRESET_PERMISSIONS } from '../utils/permissions';
 
-export const HASHED_DEMO_PASSWORD = 'ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f';
+// Hash of the demo password "Demo@1234", produced by utils/passwords.ts'
+// hashPassword() (PBKDF2-HMAC-SHA256, salted, 100k iterations). All seeded
+// demo accounts (admin / accountant / viewer) log in with this password.
+export const HASHED_DEMO_PASSWORD =
+  'pbkdf2$100000$c335aaedddfeb265bdf449c8ecd663e6$fbed5fcaf50dd71f7dedd74e537f6dfb39d90c03321f9306f18161216a311da1';
 
 export const SEEDED_USERS: User[] = [
   {
