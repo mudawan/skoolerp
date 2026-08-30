@@ -59,6 +59,7 @@ import {
   roundUpToMultiple,
   VoucherPreviewCalculation,
 } from '../utils/feeMath';
+import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
 
 export interface DownstreamConflict {
   voucher: FeeVoucher;
@@ -320,51 +321,6 @@ const STORAGE_KEY = 'skooler_app_data_v1';
  * Student.familyId and Family.memberStudentIds.
  * Ensures no student can ever be listed in multiple families simultaneously.
  */
-export function reconcileFamiliesAndStudents(
-  rawFamilies: Family[],
-  rawStudents: Student[]
-): { families: Family[]; students: Student[] } {
-  const familyIdSet = new Set(rawFamilies.map((f) => f.id));
-
-  // Determine authoritative familyId for each student
-  const studentToFamilyMap = new Map<string, string>();
-
-  // Pass 1: explicit valid student.familyId
-  rawStudents.forEach((s) => {
-    if (s.familyId && familyIdSet.has(s.familyId)) {
-      studentToFamilyMap.set(s.id, s.familyId);
-    }
-  });
-
-  // Pass 2: unassigned students found in family memberStudentIds
-  rawFamilies.forEach((f) => {
-    f.memberStudentIds?.forEach((sId) => {
-      if (!studentToFamilyMap.has(sId)) {
-        studentToFamilyMap.set(sId, f.id);
-      }
-    });
-  });
-
-  // Synced students list
-  const syncedStudents = rawStudents.map((s) => ({
-    ...s,
-    familyId: studentToFamilyMap.get(s.id) || undefined,
-  }));
-
-  // Synced families list (each family contains EXACTLY the students whose familyId === f.id)
-  const syncedFamilies = rawFamilies.map((f) => {
-    const memberStudentIds = syncedStudents
-      .filter((s) => s.familyId === f.id)
-      .map((s) => s.id);
-    return {
-      ...f,
-      memberStudentIds,
-    };
-  });
-
-  return { families: syncedFamilies, students: syncedStudents };
-}
-
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Stored Users in Database / Local Storage
   const [users, setUsers] = useState<User[]>(() => {
@@ -2226,14 +2182,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             );
 
             let status = v.status;
-            if (v.amountPaid >= netDue && netDue > 0) {
+            if (v.status === 'Carried') {
+              status = 'Carried';
+            } else if (v.amountPaid >= netDue && netDue > 0) {
               status = 'Paid';
             } else if (netDue <= 0) {
               status = 'Paid';
             } else if (v.amountPaid > 0) {
               status = 'Partial';
-            } else if (v.status === 'Carried') {
-              status = 'Carried';
             } else {
               status = 'Issued';
             }
@@ -2938,12 +2894,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         );
 
         let status = v.status;
-        if (v.amountPaid >= netDue) {
+        if (v.status === 'Carried') {
+          status = 'Carried';
+        } else if (v.amountPaid >= netDue) {
           status = 'Paid';
         } else if (v.amountPaid > 0) {
           status = 'Partial';
-        } else if (v.status === 'Carried') {
-          status = 'Carried';
         } else {
           status = 'Issued';
         }
