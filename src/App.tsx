@@ -35,7 +35,7 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [reportStudentId, setReportStudentId] = useState<string | undefined>(undefined);
-  const [reportType, setReportType] = useState<'classSummary' | 'outstanding' | 'studentLedger'>('classSummary');
+  const [reportType, setReportType] = useState<'feeCollection' | 'studentLedger' | 'outstanding'>('feeCollection');
 
   const handleNavigateToLedger = (studentId: string) => {
     setReportStudentId(studentId);

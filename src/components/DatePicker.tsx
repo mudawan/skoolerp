@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X } from 'lucide-react';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 
@@ -56,6 +57,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     vertical: 'bottom' | 'top';
     horizontal: 'left' | 'right' | 'center';
   }>({ vertical: 'bottom', horizontal: align });
+
+  // Fixed coordinates for the portal-rendered popover (screen space)
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   // Parse value
   const parsedDate = useMemo(() => {
@@ -121,6 +125,22 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       }
 
       setPlacement({ vertical, horizontal });
+
+      let top: number;
+      if (vertical === 'bottom') {
+        top = rect.bottom + 4;
+      } else {
+        top = rect.top - popoverHeight - 4;
+      }
+      let left: number;
+      if (horizontal === 'right') {
+        left = rect.right - popoverWidth;
+      } else if (horizontal === 'center') {
+        left = rect.left + rect.width / 2 - popoverWidth / 2;
+      } else {
+        left = rect.left;
+      }
+      setPopoverPos({ top, left });
     };
 
     updatePosition();
@@ -325,18 +345,6 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     return yrs;
   }, [minYear, maxYear]);
 
-  // Dynamic popover positioning classes based on screen location
-  const popoverPositionClass = useMemo(() => {
-    const vClass = placement.vertical === 'top' ? 'bottom-full mb-1' : 'top-full mt-1';
-    const hClass =
-      placement.horizontal === 'right'
-        ? 'right-0'
-        : placement.horizontal === 'center'
-        ? 'left-1/2 -translate-x-1/2'
-        : 'left-0';
-    return `${vClass} ${hClass}`;
-  }, [placement]);
-
   return (
     <div ref={containerRef} className={`relative inline-block w-full text-left ${className}`}>
       {/* Trigger Input */}
@@ -349,7 +357,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               }
             : undefined
         }
-        className={`w-full flex items-center justify-between px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 ${
+        className={`w-full flex items-center justify-between px-2 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 ${
           disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'
         }`}
       >
@@ -388,12 +396,15 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       </div>
 
       {/* Popover Calendar Grid (Reduced to 2/3 size: 216px width) */}
-      {isOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className={`absolute z-50 w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 ${popoverPositionClass}`}
-        >
+      {isOpen &&
+        popoverPos &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{ top: popoverPos.top, left: popoverPos.left }}
+            className="fixed z-[9999] w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150"
+          >
           {/* Header Controls (Compact) */}
           <div className="flex items-center justify-between pb-1 border-b border-slate-100">
             <button
@@ -539,8 +550,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               Done
             </button>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

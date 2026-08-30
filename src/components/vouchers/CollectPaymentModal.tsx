@@ -7,6 +7,7 @@ import {
   roundUpToMultiple,
 } from '../../utils/feeMath';
 import { VoucherParticularsEditor } from '../VoucherParticularsEditor';
+import { DatePicker } from '../DatePicker';
 import { Coins, Info, Receipt, X } from 'lucide-react';
 
 export type CollectMode = 'Cash' | 'BankTransfer' | 'Cheque' | 'Online';
@@ -24,6 +25,9 @@ interface CollectPaymentModalProps {
   setRefNo: (v: string) => void;
   notes: string;
   setNotes: (v: string) => void;
+  date: string;
+  setDate: (v: string) => void;
+  themeColor?: string;
   dynamicNetDue: number;
   dynamicRemaining: number;
   roundingEnabled: boolean;
@@ -46,6 +50,9 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
   setRefNo,
   notes,
   setNotes,
+  date,
+  setDate,
+  themeColor,
   dynamicNetDue,
   dynamicRemaining,
   roundingEnabled,
@@ -202,15 +209,28 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Bank Ref / Deposit Slip #</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. PK-MZB-988471"
-                    value={refNo}
-                    onChange={(e) => setRefNo(e.target.value)}
-                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
+                  <label className="block font-bold text-slate-700 mb-1">Collection Date *</label>
+                  <DatePicker
+                    value={date}
+                    required
+                    themeColor={themeColor || 'teal'}
+                    onChange={(newDate) => setDate(newDate)}
+                    idPrefix="voucher-collect-date"
+                    placeholder="Select Collection Date"
+                    className="w-full"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Bank Ref / Deposit Slip #</label>
+                <input
+                  type="text"
+                  placeholder="e.g. PK-MZB-988471"
+                  value={refNo}
+                  onChange={(e) => setRefNo(e.target.value)}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
+                />
               </div>
 
               <div>

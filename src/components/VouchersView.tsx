@@ -169,6 +169,7 @@ export const VouchersView: React.FC = () => {
   const [collectMode, setCollectMode] = useState<'Cash' | 'BankTransfer' | 'Cheque' | 'Online'>('Cash');
   const [collectRef, setCollectRef] = useState('');
   const [collectNotes, setCollectNotes] = useState('');
+  const [collectDate, setCollectDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectItems, setCollectItems] = useState<VoucherItem[]>([]);
 
   // Calculations for collecting voucher
@@ -584,6 +585,7 @@ export const VouchersView: React.FC = () => {
     setCollectMode('Cash');
     setCollectRef('');
     setCollectNotes('');
+    setCollectDate(new Date().toISOString().split('T')[0]);
   };
 
   const handleSaveLineItemsOnly = () => {
@@ -615,7 +617,7 @@ export const VouchersView: React.FC = () => {
       collectMode,
       collectRef.trim() || undefined,
       collectNotes.trim() || undefined,
-      undefined,
+      collectDate || undefined,
       collectItems
     );
 
@@ -1847,6 +1849,9 @@ export const VouchersView: React.FC = () => {
           setRefNo={setCollectRef}
           notes={collectNotes}
           setNotes={setCollectNotes}
+          date={collectDate}
+          setDate={setCollectDate}
+          themeColor={themeConfig?.color || 'teal'}
           dynamicNetDue={collectDynamicNetDue}
           dynamicRemaining={collectDynamicRemaining}
           roundingEnabled={roundingEnabled}

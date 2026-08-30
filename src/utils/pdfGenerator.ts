@@ -1168,3 +1168,551 @@ export async function printStudentFeeLedgerPdf(
   }, 120000);
 }
 
+export interface OutstandingArrearsPdfRow {
+  regNo: string;
+  name: string;
+  dob?: string;
+  ageStr?: string;
+  className: string;
+  fatherName?: string;
+  fatherPhone?: string;
+  unpaidMonthsCount: number;
+  oldestUnpaidMonth: string;
+  totalOutstanding: number;
+}
+
+/**
+ * Build the jsPDF document instance for the Student Unpaid Fee Arrears Audit report
+ */
+export function buildOutstandingArrearsDoc(
+  rows: OutstandingArrearsPdfRow[],
+  context: PdfExportContext,
+  monthLabel: string
+): jsPDF {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = 210;
+  const pageHeight = 297;
+  const margin = 12;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  // 1. Institute Header & Logo
+  const logoUrl = context.institute.logoUrl;
+  const hasLogo = Boolean(logoUrl && logoUrl.trim().length > 0);
+
+  if (hasLogo) {
+    try {
+      const format = logoUrl.startsWith('data:image/jpeg') || logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
+      doc.addImage(logoUrl, format, margin, y, 14, 14);
+    } catch (e) {
+      console.warn('Could not render logo in Outstanding Arrears PDF:', e);
+    }
+  }
+
+  const textStartX = hasLogo ? margin + 18 : margin;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.text((context.institute.name || 'INSTITUTE NAME').toUpperCase(), textStartX, y + 4.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  const subDetails = [
+    context.institute.address,
+    context.institute.phone ? `Phone: ${context.institute.phone}` : '',
+    context.institute.email ? `Email: ${context.institute.email}` : '',
+    context.institute.regNo ? `Reg #: ${context.institute.regNo}` : '',
+  ]
+    .filter(Boolean)
+    .join('  •  ');
+  doc.text(subDetails, textStartX, y + 9.5);
+  y += 16;
+
+  // 2. Document Title Banner
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.setDrawColor(226, 232, 240); // slate-200
+  doc.rect(margin, y, contentWidth, 8.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 41, 59); // slate-800
+  doc.text('STUDENT UNPAID FEE ARREARS AUDIT', margin + 3, y + 5.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  const printedDateStr = `Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  doc.text(printedDateStr, pageWidth - margin - 3, y + 5.5, { align: 'right' });
+  y += 12.5;
+
+  // 3. Summary Line
+  const totalOut = rows.reduce((s, r) => s + r.totalOutstanding, 0);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105); // slate-600
+  doc.text(`${rows.length} Defaulter${rows.length !== 1 ? 's' : ''}  •  Billing Month: ${monthLabel}`, margin + 3, y + 2);
+
+  doc.setTextColor(190, 18, 60); // rose-700
+  doc.text(`Total Outstanding: ${formatCurrency(totalOut)}`, pageWidth - margin - 3, y + 2, { align: 'right' });
+  y += 7.5;
+
+  // 4. Table
+  const colDefs = [
+    { title: 'STUDENT INFO', width: 64, align: 'left' as const },
+    { title: 'CLASS', width: 20, align: 'left' as const },
+    { title: 'FATHER NAME & CONTACT', width: 42, align: 'left' as const },
+    { title: 'MONTHS UNPAID', width: 30, align: 'left' as const },
+    { title: 'OUTSTANDING (NET)', width: 30, align: 'right' as const },
+  ];
+
+  const drawTableHeader = (curY: number) => {
+    doc.setFillColor(71, 85, 105); // slate-600
+    doc.rect(margin, curY, contentWidth, 7, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(255, 255, 255);
+    let curX = margin;
+    colDefs.forEach((col) => {
+      if (col.align === 'right') {
+        doc.text(col.title, curX + col.width - 2, curY + 4.5, { align: 'right' });
+      } else {
+        doc.text(col.title, curX + 2, curY + 4.5);
+      }
+      curX += col.width;
+    });
+  };
+
+  drawTableHeader(y);
+  y += 7;
+
+  const rowH = 11;
+  rows.forEach((r, idx) => {
+    if (y + rowH > pageHeight - 22) {
+      doc.addPage('a4', 'portrait');
+      y = margin;
+      drawTableHeader(y);
+      y += 7;
+    }
+
+    const isEven = idx % 2 === 0;
+    doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+    doc.rect(margin, y, contentWidth, rowH, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
+
+    let curX = margin;
+
+    // Col 1: Student Info
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(r.name, curX + 2, y + 4.5, { maxWidth: colDefs[0].width - 4 });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Reg #: ${r.regNo}`, curX + 2, y + 8);
+    if (r.dob) {
+      doc.text(`DOB: ${r.dob}${r.ageStr ? ` (${r.ageStr})` : ''}`, curX + 2, y + 10.3);
+    }
+    curX += colDefs[0].width;
+
+    // Col 2: Class
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(51, 65, 85);
+    doc.text(r.className, curX + 2, y + 5, { maxWidth: colDefs[1].width - 4 });
+    curX += colDefs[1].width;
+
+    // Col 3: Father Name & Contact
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+    doc.text(r.fatherName || 'N/A', curX + 2, y + 4.5, { maxWidth: colDefs[2].width - 4 });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(r.fatherPhone || '', curX + 2, y + 8.5, { maxWidth: colDefs[2].width - 4 });
+    curX += colDefs[2].width;
+
+    // Col 4: Months Unpaid
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(r.unpaidMonthsCount >= 3 ? 190 : 180, r.unpaidMonthsCount >= 3 ? 18 : 83, r.unpaidMonthsCount >= 3 ? 60 : 9);
+    const monthsDue = `${r.unpaidMonthsCount} Month${r.unpaidMonthsCount !== 1 ? 's' : ''} Due`;
+    doc.text(monthsDue, curX + 2, y + 4.5, { maxWidth: colDefs[3].width - 4 });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(100, 116, 139);
+    if (r.oldestUnpaidMonth) {
+      doc.text(`Due since ${formatMonthName(r.oldestUnpaidMonth)}`, curX + 2, y + 8, { maxWidth: colDefs[3].width - 4 });
+    }
+    curX += colDefs[3].width;
+
+    // Col 5: Outstanding (Net)
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(225, 29, 72); // rose-600
+    doc.text(formatCurrency(r.totalOutstanding), curX + colDefs[4].width - 2, y + 5.5, { align: 'right' });
+
+    y += rowH;
+  });
+
+  // 5. Totals Footer
+  if (y > pageHeight - 22) {
+    doc.addPage('a4', 'portrait');
+    y = margin;
+    drawTableHeader(y);
+    y += 7;
+  }
+  doc.setFillColor(241, 245, 249); // slate-100
+  doc.rect(margin, y, contentWidth, 8, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.line(margin, y, margin + contentWidth, y);
+  doc.line(margin, y + 8, margin + contentWidth, y + 8);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`TOTAL DEFAULTERS: ${rows.length}  •  TOTAL OUTSTANDING ARREARS:`, margin + 4, y + 5.5);
+  doc.setTextColor(225, 29, 72);
+  doc.text(formatCurrency(totalOut), margin + contentWidth - 4, y + 5.5, { align: 'right' });
+  y += 16;
+
+  // 6. Bottom Notice
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(6.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    'This is a system-generated unpaid fee arrears audit report. Any discrepancies should be reported to the accounts department.',
+    pageWidth / 2,
+    pageHeight - 6,
+    { align: 'center' }
+  );
+
+  return doc;
+}
+
+/**
+ * Generate and download the Student Unpaid Fee Arrears Audit report as a PDF file
+ */
+export async function printOutstandingArrearsPdf(
+  rows: OutstandingArrearsPdfRow[],
+  context: PdfExportContext,
+  monthLabel: string
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const doc = buildOutstandingArrearsDoc(rows, context, monthLabel);
+  doc.autoPrint();
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+
+  // Hidden print iframe
+  const iframe = document.createElement('iframe');
+  iframe.id = `pdf-arrears-print-iframe-${Date.now()}`;
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.src = blobUrl;
+  document.body.appendChild(iframe);
+
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch (e) {
+      console.warn('Iframe printing was blocked, opening PDF in new window:', e);
+      window.open(blobUrl, '_blank');
+    }
+  };
+
+  // Revoke object URL after delay
+  setTimeout(() => {
+    try {
+      if (document.body.contains(iframe)) {
+        document.body.removeChild(iframe);
+      }
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // ignore
+    }
+  }, 120000);
+}
+
+export interface FeeCollectionReportPdfRow {
+  date: string;
+  regNo: string;
+  studentName: string;
+  className: string;
+  feeMonth: string;
+  total: number;
+  paid: number;
+  balance: number;
+}
+
+export function buildFeeCollectionReportDoc(
+  rows: FeeCollectionReportPdfRow[],
+  context: PdfExportContext,
+  reportTitle: string
+): jsPDF {
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = 297;
+  const pageHeight = 210;
+  const margin = 10;
+  const contentWidth = pageWidth - margin * 2;
+  let y = margin;
+
+  // 1. Institute Header & Logo
+  const logoUrl = context.institute.logoUrl;
+  const hasLogo = Boolean(logoUrl && logoUrl.trim().length > 0);
+
+  if (hasLogo) {
+    try {
+      const format =
+        logoUrl.startsWith('data:image/jpeg') || logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
+      doc.addImage(logoUrl, format, margin, y, 13, 13);
+    } catch (e) {
+      console.warn('Could not render logo in Fee Collection Report PDF:', e);
+    }
+  }
+
+  const textStartX = hasLogo ? margin + 17 : margin;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(15, 23, 42);
+  doc.text((context.institute.name || 'INSTITUTE NAME').toUpperCase(), textStartX, y + 4.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  const subDetails = [
+    context.institute.address,
+    context.institute.phone ? `Phone: ${context.institute.phone}` : '',
+    context.institute.email ? `Email: ${context.institute.email}` : '',
+    context.institute.regNo ? `Reg #: ${context.institute.regNo}` : '',
+  ]
+    .filter(Boolean)
+    .join('  •  ');
+  doc.text(subDetails, textStartX, y + 9);
+  y += 15;
+
+  // 2. Document Title Banner
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(margin, y, contentWidth, 8.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text(reportTitle.toUpperCase(), margin + 3, y + 5.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  const generatedStr = `Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  doc.text(generatedStr, pageWidth - margin - 3, y + 5.5, { align: 'right' });
+  y += 12.5;
+
+  // 3. Table
+  const colDefs = [
+    { title: 'SR#', width: 12, align: 'left' as const },
+    { title: 'DATE', width: 26, align: 'left' as const },
+    { title: 'REG NO', width: 30, align: 'left' as const },
+    { title: 'STUDENT NAME', width: 60, align: 'left' as const },
+    { title: 'CLASS', width: 26, align: 'left' as const },
+    { title: 'FEE MONTH', width: 33, align: 'left' as const },
+    { title: 'TOTAL', width: 30, align: 'right' as const },
+    { title: 'PAID', width: 30, align: 'right' as const },
+    { title: 'BALANCE', width: 30, align: 'right' as const },
+  ];
+
+  const drawTableHeader = (curY: number) => {
+    doc.setFillColor(15, 118, 110); // teal-700
+    doc.rect(margin, curY, contentWidth, 7, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.8);
+    doc.setTextColor(255, 255, 255);
+    let curX = margin;
+    colDefs.forEach((col) => {
+      if (col.align === 'right') {
+        doc.text(col.title, curX + col.width - 2, curY + 4.5, { align: 'right' });
+      } else {
+        doc.text(col.title, curX + 2, curY + 4.5);
+      }
+      curX += col.width;
+    });
+  };
+
+  drawTableHeader(y);
+  y += 7;
+
+  const totals = rows.reduce(
+    (acc, r) => ({ total: acc.total + r.total, paid: acc.paid + r.paid, balance: acc.balance + r.balance }),
+    { total: 0, paid: 0, balance: 0 }
+  );
+
+  const rowH = 7.5;
+  rows.forEach((r, idx) => {
+    if (y + rowH > pageHeight - 20) {
+      doc.addPage('a4', 'landscape');
+      y = margin;
+      drawTableHeader(y);
+      y += 7;
+    }
+
+    const isEven = idx % 2 === 0;
+    doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+    doc.rect(margin, y, contentWidth, rowH, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
+
+    let curX = margin;
+    const cellValues = [
+      String(idx + 1),
+      r.date,
+      r.regNo,
+      r.studentName,
+      r.className,
+      r.feeMonth,
+      formatCurrency(r.total),
+      formatCurrency(r.paid),
+      formatCurrency(r.balance),
+    ];
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(15, 23, 42);
+
+    colDefs.forEach((col, i) => {
+      if (col.align === 'right') {
+        doc.text(cellValues[i], curX + col.width - 2, y + 4.8, { align: 'right' });
+      } else {
+        doc.text(cellValues[i], curX + 2, y + 4.8, { maxWidth: col.width - 4 });
+      }
+      curX += col.width;
+    });
+
+    y += rowH;
+  });
+
+  // 4. Totals Footer
+  if (y > pageHeight - 20) {
+    doc.addPage('a4', 'landscape');
+    y = margin;
+    drawTableHeader(y);
+    y += 7;
+  }
+  doc.setFillColor(241, 245, 249);
+  doc.rect(margin, y, contentWidth, 8, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.line(margin, y, margin + contentWidth, y);
+  doc.line(margin, y + 8, margin + contentWidth, y + 8);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`${rows.length} Record${rows.length !== 1 ? 's' : ''}`, margin + 4, y + 5.5);
+
+  const totalLabelX = pageWidth - margin - 4;
+  doc.setTextColor(15, 118, 110);
+  doc.text(formatCurrency(totals.balance), totalLabelX, y + 5.5, { align: 'right' });
+  const paidX = totalLabelX - 32;
+  doc.text(formatCurrency(totals.paid), paidX, y + 5.5, { align: 'right' });
+  const totalX = totalLabelX - 64;
+  doc.text(formatCurrency(totals.total), totalX, y + 5.5, { align: 'right' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('TOTALS:', totalX - 18, y + 5.5, { align: 'right' });
+  y += 16;
+
+  // 5. Bottom Notice
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(6.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    'This is a system-generated fee collection report. Any discrepancies should be reported to the accounts department.',
+    pageWidth / 2,
+    pageHeight - 6,
+    { align: 'center' }
+  );
+
+  return doc;
+}
+
+export async function printFeeCollectionReportPdf(
+  rows: FeeCollectionReportPdfRow[],
+  context: PdfExportContext,
+  reportTitle: string
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const doc = buildFeeCollectionReportDoc(rows, context, reportTitle);
+  doc.autoPrint();
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+
+  const iframe = document.createElement('iframe');
+  iframe.id = `pdf-fee-report-print-iframe-${Date.now()}`;
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.src = blobUrl;
+  document.body.appendChild(iframe);
+
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch (e) {
+      console.warn('Iframe printing was blocked, opening PDF in new window:', e);
+      window.open(blobUrl, '_blank');
+    }
+  };
+
+  setTimeout(() => {
+    try {
+      if (document.body.contains(iframe)) {
+        document.body.removeChild(iframe);
+      }
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // ignore
+    }
+  }, 120000);
+}
+

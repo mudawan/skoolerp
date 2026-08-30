@@ -1,17 +1,69 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatMonthName, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, formatStudentAge } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
-import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
-import { BarChart3, BookOpen, Building2, Download, FileSpreadsheet, History, Printer, Users } from 'lucide-react';
+import { StudentAvatar } from './StudentAvatar';
+import { DatePicker } from './DatePicker';
+import {
+  printOutstandingArrearsPdf,
+  OutstandingArrearsPdfRow,
+  printFeeCollectionReportPdf,
+  FeeCollectionReportPdfRow,
+} from '../utils/pdfGenerator';
+import {
+  BarChart3,
+  BookMarked,
+  History,
+  CalendarRange,
+  Layers,
+  Search,
+  Clock,
+  AlertTriangle,
+  Wallet,
+  Users,
+  Printer,
+  FileText,
+  HandCoins,
+  FileDown,
+  Download,
+  CalendarDays,
+  Copy,
+  ChevronDown,
+  X,
+  School,
+  GraduationCap,
+} from 'lucide-react';
 
 export interface ReportsViewProps {
-  initialReportType?: 'classSummary' | 'outstanding' | 'studentLedger';
+  initialReportType?: 'feeCollection' | 'studentLedger' | 'outstanding';
   initialStudentId?: string;
-  onReportTypeChange?: (type: 'classSummary' | 'outstanding' | 'studentLedger') => void;
+  onReportTypeChange?: (type: 'feeCollection' | 'studentLedger' | 'outstanding') => void;
   onStudentIdChange?: (id: string | undefined) => void;
 }
+
+type FeeReportTab = 'quick' | 'dateRange' | 'classWise' | 'studentWise' | 'pending';
+
+type QuickPeriod = 'today' | 'thisMonth' | 'lastMonth';
+
+interface ReportRow {
+  date: string;
+  regNo: string;
+  studentName: string;
+  className: string;
+  feeMonth: string;
+  total: number;
+  paid: number;
+  balance: number;
+}
+
+const METRIC_LABELS: Record<FeeReportTab, string> = {
+  quick: 'Fees collected (and relevant quick lists)',
+  dateRange: 'Generate a fee collection report over a custom date range',
+  classWise: 'Fee collection report filtered by class',
+  studentWise: 'Fee collection report for a specific student',
+  pending: 'Students with outstanding balances',
+};
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   initialReportType,
@@ -19,11 +71,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onReportTypeChange,
   onStudentIdChange,
 }) => {
-  const { activeMonth, classes, vouchers, students, institute } = useApp();
+  const { activeMonth, classes, vouchers, students, institute, bankAccounts, transactions } = useApp();
 
-  const [reportType, setReportType] = useState<'classSummary' | 'outstanding' | 'studentLedger'>(
-    initialReportType || 'classSummary'
+  const [reportType, setReportType] = useState<'feeCollection' | 'studentLedger' | 'outstanding'>(
+    initialReportType || 'feeCollection'
   );
+  const [feeReportTab, setFeeReportTab] = useState<FeeReportTab>('quick');
   const [selectedStudentForLedger, setSelectedStudentForLedger] = useState<string | undefined>(
     initialStudentId
   );
@@ -40,7 +93,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     }
   }, [initialStudentId]);
 
-  const handleTabChange = (type: 'classSummary' | 'outstanding' | 'studentLedger') => {
+  const handleTabChange = (type: 'feeCollection' | 'studentLedger' | 'outstanding') => {
     setReportType(type);
     onReportTypeChange?.(type);
   };
@@ -50,43 +103,160 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     onStudentIdChange?.(studentId);
   };
 
+  // ---- Report builder state & helpers --------------------------------------
+
+  const [quickPeriod, setQuickPeriod] = useState<QuickPeriod>('thisMonth');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [dateRangeRows, setDateRangeRows] = useState<ReportRow[]>([]);
+  const [dateRangeGenerated, setDateRangeGenerated] = useState(false);
+
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [classDateFilter, setClassDateFilter] = useState<
+    'all' | 'thisMonth' | 'prevMonth'
+  >('thisMonth');
+  const [selectedStudentId, setSelectedStudentId] = useState<string>('');
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
+
+  const todayStr = (() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  })();
+
+  const prevMonthStr = (month: string): string => {
+    const [y, mo] = month.split('-').map(Number);
+    const d = new Date(y, mo - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const buildReportRows = (txns: (typeof transactions)[number][]): ReportRow[] =>
+    txns
+      .map((t) => {
+        const v = vouchers.find((x) => x.id === t.voucherId);
+        const s = students.find((x) => x.id === t.studentId);
+        const cls = classes.find((c) => c.id === (v?.classId || s?.classId));
+        return {
+          date: t.date,
+          regNo: s?.regNo || '',
+          studentName: s?.name || '—',
+          className: cls?.name || '—',
+          feeMonth: v?.month ? formatMonthName(v.month) : '—',
+          total: v?.netDue ?? t.amount,
+          paid: t.amount,
+          balance: (v?.netDue ?? 0) - (v?.amountPaid ?? 0),
+        };
+      })
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  const quickRows: ReportRow[] = (() => {
+    if (quickPeriod === 'today') {
+      return buildReportRows(transactions.filter((t) => t.date === todayStr));
+    }
+    if (quickPeriod === 'thisMonth') {
+      return buildReportRows(
+        transactions.filter((t) => t.date.slice(0, 7) === activeMonth)
+      );
+    }
+    const lm = prevMonthStr(activeMonth);
+    return buildReportRows(transactions.filter((t) => t.date.slice(0, 7) === lm));
+  })();
+
+  const quickPeriodLabel =
+    quickPeriod === 'today'
+      ? `Today's List (${todayStr})`
+      : quickPeriod === 'thisMonth'
+      ? `This Month's List (${formatMonthName(activeMonth)})`
+      : `Last Month's List (${formatMonthName(prevMonthStr(activeMonth))})`;
+
+  const filterTxnsByDate = (txns: (typeof transactions)[number][]) => {
+    if (classDateFilter === 'thisMonth') {
+      return txns.filter((t) => t.date.slice(0, 7) === activeMonth);
+    }
+    if (classDateFilter === 'prevMonth') {
+      return txns.filter((t) => t.date.slice(0, 7) === prevMonthStr(activeMonth));
+    }
+    return txns;
+  };
+
+  const classWiseRows = (() => {
+    const ids = selectedClassId
+      ? new Set(
+          students.filter((s) => s.classId === selectedClassId).map((s) => s.id)
+        )
+      : null;
+    const txns = ids
+      ? transactions.filter((t) => ids.has(t.studentId))
+      : transactions;
+    return buildReportRows(filterTxnsByDate(txns));
+  })();
+
+  const classDateFilterLabel =
+    classDateFilter === 'thisMonth'
+      ? formatMonthName(activeMonth)
+      : classDateFilter === 'prevMonth'
+      ? formatMonthName(prevMonthStr(activeMonth))
+      : 'All Time';
+
+  const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || '';
+
+  const filteredStudentsList = !studentSearch.trim()
+    ? students.slice(0, 30)
+    : students
+        .filter((s) => {
+          const q = studentSearch.toLowerCase().trim();
+          return (
+            s.regNo.toLowerCase().includes(q) ||
+            s.name.toLowerCase().includes(q) ||
+            s.fatherName.toLowerCase().includes(q) ||
+            (classes.find((c) => c.id === s.classId)?.name || '').toLowerCase().includes(q)
+          );
+        })
+        .slice(0, 30);
+
+  const selectedStudent = students.find((s) => s.id === selectedStudentId);
+  const studentWiseRows = selectedStudentId
+    ? buildReportRows(transactions.filter((t) => t.studentId === selectedStudentId))
+    : [];
+
+  const handleGenerateDateRange = () => {
+    if (!dateFrom || !dateTo) return;
+    const rows = buildReportRows(
+      transactions.filter((t) => t.date >= dateFrom && t.date <= dateTo)
+    );
+    setDateRangeRows(rows);
+    setDateRangeGenerated(true);
+  };
+
+  // ---- Derived data ---------------------------------------------------------
+
   const monthVouchers = vouchers.filter((v) => v.month === activeMonth && v.status !== 'Reversed');
+  const vouchersIssued = monthVouchers.length;
 
-  // Per-Class Monthly Summary Data
-  const classSummaryRows = classes.map((cls) => {
-    const clsVouchers = monthVouchers.filter((v) => v.classId === cls.id);
-    const issued = clsVouchers.reduce((sum, v) => sum + v.netDue, 0);
-    const collected = clsVouchers.reduce((sum, v) => sum + v.amountPaid, 0);
-    const outstanding = issued - collected;
-    const pct = issued > 0 ? Math.round((collected / issued) * 100) : 0;
+  const monthTxns = transactions.filter((t) => t.date.slice(0, 7) === activeMonth);
+  const thisMonthCollection = monthTxns.reduce((sum, t) => sum + t.amount, 0);
+  const studentsPaidThisMonth = new Set(monthTxns.map((t) => t.studentId)).size;
 
-    return {
-      classId: cls.id,
-      className: cls.name,
-      voucherCount: clsVouchers.length,
-      issued,
-      collected,
-      outstanding,
-      pct,
-    };
-  });
+  const vouchersWithReceivable = vouchers.filter(
+    (v) => v.status !== 'Reversed' && v.amountPaid < v.netDue
+  );
 
-  // Student Outstanding Balances Data
+  // Student Outstanding Balances (per student, active receivables)
   const studentOutstandingRows = students
     .map((s) => {
       const cls = classes.find((c) => c.id === s.classId);
-      
-      // All non-reversed vouchers for this student sorted chronologically
+
       const allStudentVouchers = vouchers
         .filter((v) => v.studentId === s.id && v.status !== 'Reversed')
         .sort((a, b) => a.month.localeCompare(b.month));
 
-      // Overdue vouchers: any voucher where netDue > amountPaid (including Carried, Issued, Partial)
       const overdueVouchers = allStudentVouchers.filter(
         (v) => Math.max(0, v.netDue - v.amountPaid) > 0
       );
 
-      // Active uncarried vouchers for current outstanding cumulative balance
       const uncarriedUnpaidVouchers = allStudentVouchers.filter(
         (v) => v.status !== 'Carried' && v.amountPaid < v.netDue
       );
@@ -123,93 +293,324 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     })
     .filter((row) => row.totalOutstanding > 0);
 
-  // CSV Export for Reports
-  const handleExportReportCsv = () => {
-    if (reportType === 'classSummary') {
-      const headers = ['Class Name', 'Vouchers Issued', 'Gross Issued (Rs)', 'Collected (Rs)', 'Outstanding (Rs)', 'Collection %'];
-      const rows = classSummaryRows.map((r) => [
-        `"${r.className}"`,
-        r.voucherCount,
-        r.issued,
-        r.collected,
-        r.outstanding,
-        `${r.pct}%`,
-      ]);
+  const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
 
-      downloadCsv(
-        `Class_Fee_Summary_${activeMonth}.csv`,
-        [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
-      );
-    } else if (reportType === 'outstanding') {
-      const headers = [
-        'Registration No.',
-        'Student Name',
-        'Date of Birth',
-        'Calculated Age',
-        'Class',
-        'Father Name',
-        'Father Phone',
-        'Overdue Months Count',
-        'Overdue Months List',
-        'Outstanding (Net) Rs',
-      ];
-      const rows = studentOutstandingRows.map((r) => [
-        r.regNo,
-        `"${r.name}"`,
-        `"${r.dob || ''}"`,
-        `"${r.ageStr}"`,
-        `"${r.className}"`,
-        `"${r.fatherName}"`,
-        r.fatherPhone,
-        r.unpaidMonthsCount,
-        `"${r.formattedMonthsList}"`,
-        r.totalOutstanding,
-      ]);
-
-      downloadCsv(
-        `Student_Outstanding_Balances_${activeMonth}.csv`,
-        [headers.join(','), ...rows.map((e) => e.join(','))].join('\n')
-      );
+  const pendingRows: ReportRow[] = (() => {
+    const rows: ReportRow[] = [];
+    for (const r of studentOutstandingRows) {
+      const sv = vouchers
+        .filter((v) => v.studentId === r.studentId && v.status !== 'Reversed')
+        .sort((a, b) => a.month.localeCompare(b.month));
+      const uncarried = sv.filter((v) => v.status !== 'Carried' && v.amountPaid < v.netDue);
+      const included =
+        uncarried.length > 0
+          ? uncarried
+          : sv.filter((v) => v.amountPaid < v.netDue).slice(-1);
+      for (const v of included) {
+        rows.push({
+          date: v.dueDate,
+          regNo: r.regNo,
+          studentName: r.name,
+          className: r.className,
+          feeMonth: formatMonthName(v.month),
+          total: v.netDue,
+          paid: v.amountPaid,
+          balance: v.netDue - v.amountPaid,
+        });
+      }
     }
+    return rows;
+  })();
+
+  // ---- Metrics --------------------------------------------------------------
+
+  const metrics = [
+    {
+      key: 'collection',
+      label: 'This Month Collection',
+      value: formatCurrency(thisMonthCollection),
+      icon: Wallet,
+      accent: 'text-emerald-600',
+      iconBg: 'bg-emerald-50 text-emerald-600',
+      hint: `${monthTxns.length} transaction${monthTxns.length !== 1 ? 's' : ''} in ${formatMonthName(activeMonth)}`,
+      tab: 'quick' as FeeReportTab,
+    },
+    {
+      key: 'pending',
+      label: 'Total Pending',
+      value: formatCurrency(totalPending),
+      icon: AlertTriangle,
+      accent: 'text-rose-600',
+      iconBg: 'bg-rose-50 text-rose-600',
+      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''} with outstanding balance`,
+      tab: 'pending' as FeeReportTab,
+    },
+    {
+      key: 'issued',
+      label: 'Vouchers Issued',
+      value: String(vouchersIssued),
+      icon: FileText,
+      accent: 'text-teal-600',
+      iconBg: 'bg-teal-50 text-teal-600',
+      hint: `${formatMonthName(activeMonth)} billing`,
+      tab: 'quick' as FeeReportTab,
+    },
+    {
+      key: 'receivable',
+      label: 'Vouchers w/ Receivable Balances',
+      value: String(vouchersWithReceivable.length),
+      icon: HandCoins,
+      accent: 'text-indigo-600',
+      iconBg: 'bg-indigo-50 text-indigo-600',
+      hint: 'Currently unpaid balance on vouchers',
+      tab: 'pending' as FeeReportTab,
+    },
+    {
+      key: 'studentsPaid',
+      label: 'Students Paid',
+      value: String(studentsPaidThisMonth),
+      icon: Users,
+      accent: 'text-sky-600',
+      iconBg: 'bg-sky-50 text-sky-600',
+      hint: `Distinct students paid in ${formatMonthName(activeMonth)}`,
+      tab: 'quick' as FeeReportTab,
+    },
+  ];
+
+  const activeMetric = (key: string) => {
+    const m = metrics.find((x) => x.key === key);
+    if (!m) return;
+    if (feeReportTab !== m.tab) setFeeReportTab(m.tab);
+    if (m.tab === 'quick') setQuickPeriod('thisMonth');
+  };
+
+  const handlePrintArrears = async () => {
+    const pdfRows: OutstandingArrearsPdfRow[] = studentOutstandingRows.map((r) => ({
+      regNo: r.regNo,
+      name: r.name,
+      dob: r.dob,
+      ageStr: r.ageStr,
+      className: r.className,
+      fatherName: r.fatherName,
+      fatherPhone: r.fatherPhone,
+      unpaidMonthsCount: r.unpaidMonthsCount,
+      oldestUnpaidMonth: r.oldestUnpaidMonth,
+      totalOutstanding: r.totalOutstanding,
+    }));
+    const monthLabel = formatMonthName(activeMonth);
+    await printOutstandingArrearsPdf(
+      pdfRows,
+      { institute, bankAccounts, students, classes },
+      monthLabel
+    );
+  };
+
+  const reportTabs: { key: FeeReportTab; label: string; icon: typeof Layers }[] = [
+    { key: 'quick', label: 'Quick Reports', icon: Clock },
+    { key: 'dateRange', label: 'Date Range', icon: CalendarRange },
+    { key: 'classWise', label: 'Class Wise', icon: Layers },
+    { key: 'studentWise', label: 'Student Wise', icon: Search },
+    { key: 'pending', label: 'Pending', icon: AlertTriangle },
+  ];
+
+  // ---- Report export helpers -------------------------------------------------
+
+  const REPORT_HEADERS = ['Sr#', 'Date', 'Reg No', 'Student Name', 'Class', 'Fee Month', 'Total', 'Paid', 'Balance'];
+
+  const buildReportText = (rows: ReportRow[]) => {
+    const lines = [
+      REPORT_HEADERS.join('\t'),
+      ...rows.map((r, i) =>
+        [i + 1, r.date, r.regNo, r.studentName, r.className, r.feeMonth, r.total, r.paid, r.balance].join('\t')
+      ),
+    ];
+    return lines.join('\n');
+  };
+
+  const copyReport = async (rows: ReportRow[]) => {
+    const text = buildReportText(rows);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } catch {
+        // ignore
+      }
+      document.body.removeChild(ta);
+    }
+  };
+
+  const exportReportCsv = (rows: ReportRow[], filename: string) => {
+    const csvRows = rows.map((r, i) => [
+      i + 1,
+      `"${r.date}"`,
+      `"${r.regNo}"`,
+      `"${r.studentName}"`,
+      `"${r.className}"`,
+      `"${r.feeMonth}"`,
+      r.total,
+      r.paid,
+      r.balance,
+    ]);
+    downloadCsv(filename, [REPORT_HEADERS.join(','), ...csvRows.map((e) => e.join(','))].join('\n'));
+  };
+
+  const printReportTable = async (rows: ReportRow[], title: string) => {
+    const pdfRows: FeeCollectionReportPdfRow[] = rows.map((r) => ({
+      date: r.date,
+      regNo: r.regNo,
+      studentName: r.studentName,
+      className: r.className,
+      feeMonth: r.feeMonth,
+      total: r.total,
+      paid: r.paid,
+      balance: r.balance,
+    }));
+    await printFeeCollectionReportPdf(
+      pdfRows,
+      { institute, bankAccounts, students, classes },
+      title
+    );
+  };
+
+  const ReportTable: React.FC<{ rows: ReportRow[]; title: string; filename: string }> = ({
+    rows,
+    title,
+    filename,
+  }) => {
+    const totals = rows.reduce(
+      (acc, r) => ({
+        total: acc.total + r.total,
+        paid: acc.paid + r.paid,
+        balance: acc.balance + r.balance,
+      }),
+      { total: 0, paid: 0, balance: 0 }
+    );
+
+    return (
+      <div>
+        {/* Printable institutional header (visible only when printing) */}
+        <div className="hidden print:block mb-4 border-b border-slate-300 pb-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              {institute.logoUrl ? (
+                <img
+                  src={institute.logoUrl}
+                  alt={institute.name}
+                  className="w-12 h-12 object-contain rounded-lg border border-slate-200 shrink-0"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold text-base shrink-0">
+                  {institute.name ? institute.name.charAt(0) : 'S'}
+                </div>
+              )}
+              <div>
+                <h1 className="text-lg font-black text-slate-900 uppercase tracking-wide">
+                  {institute.name || 'INSTITUTE NAME'}
+                </h1>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {institute.address || 'School Campus'} {institute.phone && `• Ph: ${institute.phone}`} {institute.regNo && `• Reg #: ${institute.regNo}`}
+                </p>
+                <p className="text-[11px] font-bold text-slate-700 mt-1">{title}</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
+                Generated
+              </span>
+              <span className="text-sm font-bold text-slate-900">{todayStr}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Toolbar (hidden when printing) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3 print:hidden">
+          <div>
+            <h4 className="font-bold text-slate-800 text-sm">{title}</h4>
+            <p className="text-[11px] text-slate-400">
+              {rows.length} record{rows.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => copyReport(rows)}
+              className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-[11px] transition cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Copy
+            </button>
+            <button
+              onClick={() => exportReportCsv(rows, filename)}
+              className="flex items-center gap-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg text-[11px] transition cursor-pointer"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              CSV
+            </button>
+            <button
+              onClick={() => printReportTable(rows, title)}
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-lg text-[11px] transition cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              Print PDF
+            </button>
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 italic text-sm">No records found.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-700">
+              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+                <tr>
+                  <th className="p-2.5">Sr#</th>
+                  <th className="p-2.5">Date</th>
+                  <th className="p-2.5">Reg No</th>
+                  <th className="p-2.5">Student Name</th>
+                  <th className="p-2.5">Class</th>
+                  <th className="p-2.5">Fee Month</th>
+                  <th className="p-2.5 text-right">Total</th>
+                  <th className="p-2.5 text-right">Paid</th>
+                  <th className="p-2.5 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="p-2.5 text-slate-400">{i + 1}</td>
+                    <td className="p-2.5 font-medium">{r.date}</td>
+                    <td className="p-2.5 font-mono text-slate-500">{r.regNo || '—'}</td>
+                    <td className="p-2.5 font-bold text-slate-900">{r.studentName}</td>
+                    <td className="p-2.5">{r.className}</td>
+                    <td className="p-2.5">{r.feeMonth}</td>
+                    <td className="p-2.5 text-right font-semibold">{formatCurrency(r.total)}</td>
+                    <td className="p-2.5 text-right font-bold text-emerald-700">{formatCurrency(r.paid)}</td>
+                    <td className="p-2.5 text-right font-bold text-rose-600">{formatCurrency(r.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-900 text-white font-bold border-t border-slate-800">
+                <tr>
+                  <td colSpan={6} className="p-2.5">TOTAL:</td>
+                  <td className="p-2.5 text-right text-teal-300">{formatCurrency(totals.total)}</td>
+                  <td className="p-2.5 text-right text-emerald-400">{formatCurrency(totals.paid)}</td>
+                  <td className="p-2.5 text-right text-rose-300">{formatCurrency(totals.balance)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6">
-      {/* Printable Institutional Header (Visible only when printing) */}
-      <div className="hidden print:block mb-4 border-b border-slate-300 pb-3">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            {institute.logoUrl ? (
-              <img
-                src={institute.logoUrl}
-                alt={institute.name}
-                className="w-12 h-12 object-contain rounded-lg border border-slate-200 shrink-0"
-              />
-            ) : (
-              <div className="w-12 h-12 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold text-base shrink-0">
-                {institute.name ? institute.name.charAt(0) : 'S'}
-              </div>
-            )}
-            <div>
-              <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">
-                {institute.name || 'INSTITUTE NAME'}
-              </h1>
-              <p className="text-xs text-slate-500 font-medium">
-                {institute.address || 'School Campus'} {institute.phone && `• Ph: ${institute.phone}`} {institute.regNo && `• Reg #: ${institute.regNo}`}
-              </p>
-            </div>
-          </div>
-          <div className="text-right">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-              Billing Month
-            </span>
-            <span className="text-sm font-bold text-slate-900">
-              {formatMonthName(activeMonth)}
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
         <div className="flex items-center gap-3.5">
@@ -229,43 +630,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               Financial & Fee Audit Reports
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {institute.name} &bull; Monthly collection summaries, student fee ledgers, and outstanding arrears audit reports.
+              {institute.name} &bull; Fee collection metrics, generated fee reports, and outstanding balance audits.
             </p>
           </div>
         </div>
-
-        {reportType !== 'studentLedger' && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => window.print()}
-              className="flex items-center gap-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs shadow-2xs transition cursor-pointer"
-            >
-              <Printer className="w-4 h-4 text-slate-600" />
-              Print Report
-            </button>
-            <button
-              onClick={handleExportReportCsv}
-              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
-            >
-              <Download className="w-4 h-4" />
-              Export Report CSV
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Tabs Switcher */}
+      {/* Primary Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto print:hidden">
         <button
-          onClick={() => handleTabChange('classSummary')}
+          onClick={() => handleTabChange('feeCollection')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-            reportType === 'classSummary'
+            reportType === 'feeCollection'
               ? 'bg-teal-600 text-white shadow-xs'
               : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
           }`}
         >
-          <BookOpen className="w-4 h-4" />
-          Per-Class Monthly Collection Summary
+          <BarChart3 className="w-4 h-4" />
+          Fee Collection Report
         </button>
         <button
           onClick={() => handleTabChange('studentLedger')}
@@ -291,101 +673,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </button>
       </div>
 
-      {/* Report 3: Student Fee Collections Ledger */}
-      {reportType === 'studentLedger' && (
+      {reportType === 'studentLedger' ? (
         <StudentFeeLedger initialStudentId={selectedStudentForLedger} />
-      )}
-
-      {/* Report 1: Class Summary */}
-      {reportType === 'classSummary' && (
+      ) : reportType === 'outstanding' ? (
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
-              Class Fee Collection Summary &bull; {formatMonthName(activeMonth)}
-            </h3>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
-                  <th className="p-3">Class Name</th>
-                  <th className="p-3 text-center">Vouchers Issued</th>
-                  <th className="p-3 text-right">Gross Issued</th>
-                  <th className="p-3 text-right">Collected</th>
-                  <th className="p-3 text-right">Outstanding</th>
-                  <th className="p-3 text-center">Collection %</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {classSummaryRows.map((r) => (
-                  <tr key={r.classId} className="hover:bg-slate-50">
-                    <td className="p-3 font-bold text-slate-900">{r.className}</td>
-                    <td className="p-3 text-center font-semibold">{r.voucherCount}</td>
-                    <td className="p-3 text-right font-bold text-slate-900">
-                      {formatCurrency(r.issued)}
-                    </td>
-                    <td className="p-3 text-right font-bold text-emerald-700">
-                      {formatCurrency(r.collected)}
-                    </td>
-                    <td className="p-3 text-right font-bold text-rose-600">
-                      {formatCurrency(r.outstanding)}
-                    </td>
-                    <td className="p-3 text-center">
-                      <span
-                        className={`inline-block px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
-                          r.pct >= 80
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : r.pct >= 40
-                            ? 'bg-teal-100 text-teal-800'
-                            : 'bg-amber-100 text-amber-800'
-                        }`}
-                      >
-                        {r.pct}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-slate-900 text-white font-bold border-t border-slate-800">
-                <tr>
-                  <td className="p-3">TOTAL INSTITUTE SUMMARY:</td>
-                  <td className="p-3 text-center">
-                    {classSummaryRows.reduce((s, r) => s + r.voucherCount, 0)}
-                  </td>
-                  <td className="p-3 text-right text-teal-300">
-                    {formatCurrency(classSummaryRows.reduce((s, r) => s + r.issued, 0))}
-                  </td>
-                  <td className="p-3 text-right text-emerald-400">
-                    {formatCurrency(classSummaryRows.reduce((s, r) => s + r.collected, 0))}
-                  </td>
-                  <td className="p-3 text-right text-rose-300">
-                    {formatCurrency(classSummaryRows.reduce((s, r) => s + r.outstanding, 0))}
-                  </td>
-                  <td className="p-3 text-center text-amber-300">
-                    {classSummaryRows.reduce((s, r) => s + r.issued, 0) > 0
-                      ? Math.round(
-                          (classSummaryRows.reduce((s, r) => s + r.collected, 0) /
-                            classSummaryRows.reduce((s, r) => s + r.issued, 0)) *
-                            100
-                        )
-                      : 0}
-                    %
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Report 2: Student Outstanding */}
-      {reportType === 'outstanding' && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between print:hidden">
             <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
               Student Unpaid Fee Arrears Audit ({studentOutstandingRows.length} Defaulters)
             </h3>
+            <button
+              onClick={handlePrintArrears}
+              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
+            >
+              <Printer className="w-4 h-4" />
+              Print Arrears PDF
+            </button>
           </div>
 
           <div className="overflow-x-auto">
@@ -473,6 +775,338 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Metrics Section */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-3 sm:p-4 print:hidden">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                Fee Collection Metrics
+              </h3>
+              <span className="text-[11px] text-slate-400 font-medium">
+                Billing Month: {formatMonthName(activeMonth)}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
+              {metrics.map((m) => {
+                const Icon = m.icon;
+                return (
+                  <button
+                    key={m.key}
+                    onClick={() => activeMetric(m.key)}
+                    title={`${METRIC_LABELS[m.tab]} — ${m.hint}`}
+                    className="group text-left bg-white border border-slate-200 rounded-xl p-2.5 flex items-center gap-2.5 hover:border-teal-300 hover:shadow-sm transition cursor-pointer"
+                  >
+                    <span
+                      className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${m.iconBg}`}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[10px] font-semibold text-slate-500 leading-tight truncate">
+                        {m.label}
+                      </span>
+                      <span className={`block text-lg font-black leading-tight truncate ${m.accent}`}>
+                        {m.value}
+                      </span>
+                      <span className="block text-[9px] text-slate-400 font-medium leading-tight truncate">
+                        {m.hint}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Generate Reports Section */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+              <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                Generate Fee Reports
+              </h3>
+              <p className="text-[11px] text-slate-500">{METRIC_LABELS[feeReportTab]}</p>
+            </div>
+
+            <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 overflow-x-auto print:hidden">
+              {reportTabs.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setFeeReportTab(t.key)}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap ${
+                      feeReportTab === t.key
+                        ? 'bg-teal-600 text-white shadow-xs'
+                        : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="p-6">
+              {feeReportTab === 'quick' && (
+                <div className="space-y-5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(
+                      [
+                        { key: 'today', label: "View Today's List", icon: CalendarDays },
+                        { key: 'thisMonth', label: "This Month's List", icon: Wallet },
+                        { key: 'lastMonth', label: "Last Month's List", icon: History },
+                      ] as { key: QuickPeriod; label: string; icon: typeof Clock }[]
+                    ).map((b) => {
+                      const Icon = b.icon;
+                      return (
+                        <button
+                          key={b.key}
+                          onClick={() => setQuickPeriod(b.key)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                            quickPeriod === b.key
+                              ? 'bg-teal-600 text-white shadow-xs'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Icon className="w-4 h-4" />
+                          {b.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <ReportTable
+                    rows={quickRows}
+                    title={quickPeriodLabel}
+                    filename={`Fee_Collection_Quick_${quickPeriod}_${activeMonth}.csv`}
+                  />
+                </div>
+              )}
+
+              {feeReportTab === 'dateRange' && (
+                <div className="space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-4 print:hidden">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                        From Date
+                      </label>
+                      <DatePicker value={dateFrom} onChange={setDateFrom} themeColor="teal" allowClear={false} className="w-44" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                        To Date
+                      </label>
+                      <DatePicker value={dateTo} onChange={setDateTo} themeColor="teal" allowClear={false} className="w-44" />
+                    </div>
+                    <button
+                      onClick={handleGenerateDateRange}
+                      disabled={!dateFrom || !dateTo}
+                      className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-teal-600 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" />
+                      Generate Report
+                    </button>
+                  </div>
+                  {dateRangeGenerated ? (
+                    <ReportTable
+                      rows={dateRangeRows}
+                      title={`Fee Collection Report — ${dateFrom} to ${dateTo}`}
+                      filename={`Fee_Collection_${dateFrom}_to_${dateTo}.csv`}
+                    />
+                  ) : (
+                    <div className="p-8 text-center text-slate-400 italic text-sm">
+                      Select a from/to date range and click Generate Report.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {feeReportTab === 'classWise' && (
+                <div className="space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-4 print:hidden">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                        Select Class
+                      </label>
+                      <div className="relative">
+                        <School className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        <select
+                          value={selectedClassId}
+                          onChange={(e) => setSelectedClassId(e.target.value)}
+                          className="pl-9.5 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition appearance-none cursor-pointer min-w-56"
+                        >
+                          <option value="">All Classes</option>
+                          {classes.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                        Period
+                      </label>
+                      <div className="relative">
+                        <CalendarDays className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        <select
+                          value={classDateFilter}
+                          onChange={(e) =>
+                            setClassDateFilter(
+                              e.target.value as 'all' | 'thisMonth' | 'prevMonth'
+                            )
+                          }
+                          className="pl-9.5 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition appearance-none cursor-pointer min-w-44"
+                        >
+                          <option value="all">All Time</option>
+                          <option value="thisMonth">This Month</option>
+                          <option value="prevMonth">Previous Month</option>
+                        </select>
+                        <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                  <ReportTable
+                    rows={classWiseRows}
+                    title={`Class Wise Fee Collection Report — ${
+                      selectedClassName || 'All Classes'
+                    } (${classDateFilterLabel})`}
+                    filename={`Fee_Collection_Class_${
+                      (selectedClassName || 'All_Classes').replace(/\s+/g, '_')
+                    }_${classDateFilter}.csv`}
+                  />
+                </div>
+              )}
+
+              {feeReportTab === 'studentWise' && (
+                <div className="space-y-5">
+                  <div className="print:hidden">
+                    <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                      Search Student
+                    </label>
+                    <div className="relative w-full md:w-96">
+                      <div className="relative">
+                        <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search Reg #, Name, Class..."
+                          value={studentSearch}
+                          onChange={(e) => {
+                            setStudentSearch(e.target.value);
+                            setIsStudentDropdownOpen(true);
+                          }}
+                          onFocus={() => setIsStudentDropdownOpen(true)}
+                          className="w-full pl-9.5 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition"
+                        />
+                        {studentSearch || selectedStudentId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudentSearch('');
+                              setSelectedStudentId('');
+                              setIsStudentDropdownOpen(false);
+                            }}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                            title="Clear selection"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                        )}
+                      </div>
+
+                      {isStudentDropdownOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-30"
+                            onClick={() => setIsStudentDropdownOpen(false)}
+                          />
+                          <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-64 overflow-y-auto divide-y divide-slate-100">
+                            {filteredStudentsList.length > 0 ? (
+                              filteredStudentsList.map((s) => {
+                                const cls = classes.find((c) => c.id === s.classId);
+                                const isSel = s.id === selectedStudentId;
+                                return (
+                                  <button
+                                    key={s.id}
+                                    onClick={() => {
+                                      setSelectedStudentId(s.id);
+                                      setStudentSearch(`${s.name} (${s.regNo})`);
+                                      setIsStudentDropdownOpen(false);
+                                    }}
+                                    className={`w-full text-left p-2.5 hover:bg-slate-50 flex items-center gap-2.5 transition cursor-pointer ${
+                                      isSel ? 'bg-teal-50/70 font-bold' : ''
+                                    }`}
+                                  >
+                                    <StudentAvatar photoUrl={s.photoUrl} name={s.name} size="xs" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-xs font-bold text-slate-900 truncate">
+                                          {s.name}
+                                        </span>
+                                        <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded">
+                                          {s.regNo}
+                                        </span>
+                                      </div>
+                                      <span className="text-[11px] text-slate-500 truncate block">
+                                        {cls?.name || 'Class'} &bull; {s.fatherName}
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="p-3 text-center text-xs text-slate-400 italic">
+                                No matching student found.
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedStudentId && selectedStudent ? (
+                    <ReportTable
+                      rows={studentWiseRows}
+                      title={`Student Wise Fee Collection Report — ${selectedStudent.name} (${selectedStudent.regNo})`}
+                      filename={`Fee_Collection_Student_${selectedStudent.regNo}.csv`}
+                    />
+                  ) : (
+                    <div className="p-8 text-center text-slate-400 italic text-sm flex items-center justify-center gap-2">
+                      <GraduationCap className="w-4 h-4" />
+                      Select a student to view their fee collection report.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {feeReportTab === 'pending' && (
+                <div className="space-y-5">
+                  {pendingRows.length > 0 ? (
+                    <ReportTable
+                      rows={pendingRows}
+                      title={`Pending Fee Report (${formatMonthName(activeMonth)})`}
+                      filename={`Pending_Fee_Report_${activeMonth}.csv`}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-10 text-center">
+                      <BookMarked className="w-10 h-10 text-slate-300 mb-3" />
+                      <p className="text-sm font-bold text-slate-700 mb-1">No Pending Balances</p>
+                      <p className="text-xs text-slate-400 max-w-sm">
+                        All students have cleared their fee balances for {formatMonthName(activeMonth)}.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
