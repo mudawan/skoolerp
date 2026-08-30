@@ -10,6 +10,7 @@ export interface PdfExportContext {
   classes: SchoolClass[];
   templates?: FeeTemplate[];
   roundingMultiple?: number;
+  themeColor?: string;
 }
 
 export interface PdfExportOptions {
@@ -17,6 +18,40 @@ export interface PdfExportOptions {
 }
 
 const imageCache = new Map<string, string>();
+
+/**
+ * Convert hex color string to RGB tuple
+ */
+function hexToRgb(hex?: string): [number, number, number] {
+  if (!hex) return [15, 118, 110]; // default teal-700
+  const clean = hex.replace('#', '').trim();
+  if (clean.length === 3) {
+    const r = parseInt(clean[0] + clean[0], 16);
+    const g = parseInt(clean[1] + clean[1], 16);
+    const b = parseInt(clean[2] + clean[2], 16);
+    return [isNaN(r) ? 15 : r, isNaN(g) ? 118 : g, isNaN(b) ? 110 : b];
+  }
+  if (clean.length === 6) {
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    return [isNaN(r) ? 15 : r, isNaN(g) ? 118 : g, isNaN(b) ? 110 : b];
+  }
+  return [15, 118, 110];
+}
+
+/**
+ * Truncate text with ellipsis if it exceeds the maxWidth in millimeters
+ */
+function truncatePdfText(doc: jsPDF, text: string, maxWidthMm: number): string {
+  if (!text) return '';
+  if (doc.getTextWidth(text) <= maxWidthMm) return text;
+  let candidate = text;
+  while (candidate.length > 0 && doc.getTextWidth(candidate + '…') > maxWidthMm) {
+    candidate = candidate.slice(0, -1);
+  }
+  return candidate ? candidate + '…' : text;
+}
 
 /**
  * Preload and convert an image URL to a high-quality PNG data URL for jsPDF embedding
@@ -1198,7 +1233,7 @@ export function buildOutstandingArrearsDoc(
   const pageWidth = 210;
   const pageHeight = 297;
   const margin = 12;
-  const contentWidth = pageWidth - margin * 2;
+  const contentWidth = pageWidth - margin * 2; // 186 mm
   let y = margin;
 
   // 1. Institute Header & Logo
@@ -1214,15 +1249,15 @@ export function buildOutstandingArrearsDoc(
     }
   }
 
-  const textStartX = hasLogo ? margin + 18 : margin;
+  const textStartX = hasLogo ? margin + 17 : margin;
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
+  doc.setFontSize(13.5);
   doc.setTextColor(15, 23, 42); // slate-900
-  doc.text((context.institute.name || 'INSTITUTE NAME').toUpperCase(), textStartX, y + 4.5);
+  doc.text((context.institute.name || 'INSTITUTE NAME').toUpperCase(), textStartX, y + 4.2);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.setTextColor(100, 116, 139);
   const subDetails = [
     context.institute.address,
@@ -1231,171 +1266,371 @@ export function buildOutstandingArrearsDoc(
     context.institute.regNo ? `Reg #: ${context.institute.regNo}` : '',
   ]
     .filter(Boolean)
-    .join('  •  ');
-  doc.text(subDetails, textStartX, y + 9.5);
+    .join('   •   ');
+  doc.text(subDetails, textStartX, y + 8.8);
+
+  // Right Header: Status Badge & Generation Timestamp
+  const badgeWidth = 52;
+  const badgeHeight = 6.5;
+  const badgeX = pageWidth - margin - badgeWidth;
+  doc.setFillColor(255, 241, 242); // rose-50
+  doc.setDrawColor(254, 205, 211); // rose-200
+  doc.setLineWidth(0.3);
+  doc.roundedRect(badgeX, y, badgeWidth, badgeHeight, 1.5, 1.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(190, 18, 60); // rose-700
+  doc.text('FEE ARREARS & DEFAULTERS AUDIT', badgeX + badgeWidth / 2, y + 4.3, { align: 'center' });
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Generated: ${dateStr} at ${timeStr}`, pageWidth - margin, y + 11.5, { align: 'right' });
+
   y += 16;
 
-  // 2. Document Title Banner
-  doc.setFillColor(248, 250, 252); // slate-50
-  doc.setDrawColor(226, 232, 240); // slate-200
-  doc.rect(margin, y, contentWidth, 8.5, 'FD');
+  // Header bottom divider
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.35);
+  doc.line(margin, y, margin + contentWidth, y);
+  y += 3.5;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
-  doc.setTextColor(30, 41, 59); // slate-800
-  doc.text('STUDENT UNPAID FEE ARREARS AUDIT', margin + 3, y + 5.5);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139);
-  const printedDateStr = `Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
-  doc.text(printedDateStr, pageWidth - margin - 3, y + 5.5, { align: 'right' });
-  y += 12.5;
-
-  // 3. Summary Line
+  // 2. Compute Summary Metrics
   const totalOut = rows.reduce((s, r) => s + r.totalOutstanding, 0);
+  const chronicDefaulters = rows.filter((r) => r.unpaidMonthsCount >= 3).length;
+
+  // 3. Document Title Banner
+  const bannerHeight = 8.5;
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(margin, y, contentWidth, bannerHeight, 'FD');
+
+  // Left red accent stripe
+  doc.setFillColor(225, 29, 72); // rose-600
+  doc.rect(margin, y, 2.5, bannerHeight, 'F');
+
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105); // slate-600
-  doc.text(`${rows.length} Defaulter${rows.length !== 1 ? 's' : ''}  •  Billing Month: ${monthLabel}`, margin + 3, y + 2);
+  doc.setFontSize(9);
+  doc.setTextColor(30, 41, 59);
+  doc.text('STUDENT UNPAID FEE ARREARS AUDIT', margin + 6, y + 5.5);
 
-  doc.setTextColor(190, 18, 60); // rose-700
-  doc.text(`Total Outstanding: ${formatCurrency(totalOut)}`, pageWidth - margin - 3, y + 2, { align: 'right' });
-  y += 7.5;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(71, 85, 105);
+  doc.text(`BILLING CYCLE: ${monthLabel.toUpperCase()}`, pageWidth - margin - 4, y + 5.5, { align: 'right' });
+  y += bannerHeight + 3;
 
-  // 4. Table
+  // 4. Executive KPI Ribbon (4 Metric Cards)
+  const kpiBoxHeight = 10;
+  const kpiGap = 2.5;
+  const kpiBoxWidth = (contentWidth - kpiGap * 3) / 4; // ~44.6mm each
+
+  // Card 1: Total Defaulters
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(margin, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('DEFAULTER STUDENTS', margin + 2.5, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`${rows.length} Students`, margin + 2.5, y + 8);
+
+  // Card 2: Billing Month
+  const kpi2X = margin + kpiBoxWidth + kpiGap;
+  doc.setFillColor(255, 255, 255);
+  doc.rect(kpi2X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('BILLING PERIOD', kpi2X + 2.5, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(monthLabel, kpi2X + 2.5, y + 8);
+
+  // Card 3: Chronic Defaulters (>= 3 mos)
+  const kpi3X = kpi2X + kpiBoxWidth + kpiGap;
+  doc.setFillColor(chronicDefaulters > 0 ? 255 : 255, chronicDefaulters > 0 ? 247 : 255, chronicDefaulters > 0 ? 237 : 255); // amber-50 or white
+  doc.setDrawColor(chronicDefaulters > 0 ? 254 : 226, chronicDefaulters > 0 ? 215 : 232, chronicDefaulters > 0 ? 170 : 240); // amber-200
+  doc.rect(kpi3X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(chronicDefaulters > 0 ? 180 : 100, chronicDefaulters > 0 ? 83 : 116, chronicDefaulters > 0 ? 9 : 139);
+  doc.text('HIGH RISK (>= 3 MOS)', kpi3X + 2.5, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(chronicDefaulters > 0 ? 217 : 100, chronicDefaulters > 0 ? 119 : 116, chronicDefaulters > 0 ? 6 : 139);
+  doc.text(`${chronicDefaulters} Students`, kpi3X + 2.5, y + 8);
+
+  // Card 4: Total Arrears
+  const kpi4X = kpi3X + kpiBoxWidth + kpiGap;
+  doc.setFillColor(255, 241, 242); // rose-50
+  doc.setDrawColor(254, 205, 211); // rose-200
+  doc.rect(kpi4X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(190, 18, 60);
+  doc.text('TOTAL NET ARREARS', kpi4X + 2.5, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(225, 29, 72);
+  doc.text(formatCurrency(totalOut), kpi4X + 2.5, y + 8);
+
+  y += kpiBoxHeight + 4;
+
+  // 5. Table Configuration
   const colDefs = [
-    { title: 'STUDENT INFO', width: 64, align: 'left' as const },
+    { title: 'STUDENT INFORMATION', width: 62, align: 'left' as const },
     { title: 'CLASS', width: 20, align: 'left' as const },
-    { title: 'FATHER NAME & CONTACT', width: 42, align: 'left' as const },
-    { title: 'MONTHS UNPAID', width: 30, align: 'left' as const },
-    { title: 'OUTSTANDING (NET)', width: 30, align: 'right' as const },
+    { title: 'FATHER & GUARDIAN', width: 44, align: 'left' as const },
+    { title: 'DEFAULT DURATION', width: 30, align: 'left' as const },
+    { title: 'ARREARS (NET)', width: 30, align: 'right' as const },
   ];
+  // 62 + 20 + 44 + 30 + 30 = 186 mm!
+
+  const tableHeaderHeight = 7.2;
 
   const drawTableHeader = (curY: number) => {
-    doc.setFillColor(71, 85, 105); // slate-600
-    doc.rect(margin, curY, contentWidth, 7, 'F');
+    doc.setFillColor(30, 41, 59); // slate-800
+    doc.rect(margin, curY, contentWidth, tableHeaderHeight, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
     doc.setTextColor(255, 255, 255);
     let curX = margin;
     colDefs.forEach((col) => {
       if (col.align === 'right') {
-        doc.text(col.title, curX + col.width - 2, curY + 4.5, { align: 'right' });
+        doc.text(col.title, curX + col.width - 2.5, curY + 4.8, { align: 'right' });
       } else {
-        doc.text(col.title, curX + 2, curY + 4.5);
+        doc.text(col.title, curX + 2.5, curY + 4.8);
       }
       curX += col.width;
     });
   };
 
-  drawTableHeader(y);
-  y += 7;
-
-  const rowH = 11;
-  rows.forEach((r, idx) => {
-    if (y + rowH > pageHeight - 22) {
-      doc.addPage('a4', 'portrait');
-      y = margin;
-      drawTableHeader(y);
-      y += 7;
-    }
-
-    const isEven = idx % 2 === 0;
-    doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
-    doc.rect(margin, y, contentWidth, rowH, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
-
-    let curX = margin;
-
-    // Col 1: Student Info
+  const drawRunningHeader = () => {
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text(r.name, curX + 2, y + 4.5, { maxWidth: colDefs[0].width - 4 });
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);
+    const subTitle = truncatePdfText(
+      doc,
+      `${context.institute.name || 'INSTITUTE NAME'}   •   OUTSTANDING FEE ARREARS AUDIT (${monthLabel.toUpperCase()}) (Continued)`,
+      contentWidth - 60
+    );
+    doc.text(subTitle, margin, margin + 4);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Reg #: ${r.regNo}`, curX + 2, y + 8);
-    if (r.dob) {
-      doc.text(`DOB: ${r.dob}${r.ageStr ? ` (${r.ageStr})` : ''}`, curX + 2, y + 10.3);
-    }
-    curX += colDefs[0].width;
-
-    // Col 2: Class
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(51, 65, 85);
-    doc.text(r.className, curX + 2, y + 5, { maxWidth: colDefs[1].width - 4 });
-    curX += colDefs[1].width;
-
-    // Col 3: Father Name & Contact
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(15, 23, 42);
-    doc.text(r.fatherName || 'N/A', curX + 2, y + 4.5, { maxWidth: colDefs[2].width - 4 });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.text(r.fatherPhone || '', curX + 2, y + 8.5, { maxWidth: colDefs[2].width - 4 });
-    curX += colDefs[2].width;
-
-    // Col 4: Months Unpaid
-    doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
-    doc.setTextColor(r.unpaidMonthsCount >= 3 ? 190 : 180, r.unpaidMonthsCount >= 3 ? 18 : 83, r.unpaidMonthsCount >= 3 ? 60 : 9);
-    const monthsDue = `${r.unpaidMonthsCount} Month${r.unpaidMonthsCount !== 1 ? 's' : ''} Due`;
-    doc.text(monthsDue, curX + 2, y + 4.5, { maxWidth: colDefs[3].width - 4 });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    if (r.oldestUnpaidMonth) {
-      doc.text(`Due since ${formatMonthName(r.oldestUnpaidMonth)}`, curX + 2, y + 8, { maxWidth: colDefs[3].width - 4 });
-    }
-    curX += colDefs[3].width;
+    doc.text(`Generated: ${dateStr}`, pageWidth - margin, margin + 4, { align: 'right' });
 
-    // Col 5: Outstanding (Net)
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(225, 29, 72); // rose-600
-    doc.text(formatCurrency(r.totalOutstanding), curX + colDefs[4].width - 2, y + 5.5, { align: 'right' });
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, margin + 6.5, margin + contentWidth, margin + 6.5);
+  };
 
-    y += rowH;
-  });
+  drawTableHeader(y);
+  y += tableHeaderHeight;
 
-  // 5. Totals Footer
-  if (y > pageHeight - 22) {
-    doc.addPage('a4', 'portrait');
-    y = margin;
-    drawTableHeader(y);
-    y += 7;
+  // 6. Data Rows
+  const rowH = 10.5;
+
+  if (rows.length === 0) {
+    doc.setFillColor(255, 255, 255);
+    doc.rect(margin, y, contentWidth, 14, 'F');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(4, 120, 87);
+    doc.text('Outstanding Arrears Cleared! No student fee defaulters recorded for this period.', pageWidth / 2, y + 8.5, {
+      align: 'center',
+    });
+    y += 14;
+  } else {
+    rows.forEach((r, idx) => {
+      if (y + rowH > pageHeight - 22) {
+        doc.addPage('a4', 'portrait');
+        drawRunningHeader();
+        y = margin + 9.5;
+        drawTableHeader(y);
+        y += tableHeaderHeight;
+      }
+
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+      doc.rect(margin, y, contentWidth, rowH, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
+
+      let curX = margin;
+
+      // Col 0: Student Information (Name, Reg No, DOB/Age)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(truncatePdfText(doc, r.name, colDefs[0].width - 5), curX + 2.5, y + 4.2);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.3);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Reg #: ${r.regNo}`, curX + 2.5, y + 7.4);
+      if (r.dob) {
+        doc.text(truncatePdfText(doc, `DOB: ${r.dob}${r.ageStr ? ` (${r.ageStr})` : ''}`, colDefs[0].width - 5), curX + 2.5, y + 9.8);
+      }
+      curX += colDefs[0].width;
+
+      // Col 1: Class
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(51, 65, 85);
+      doc.text(truncatePdfText(doc, r.className, colDefs[1].width - 4), curX + 2.5, y + 5.0);
+      curX += colDefs[1].width;
+
+      // Col 2: Father & Guardian
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(15, 23, 42);
+      doc.text(truncatePdfText(doc, r.fatherName || '—', colDefs[2].width - 4), curX + 2.5, y + 4.2);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(truncatePdfText(doc, r.fatherPhone ? `Ph: ${r.fatherPhone}` : 'No contact recorded', colDefs[2].width - 4), curX + 2.5, y + 8.0);
+      curX += colDefs[2].width;
+
+      // Col 3: Default Duration
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.0);
+      const isChronic = r.unpaidMonthsCount >= 3;
+      doc.setTextColor(isChronic ? 190 : 180, isChronic ? 18 : 83, isChronic ? 60 : 9);
+      doc.text(`${r.unpaidMonthsCount} Month${r.unpaidMonthsCount !== 1 ? 's' : ''} Due`, curX + 2.5, y + 4.2);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.0);
+      doc.setTextColor(100, 116, 139);
+      if (r.oldestUnpaidMonth) {
+        doc.text(truncatePdfText(doc, `Due since ${formatMonthName(r.oldestUnpaidMonth)}`, colDefs[3].width - 4), curX + 2.5, y + 7.8);
+      }
+      curX += colDefs[3].width;
+
+      // Col 4: Arrears (Net)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(225, 29, 72); // rose-600
+      doc.text(formatCurrency(r.totalOutstanding), curX + colDefs[4].width - 2.5, y + 5.5, { align: 'right' });
+
+      y += rowH;
+    });
   }
+
+  // 7. Totals Footer
+  if (y + 10 > pageHeight - 25) {
+    doc.addPage('a4', 'portrait');
+    drawRunningHeader();
+    y = margin + 9.5;
+    drawTableHeader(y);
+    y += tableHeaderHeight;
+  }
+
+  const totalsH = 7.5;
   doc.setFillColor(241, 245, 249); // slate-100
-  doc.rect(margin, y, contentWidth, 8, 'F');
+  doc.rect(margin, y, contentWidth, totalsH, 'F');
   doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.4);
   doc.line(margin, y, margin + contentWidth, y);
-  doc.line(margin, y + 8, margin + contentWidth, y + 8);
+  doc.line(margin, y + totalsH, margin + contentWidth, y + totalsH);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7.2);
   doc.setTextColor(15, 23, 42);
-  doc.text(`TOTAL DEFAULTERS: ${rows.length}  •  TOTAL OUTSTANDING ARREARS:`, margin + 4, y + 5.5);
-  doc.setTextColor(225, 29, 72);
-  doc.text(formatCurrency(totalOut), margin + contentWidth - 4, y + 5.5, { align: 'right' });
-  y += 16;
+  doc.text(`TOTAL AUDITED DEFAULTERS: ${rows.length}`, margin + 4, y + 5.0);
 
-  // 6. Bottom Notice
-  doc.setFont('helvetica', 'italic');
+  doc.text('TOTAL OUTSTANDING ARREARS:', margin + 186 - 30 - 4, y + 5.0, { align: 'right' });
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.8);
+  doc.setTextColor(225, 29, 72); // rose-600
+  doc.text(formatCurrency(totalOut), margin + contentWidth - 2.5, y + 5.0, { align: 'right' });
+  y += totalsH + 12;
+
+  // 8. Official Signatures Block
+  if (y + 22 > pageHeight - 16) {
+    doc.addPage('a4', 'portrait');
+    y = margin + 12;
+  }
+
+  const sigW = 48;
+  const sigGap = (contentWidth - sigW * 3) / 2;
+
+  // Signature 1: Recovery Officer
+  const sig1X = margin;
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.line(sig1X, y + 6, sig1X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Recovery Incharge / Cashier', sig1X + sigW / 2, y + 9.5, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(5.8);
   doc.setTextColor(148, 163, 184);
-  doc.text(
-    'This is a system-generated unpaid fee arrears audit report. Any discrepancies should be reported to the accounts department.',
-    pageWidth / 2,
-    pageHeight - 6,
-    { align: 'center' }
-  );
+  doc.text('Signature & Date', sig1X + sigW / 2, y + 13, { align: 'center' });
+
+  // Signature 2: Accounts Officer
+  const sig2X = sig1X + sigW + sigGap;
+  doc.line(sig2X, y + 6, sig2X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Accounts Officer / Auditor', sig2X + sigW / 2, y + 9.5, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(5.8);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Verification & Audit Stamp', sig2X + sigW / 2, y + 13, { align: 'center' });
+
+  // Signature 3: Principal / Directive
+  const sig3X = sig2X + sigW + sigGap;
+  doc.line(sig3X, y + 6, sig3X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Principal / Administrative Head', sig3X + sigW / 2, y + 9.5, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(5.8);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Recovery Directive & Approval', sig3X + sigW / 2, y + 13, { align: 'center' });
+
+  // 9. Running Footer & Dynamic Page Numbering on ALL pages
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, pageHeight - 8, margin + contentWidth, pageHeight - 8);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.2);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `${context.institute.name || 'School Fee System'}  •  Unpaid Fee Arrears Audit`,
+      margin,
+      pageHeight - 4.5
+    );
+
+    doc.text(
+      'Confidential recovery audit document. For internal institutional use only.',
+      pageWidth / 2,
+      pageHeight - 4.5,
+      { align: 'center' }
+    );
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - margin, pageHeight - 4.5, { align: 'right' });
+  }
 
   return doc;
 }
@@ -1457,6 +1692,24 @@ export async function printOutstandingArrearsPdf(
   }, 120000);
 }
 
+export async function exportOutstandingArrearsPdf(
+  rows: OutstandingArrearsPdfRow[],
+  context: PdfExportContext,
+  monthLabel: string,
+  filename?: string
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const doc = buildOutstandingArrearsDoc(rows, context, monthLabel);
+  const safeFilename = filename || `Student_Fee_Arrears_${monthLabel.replace(/\s+/g, '_')}.pdf`;
+  doc.save(safeFilename);
+}
+
 export interface FeeCollectionReportPdfRow {
   date: string;
   regNo: string;
@@ -1482,10 +1735,19 @@ export function buildFeeCollectionReportDoc(
   const pageWidth = 297;
   const pageHeight = 210;
   const margin = 10;
-  const contentWidth = pageWidth - margin * 2;
+  const contentWidth = pageWidth - margin * 2; // 277 mm
   let y = margin;
 
-  // 1. Institute Header & Logo
+  // Primary brand theme colors
+  const [brandR, brandG, brandB] = hexToRgb(context.themeColor || '#0f766e');
+  const brandTintR = Math.round(255 - (255 - brandR) * 0.08);
+  const brandTintG = Math.round(255 - (255 - brandG) * 0.08);
+  const brandTintB = Math.round(255 - (255 - brandB) * 0.08);
+  const brandBorderR = Math.round(255 - (255 - brandR) * 0.25);
+  const brandBorderG = Math.round(255 - (255 - brandG) * 0.25);
+  const brandBorderB = Math.round(255 - (255 - brandB) * 0.25);
+
+  // 1. Institute Header & Logo / Monogram Fallback
   const logoUrl = context.institute.logoUrl;
   const hasLogo = Boolean(logoUrl && logoUrl.trim().length > 0);
 
@@ -1493,173 +1755,478 @@ export function buildFeeCollectionReportDoc(
     try {
       const format =
         logoUrl.startsWith('data:image/jpeg') || logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-      doc.addImage(logoUrl, format, margin, y, 13, 13);
+      doc.addImage(logoUrl, format, margin, y, 14, 14);
     } catch (e) {
       console.warn('Could not render logo in Fee Collection Report PDF:', e);
+      // Fallback crest
+      doc.setFillColor(brandTintR, brandTintG, brandTintB);
+      doc.setDrawColor(brandBorderR, brandBorderG, brandBorderB);
+      doc.setLineWidth(0.35);
+      doc.roundedRect(margin, y, 14, 14, 2, 2, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(brandR, brandG, brandB);
+      const initial = (context.institute.name || 'S').trim().charAt(0).toUpperCase();
+      doc.text(initial, margin + 7, y + 9.2, { align: 'center' });
     }
+  } else {
+    // Institutional crest monogram
+    doc.setFillColor(brandTintR, brandTintG, brandTintB);
+    doc.setDrawColor(brandBorderR, brandBorderG, brandBorderB);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(margin, y, 14, 14, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(brandR, brandG, brandB);
+    const initial = (context.institute.name || 'S').trim().charAt(0).toUpperCase();
+    doc.text(initial, margin + 7, y + 9.2, { align: 'center' });
   }
 
-  const textStartX = hasLogo ? margin + 17 : margin;
+  // Consistent left alignment regardless of logo presence
+  const textStartX = margin + 17.5;
 
+  // Institute Name
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(15, 23, 42);
-  doc.text((context.institute.name || 'INSTITUTE NAME').toUpperCase(), textStartX, y + 4.5);
+  doc.setFontSize(13.5);
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.text(
+    truncatePdfText(doc, (context.institute.name || 'INSTITUTE NAME').toUpperCase(), contentWidth - 85),
+    textStartX,
+    y + 4.5
+  );
 
+  // Address & Institutional Details
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(100, 116, 139);
+  doc.setFontSize(7.2);
+  doc.setTextColor(100, 116, 139); // slate-500
   const subDetails = [
     context.institute.address,
-    context.institute.phone ? `Phone: ${context.institute.phone}` : '',
+    context.institute.phone ? `Ph: ${context.institute.phone}` : '',
     context.institute.email ? `Email: ${context.institute.email}` : '',
     context.institute.regNo ? `Reg #: ${context.institute.regNo}` : '',
   ]
     .filter(Boolean)
-    .join('  •  ');
-  doc.text(subDetails, textStartX, y + 9);
-  y += 15;
+    .join('   •   ');
+  doc.text(truncatePdfText(doc, subDetails, contentWidth - 85), textStartX, y + 9.2);
 
-  // 2. Document Title Banner
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.rect(margin, y, contentWidth, 8.5, 'FD');
+  // Right Header: Official Classification Badge & Timestamp
+  const badgeWidth = 56;
+  const badgeHeight = 6.5;
+  const badgeX = pageWidth - margin - badgeWidth;
+  doc.setFillColor(brandTintR, brandTintG, brandTintB);
+  doc.setDrawColor(brandBorderR, brandBorderG, brandBorderB);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(badgeX, y, badgeWidth, badgeHeight, 1.5, 1.5, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
-  doc.setTextColor(30, 41, 59);
-  doc.text(reportTitle.toUpperCase(), margin + 3, y + 5.5);
+  doc.setFontSize(6.8);
+  doc.setTextColor(brandR, brandG, brandB);
+  doc.text('OFFICIAL FINANCIAL AUDIT REPORT', badgeX + badgeWidth / 2, y + 4.3, { align: 'center' });
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(6.8);
   doc.setTextColor(100, 116, 139);
-  const generatedStr = `Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
-  doc.text(generatedStr, pageWidth - margin - 3, y + 5.5, { align: 'right' });
-  y += 12.5;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  doc.text(`Generated: ${dateStr} at ${timeStr}`, pageWidth - margin, y + 11.5, { align: 'right' });
 
-  // 3. Table
+  y += 16;
+
+  // Header bottom dividing line
+  doc.setDrawColor(226, 232, 240); // slate-200
+  doc.setLineWidth(0.35);
+  doc.line(margin, y, margin + contentWidth, y);
+  y += 3.5;
+
+  // 2. Compute Totals for KPI banner
+  const totals = rows.reduce(
+    (acc, r) => ({
+      total: acc.total + r.total,
+      paid: acc.paid + r.paid,
+      balance: acc.balance + r.balance,
+    }),
+    { total: 0, paid: 0, balance: 0 }
+  );
+
+  // 3. Document Title Banner
+  const bannerHeight = 8.5;
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.setDrawColor(226, 232, 240); // slate-200
+  doc.rect(margin, y, contentWidth, bannerHeight, 'FD');
+
+  // Primary brand left decorative accent
+  doc.setFillColor(brandR, brandG, brandB);
+  doc.rect(margin, y, 2.5, bannerHeight, 'F');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(30, 41, 59); // slate-800
+  doc.text(
+    truncatePdfText(doc, reportTitle.toUpperCase(), contentWidth - 70),
+    margin + 6,
+    y + 5.5
+  );
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    `${rows.length} RECORD${rows.length !== 1 ? 'S' : ''} AUDITED`,
+    pageWidth - margin - 4,
+    y + 5.5,
+    { align: 'right' }
+  );
+  y += bannerHeight + 3;
+
+  // 4. Executive Summary KPI Ribbon (4 compact metric boxes)
+  const kpiBoxHeight = 10;
+  const kpiGap = 3;
+  const kpiBoxWidth = (contentWidth - kpiGap * 3) / 4; // ~67mm each
+
+  // Box 1: Total Records
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(margin, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('TOTAL TRANSACTIONS', margin + 3, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`${rows.length} Entries`, margin + 3, y + 8);
+
+  // Box 2: Total Billed Amount
+  const box2X = margin + kpiBoxWidth + kpiGap;
+  doc.setFillColor(255, 255, 255);
+  doc.rect(box2X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('TOTAL BILLED AMOUNT', box2X + 3, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(formatCurrency(totals.total), box2X + 3, y + 8);
+
+  // Box 3: Fee Collected (Paid)
+  const box3X = box2X + kpiBoxWidth + kpiGap;
+  doc.setFillColor(240, 253, 250); // teal-50
+  doc.setDrawColor(153, 246, 228); // teal-200
+  doc.rect(box3X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(13, 148, 136); // teal-600
+  const collectionRate = totals.total > 0 ? ` (${((totals.paid / totals.total) * 100).toFixed(0)}%)` : '';
+  doc.text(`TOTAL COLLECTED${collectionRate}`, box3X + 3, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(4, 120, 87); // emerald-700
+  doc.text(formatCurrency(totals.paid), box3X + 3, y + 8);
+
+  // Box 4: Outstanding Balance
+  const box4X = box3X + kpiBoxWidth + kpiGap;
+  const hasBalance = totals.balance > 0;
+  doc.setFillColor(hasBalance ? 255 : 255, hasBalance ? 241 : 255, hasBalance ? 242 : 255); // rose-50 or white
+  doc.setDrawColor(hasBalance ? 254 : 226, hasBalance ? 205 : 232, hasBalance ? 211 : 240); // rose-200 or slate-200
+  doc.rect(box4X, y, kpiBoxWidth, kpiBoxHeight, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(5.8);
+  doc.setTextColor(hasBalance ? 190 : 100, hasBalance ? 18 : 116, hasBalance ? 60 : 139);
+  doc.text('OUTSTANDING BALANCE', box4X + 3, y + 3.8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(hasBalance ? 225 : 100, hasBalance ? 29 : 116, hasBalance ? 72 : 139); // rose-600
+  doc.text(formatCurrency(totals.balance), box4X + 3, y + 8);
+
+  y += kpiBoxHeight + 4;
+
+  // 5. Table Configuration
   const colDefs = [
-    { title: 'SR#', width: 12, align: 'left' as const },
-    { title: 'DATE', width: 26, align: 'left' as const },
-    { title: 'REG NO', width: 30, align: 'left' as const },
-    { title: 'STUDENT NAME', width: 60, align: 'left' as const },
+    { title: 'SR#', width: 12, align: 'center' as const },
+    { title: 'DATE', width: 25, align: 'left' as const },
+    { title: 'REG NO', width: 28, align: 'left' as const },
+    { title: 'STUDENT NAME', width: 61, align: 'left' as const },
     { title: 'CLASS', width: 26, align: 'left' as const },
-    { title: 'FEE MONTH', width: 33, align: 'left' as const },
-    { title: 'TOTAL', width: 30, align: 'right' as const },
-    { title: 'PAID', width: 30, align: 'right' as const },
-    { title: 'BALANCE', width: 30, align: 'right' as const },
+    { title: 'FEE MONTH', width: 32, align: 'left' as const },
+    { title: 'TOTAL', width: 31, align: 'right' as const },
+    { title: 'PAID', width: 31, align: 'right' as const },
+    { title: 'BALANCE', width: 31, align: 'right' as const },
   ];
+  // 12 + 25 + 28 + 61 + 26 + 32 + 31 + 31 + 31 = 277 mm!
+
+  const tableHeaderHeight = 7.5;
 
   const drawTableHeader = (curY: number) => {
-    doc.setFillColor(15, 118, 110); // teal-700
-    doc.rect(margin, curY, contentWidth, 7, 'F');
+    doc.setFillColor(brandR, brandG, brandB);
+    doc.rect(margin, curY, contentWidth, tableHeaderHeight, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
     doc.setTextColor(255, 255, 255);
     let curX = margin;
     colDefs.forEach((col) => {
       if (col.align === 'right') {
-        doc.text(col.title, curX + col.width - 2, curY + 4.5, { align: 'right' });
+        doc.text(col.title, curX + col.width - 2.5, curY + 4.9, { align: 'right' });
+      } else if (col.align === 'center') {
+        doc.text(col.title, curX + col.width / 2, curY + 4.9, { align: 'center' });
       } else {
-        doc.text(col.title, curX + 2, curY + 4.5);
+        doc.text(col.title, curX + 2.5, curY + 4.9);
       }
       curX += col.width;
     });
   };
 
-  drawTableHeader(y);
-  y += 7;
-
-  const totals = rows.reduce(
-    (acc, r) => ({ total: acc.total + r.total, paid: acc.paid + r.paid, balance: acc.balance + r.balance }),
-    { total: 0, paid: 0, balance: 0 }
-  );
-
-  const rowH = 7.5;
-  rows.forEach((r, idx) => {
-    if (y + rowH > pageHeight - 20) {
-      doc.addPage('a4', 'landscape');
-      y = margin;
-      drawTableHeader(y);
-      y += 7;
-    }
-
-    const isEven = idx % 2 === 0;
-    doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
-    doc.rect(margin, y, contentWidth, rowH, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
-
-    let curX = margin;
-    const cellValues = [
-      String(idx + 1),
-      r.date,
-      r.regNo,
-      r.studentName,
-      r.className,
-      r.feeMonth,
-      formatCurrency(r.total),
-      formatCurrency(r.paid),
-      formatCurrency(r.balance),
-    ];
+  const drawRunningHeader = () => {
+    // Multi-page running institutional top header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);
+    const subTitle = truncatePdfText(
+      doc,
+      `${context.institute.name || 'INSTITUTE NAME'}   •   ${reportTitle.toUpperCase()} (Continued)`,
+      contentWidth - 65
+    );
+    doc.text(subTitle, margin, margin + 4);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(6.8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${dateStr}`, pageWidth - margin, margin + 4, { align: 'right' });
 
-    colDefs.forEach((col, i) => {
-      if (col.align === 'right') {
-        doc.text(cellValues[i], curX + col.width - 2, y + 4.8, { align: 'right' });
-      } else {
-        doc.text(cellValues[i], curX + 2, y + 4.8, { maxWidth: col.width - 4 });
-      }
-      curX += col.width;
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, margin + 6.5, margin + contentWidth, margin + 6.5);
+  };
+
+  drawTableHeader(y);
+  y += tableHeaderHeight;
+
+  // 6. Data Rows
+  const rowH = 6.8;
+
+  if (rows.length === 0) {
+    doc.setFillColor(255, 255, 255);
+    doc.rect(margin, y, contentWidth, 12, 'F');
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text('No fee collection transactions found matching the selected criteria.', pageWidth / 2, y + 7.5, {
+      align: 'center',
     });
+    y += 12;
+  } else {
+    rows.forEach((r, idx) => {
+      // Check page break
+      if (y + rowH > pageHeight - 20) {
+        doc.addPage('a4', 'landscape');
+        drawRunningHeader();
+        y = margin + 9.5;
+        drawTableHeader(y);
+        y += tableHeaderHeight;
+      }
 
-    y += rowH;
-  });
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+      doc.rect(margin, y, contentWidth, rowH, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.line(margin, y + rowH, margin + contentWidth, y + rowH);
 
-  // 4. Totals Footer
-  if (y > pageHeight - 20) {
-    doc.addPage('a4', 'landscape');
-    y = margin;
-    drawTableHeader(y);
-    y += 7;
+      let curX = margin;
+
+      // Col 0: SR#
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(String(idx + 1), curX + colDefs[0].width / 2, y + 4.6, { align: 'center' });
+      curX += colDefs[0].width;
+
+      // Col 1: DATE
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.setTextColor(51, 65, 85);
+      doc.text(truncatePdfText(doc, r.date, colDefs[1].width - 4), curX + 2.5, y + 4.6);
+      curX += colDefs[1].width;
+
+      // Col 2: REG NO
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      doc.setTextColor(brandR, brandG, brandB);
+      doc.text(truncatePdfText(doc, r.regNo || '—', colDefs[2].width - 4), curX + 2.5, y + 4.6);
+      curX += colDefs[2].width;
+
+      // Col 3: STUDENT NAME
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(15, 23, 42);
+      doc.text(truncatePdfText(doc, r.studentName, colDefs[3].width - 4), curX + 2.5, y + 4.6);
+      curX += colDefs[3].width;
+
+      // Col 4: CLASS
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(truncatePdfText(doc, r.className, colDefs[4].width - 4), curX + 2.5, y + 4.6);
+      curX += colDefs[4].width;
+
+      // Col 5: FEE MONTH
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(truncatePdfText(doc, r.feeMonth, colDefs[5].width - 4), curX + 2.5, y + 4.6);
+      curX += colDefs[5].width;
+
+      // Col 6: TOTAL
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(15, 23, 42);
+      doc.text(formatCurrency(r.total), curX + colDefs[6].width - 2.5, y + 4.6, { align: 'right' });
+      curX += colDefs[6].width;
+
+      // Col 7: PAID
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      doc.setTextColor(4, 120, 87); // emerald-700
+      doc.text(r.paid > 0 ? formatCurrency(r.paid) : '—', curX + colDefs[7].width - 2.5, y + 4.6, { align: 'right' });
+      curX += colDefs[7].width;
+
+      // Col 8: BALANCE
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.2);
+      if (r.balance > 0) {
+        doc.setTextColor(225, 29, 72); // rose-600
+        doc.text(formatCurrency(r.balance), curX + colDefs[8].width - 2.5, y + 4.6, { align: 'right' });
+      } else {
+        doc.setTextColor(148, 163, 184); // slate-400
+        doc.text('—', curX + colDefs[8].width - 2.5, y + 4.6, { align: 'right' });
+      }
+
+      y += rowH;
+    });
   }
-  doc.setFillColor(241, 245, 249);
-  doc.rect(margin, y, contentWidth, 8, 'F');
-  doc.setDrawColor(203, 213, 225);
-  doc.line(margin, y, margin + contentWidth, y);
-  doc.line(margin, y + 8, margin + contentWidth, y + 8);
 
+  // 7. Grand Totals Table Row
+  if (y + 10 > pageHeight - 25) {
+    doc.addPage('a4', 'landscape');
+    drawRunningHeader();
+    y = margin + 9.5;
+    drawTableHeader(y);
+    y += tableHeaderHeight;
+  }
+
+  const totalsH = 7.5;
+  doc.setFillColor(241, 245, 249); // slate-100
+  doc.rect(margin, y, contentWidth, totalsH, 'F');
+  doc.setDrawColor(203, 213, 225); // slate-300
+  doc.setLineWidth(0.4);
+  doc.line(margin, y, margin + contentWidth, y);
+  doc.line(margin, y + totalsH, margin + contentWidth, y + totalsH);
+
+  // Exact X positions for totals from colDefs:
+  const nonNumWidth = 12 + 25 + 28 + 61 + 26 + 32;
+  const col6Right = margin + nonNumWidth + 31 - 2.5; // TOTAL col right edge
+  const col7Right = col6Right + 31; // PAID col right edge
+  const col8Right = col7Right + 31; // BALANCE col right edge
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.2);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`GRAND TOTALS (${rows.length} Records):`, margin + nonNumWidth - 4, y + 5.0, { align: 'right' });
+
+  // Total Billed
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`${rows.length} Record${rows.length !== 1 ? 's' : ''}`, margin + 4, y + 5.5);
-
-  const totalLabelX = pageWidth - margin - 4;
-  doc.setTextColor(15, 118, 110);
-  doc.text(formatCurrency(totals.balance), totalLabelX, y + 5.5, { align: 'right' });
-  const paidX = totalLabelX - 32;
-  doc.text(formatCurrency(totals.paid), paidX, y + 5.5, { align: 'right' });
-  const totalX = totalLabelX - 64;
-  doc.text(formatCurrency(totals.total), totalX, y + 5.5, { align: 'right' });
-
-  doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text('TOTALS:', totalX - 18, y + 5.5, { align: 'right' });
-  y += 16;
+  doc.text(formatCurrency(totals.total), col6Right, y + 5.0, { align: 'right' });
 
-  // 5. Bottom Notice
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(6.5);
+  // Total Paid
+  doc.setTextColor(4, 120, 87); // emerald-700
+  doc.text(formatCurrency(totals.paid), col7Right, y + 5.0, { align: 'right' });
+
+  // Total Balance
+  doc.setTextColor(totals.balance > 0 ? 225 : 100, totals.balance > 0 ? 29 : 116, totals.balance > 0 ? 72 : 139);
+  doc.text(formatCurrency(totals.balance), col8Right, y + 5.0, { align: 'right' });
+
+  y += totalsH + 12;
+
+  // 8. Official Signatures Block
+  if (y + 22 > pageHeight - 16) {
+    doc.addPage('a4', 'landscape');
+    drawRunningHeader();
+    y = margin + 18;
+  }
+
+  const sigW = 65;
+  const sigGap = (contentWidth - sigW * 3) / 2;
+
+  // Signature 1: Cashier / Prepared By
+  const sig1X = margin;
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.line(sig1X, y + 6, sig1X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Prepared By (Cashier / Accountant)', sig1X + sigW / 2, y + 10, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
   doc.setTextColor(148, 163, 184);
-  doc.text(
-    'This is a system-generated fee collection report. Any discrepancies should be reported to the accounts department.',
-    pageWidth / 2,
-    pageHeight - 6,
-    { align: 'center' }
-  );
+  doc.text('Date & Verification Signature', sig1X + sigW / 2, y + 13.5, { align: 'center' });
+
+  // Signature 2: Verified By
+  const sig2X = sig1X + sigW + sigGap;
+  doc.line(sig2X, y + 6, sig2X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Verified By (Accounts Incharge)', sig2X + sigW / 2, y + 10, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Audit Seal & Signature', sig2X + sigW / 2, y + 13.5, { align: 'center' });
+
+  // Signature 3: Authorized / Stamp
+  const sig3X = sig2X + sigW + sigGap;
+  doc.line(sig3X, y + 6, sig3X + sigW, y + 6);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.8);
+  doc.setTextColor(51, 65, 85);
+  doc.text('Approved By (Principal / Director)', sig3X + sigW / 2, y + 10, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Official Stamp & Approval', sig3X + sigW / 2, y + 13.5, { align: 'center' });
+
+  // 9. Running Footer & Dynamic Page Numbering on ALL pages
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    // Footer line
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(margin, pageHeight - 8, margin + contentWidth, pageHeight - 8);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.2);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `${context.institute.name || 'School Fee System'}  •  Official Fee Collection Report`,
+      margin,
+      pageHeight - 4.5
+    );
+
+    doc.text(
+      'System-generated financial document. Any alterations render this statement void.',
+      pageWidth / 2,
+      pageHeight - 4.5,
+      { align: 'center' }
+    );
+
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth - margin, pageHeight - 4.5, { align: 'right' });
+  }
 
   return doc;
 }
@@ -1715,4 +2282,23 @@ export async function printFeeCollectionReportPdf(
     }
   }, 120000);
 }
+
+export async function exportFeeCollectionReportPdf(
+  rows: FeeCollectionReportPdfRow[],
+  context: PdfExportContext,
+  reportTitle: string,
+  filename?: string
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const doc = buildFeeCollectionReportDoc(rows, context, reportTitle);
+  const safeFilename = filename || `${reportTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
+  doc.save(safeFilename);
+}
+
 

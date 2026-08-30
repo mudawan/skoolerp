@@ -1316,9 +1316,17 @@ export const VouchersView: React.FC = () => {
             {/* Parameters & Configuration Toolbar (Collapsible) */}
             {!isParamsCollapsed && (
               <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2">
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2.5">
+                <div
+                  className={`grid gap-2.5 ${
+                    scope === 'class' || scope === 'student'
+                      ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
+                      : 'grid-cols-2 sm:grid-cols-4'
+                  }`}
+                >
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Target Month</label>
+                    <div className="flex items-center justify-between mb-1 h-4">
+                      <label className="block text-[11px] font-bold text-slate-600">Target Month</label>
+                    </div>
                     <MonthPicker
                       value={targetMonth}
                       onChange={(newMonth) => handleUpdatePreview(scope, scopeClassId, newMonth)}
@@ -1335,7 +1343,9 @@ export const VouchersView: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Scope</label>
+                    <div className="flex items-center justify-between mb-1 h-4">
+                      <label className="block text-[11px] font-bold text-slate-600">Scope</label>
+                    </div>
                     <select
                       value={scope === 'students' ? 'all' : scope}
                       onChange={(e) => handleUpdatePreview(e.target.value as any, scopeClassId, targetMonth)}
@@ -1349,7 +1359,9 @@ export const VouchersView: React.FC = () => {
 
                   {scope === 'class' ? (
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Class</label>
+                      <div className="flex items-center justify-between mb-1 h-4">
+                        <label className="block text-[11px] font-bold text-slate-600">Select Class</label>
+                      </div>
                       <select
                         value={scopeClassId}
                         onChange={(e) => handleUpdatePreview(scope, e.target.value, targetMonth)}
@@ -1364,7 +1376,9 @@ export const VouchersView: React.FC = () => {
                     </div>
                   ) : scope === 'student' ? (
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Student</label>
+                      <div className="flex items-center justify-between mb-1 h-4">
+                        <label className="block text-[11px] font-bold text-slate-600">Select Student</label>
+                      </div>
                       {(() => {
                         const activeStudentsList = students.filter((s) => s.status === 'Active');
                         const term = singleStudentSearchQuery.toLowerCase().trim();
@@ -1503,10 +1517,10 @@ export const VouchersView: React.FC = () => {
                   ) : null}
 
                   <div>
-                    <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center justify-between mb-1 h-4">
                       <label className="block text-[11px] font-bold text-slate-600">Due Date</label>
                       {defaultDueDateEnabled && dueDateInput && (
-                        <span className="text-[10px] leading-none font-semibold text-teal-700 bg-teal-50 px-1.5 py-0 rounded border border-teal-200/80 flex items-center gap-1">
+                        <span className="text-[10px] leading-none font-semibold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200/80 flex items-center gap-1">
                           <Sparkles className="w-2.5 h-2.5" />
                           Default
                         </span>
@@ -1514,6 +1528,7 @@ export const VouchersView: React.FC = () => {
                     </div>
                     <DatePicker
                       value={dueDateInput}
+                      size="sm"
                       themeColor={themeConfig?.color || 'teal'}
                       onChange={(newDate) => setDueDateInput(newDate)}
                       idPrefix="modal-due-date-picker"
@@ -1522,8 +1537,10 @@ export const VouchersView: React.FC = () => {
                     />
                   </div>
 
-                  <div className={scope === 'class' ? '' : 'col-span-2 sm:col-span-1'}>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Late Fine (Rs.)</label>
+                  <div>
+                    <div className="flex items-center justify-between mb-1 h-4">
+                      <label className="block text-[11px] font-bold text-slate-600">Late Fine (Rs.)</label>
+                    </div>
                     <input
                       type="number"
                       value={lateFeeInput}

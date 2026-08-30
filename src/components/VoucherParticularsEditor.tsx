@@ -129,6 +129,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
   onSaveLineItems,
   originalItems,
   readOnly = false,
+  compact = false,
   studentId,
 }) => {
   const { templates, students, hasPermission, activeMonth, roundingMultiple, roundingEnabled } = useApp();
@@ -279,7 +280,11 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
   return (
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs flex flex-col h-full">
       {/* Header with Title and Save Line Items Button */}
-      <div className="bg-slate-50 px-3 py-2 border-b border-slate-200 flex items-center justify-between shrink-0">
+      <div
+        className={`bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0 ${
+          compact ? 'px-2.5 py-1.5' : 'px-3 py-2'
+        }`}
+      >
         <div className="flex items-center gap-2">
           <Tag className="w-3.5 h-3.5 text-teal-600" />
           <span className="font-bold text-xs text-slate-800">Fee Heads & Breakdown</span>
@@ -315,7 +320,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
       </div>
 
       {/* Clean Compact Rows (No edit/lock icons, no category pills) */}
-      <div className="divide-y divide-slate-100 overflow-y-auto flex-1 max-h-[310px]">
+      <div className="divide-y divide-slate-100 overflow-y-auto flex-1 min-h-0">
         {reconciledItems.map((item, index) => {
           const spec = STANDARD_ROSTER_DEFS.find((sr) => sr.kind === item.kind);
           const isFlexField = spec?.isFlex ?? false;
@@ -326,7 +331,9 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
           return (
             <div
               key={`${item.kind}-${index}`}
-              className={`px-3 py-1.5 flex items-center justify-between gap-2 text-xs transition ${
+              className={`flex items-center justify-between gap-2 text-xs transition ${
+                compact ? 'px-2.5 py-1' : 'px-3 py-1.5'
+              } ${
                 isFlexField
                   ? 'bg-teal-50/20 hover:bg-teal-50/40'
                   : isDiscount
@@ -342,10 +349,12 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                     value={item.label}
                     onChange={(e) => handleLabelChange(item.kind, e.target.value)}
                     placeholder={spec?.defaultLabel || 'Fee Head'}
-                    className="w-full bg-white border border-slate-200 focus:border-teal-500 rounded px-1.5 py-0.5 text-xs text-slate-800 font-semibold focus:outline-none focus:ring-1 focus:ring-teal-500"
+                    className={`w-full bg-white border border-slate-200 focus:border-teal-500 rounded text-slate-800 font-semibold focus:outline-none focus:ring-1 focus:ring-teal-500 ${
+                      compact ? 'px-1.5 py-0.5 text-[11px] h-6' : 'px-1.5 py-0.5 text-xs'
+                    }`}
                   />
                 ) : (
-                  <span className="font-semibold text-slate-700 truncate text-xs">
+                  <span className={`font-semibold text-slate-700 truncate ${compact ? 'text-[11px]' : 'text-xs'}`}>
                     {item.label}
                   </span>
                 )}
@@ -362,11 +371,13 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                       value={displayAmount === 0 ? '' : displayAmount}
                       onChange={(e) => handleAmountChange(item.kind, e.target.value)}
                       placeholder="0"
-                      className="w-20 px-1.5 py-0.5 bg-white border border-teal-300 rounded text-right font-mono font-bold text-xs text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                      className={`px-1.5 bg-white border border-teal-300 rounded text-right font-mono font-bold text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500 ${
+                        compact ? 'w-18 py-0.5 text-[11px] h-6' : 'w-20 py-0.5 text-xs'
+                      }`}
                     />
                   </div>
                 ) : (
-                  <div className="w-24 text-right font-mono font-bold text-xs py-0.5">
+                  <div className={`w-24 text-right font-mono font-bold py-0.5 ${compact ? 'text-[11px]' : 'text-xs'}`}>
                     {isDiscount ? (
                       <span className="text-rose-600">
                         {displayAmount > 0 ? `-${formatCurrency(displayAmount)}` : 'Rs. 0'}
@@ -385,22 +396,30 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
       </div>
 
       {/* Compact Totals Footer */}
-      <div className="bg-slate-50 p-2.5 border-t border-slate-200 grid grid-cols-3 gap-2 text-center font-mono shrink-0">
-        <div className="bg-white px-2 py-1 rounded border border-slate-200">
+      <div
+        className={`bg-slate-50 border-t border-slate-200 grid grid-cols-3 text-center font-mono shrink-0 ${
+          compact ? 'p-2 gap-1.5' : 'p-2.5 gap-2'
+        }`}
+      >
+        <div className={`bg-white rounded border border-slate-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
           <div className="text-[9px] text-slate-500 font-sans">Gross Total</div>
-          <div className="font-bold text-slate-800 text-xs">{formatCurrency(grossTotal)}</div>
+          <div className={`font-bold text-slate-800 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+            {formatCurrency(grossTotal)}
+          </div>
         </div>
-        <div className="bg-white px-2 py-1 rounded border border-slate-200">
+        <div className={`bg-white rounded border border-slate-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
           <div className="text-[9px] text-slate-500 font-sans">Concession</div>
-          <div className="font-bold text-rose-700 text-xs">
+          <div className={`font-bold text-rose-700 ${compact ? 'text-[11px]' : 'text-xs'}`}>
             {discountTotal > 0 ? `-${formatCurrency(discountTotal)}` : 'Rs. 0'}
           </div>
         </div>
-        <div className="bg-teal-50 px-2 py-1 rounded border border-teal-200">
+        <div className={`bg-teal-50 rounded border border-teal-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
           <div className="text-[9px] text-teal-800 font-sans font-bold">
-            {roundingEnabled ? `Net Due (Rounded to ${roundingMultiple ?? 10})` : 'Net Due'}
+            {roundingEnabled ? `Net Due (${roundingMultiple ?? 10})` : 'Net Due'}
           </div>
-          <div className="font-black text-teal-900 text-xs">{formatCurrency(netDue)}</div>
+          <div className={`font-black text-teal-900 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+            {formatCurrency(netDue)}
+          </div>
         </div>
       </div>
     </div>

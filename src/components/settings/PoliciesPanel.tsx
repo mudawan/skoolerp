@@ -10,6 +10,7 @@ import {
   ArrowUp,
   Calculator,
   Calendar,
+  Check,
   CheckCircle,
   ChevronDown,
   Clock,
@@ -20,6 +21,15 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+
+const DUE_DAY_PRESETS: { day: number; label: string }[] = [
+  { day: 5, label: '5th of month' },
+  { day: 10, label: '10th of month' },
+  { day: 15, label: '15th of month' },
+  { day: 20, label: '20th of month' },
+  { day: 25, label: '25th of month' },
+  { day: 31, label: '31st (End of month)' },
+];
 
 export interface PoliciesPanelProps {
   selectedLateFeeRate: number;
@@ -85,6 +95,32 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
   } = props;
 
   const { hasPermission } = useApp();
+
+  const [dropdownPlacement, setDropdownPlacement] = React.useState<'bottom' | 'top'>('bottom');
+
+  React.useEffect(() => {
+    if (!isDueDayDropdownOpen || !dueDayDropdownRef.current) return;
+    const updatePlacement = () => {
+      if (!dueDayDropdownRef.current) return;
+      const rect = dueDayDropdownRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const neededHeight = 230;
+      if (spaceBelow < neededHeight && spaceAbove > spaceBelow) {
+        setDropdownPlacement('top');
+      } else {
+        setDropdownPlacement('bottom');
+      }
+    };
+
+    updatePlacement();
+    window.addEventListener('resize', updatePlacement);
+    window.addEventListener('scroll', updatePlacement, true);
+    return () => {
+      window.removeEventListener('resize', updatePlacement);
+      window.removeEventListener('scroll', updatePlacement, true);
+    };
+  }, [isDueDayDropdownOpen, dueDayDropdownRef]);
 
   return (
     <div className="space-y-4">
@@ -200,7 +236,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
       {/* Section: Default Voucher Due Date Policy */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3">
             <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl border border-teal-200/60 shrink-0">
               <Calendar className="w-5 h-5" />
             </div>
@@ -219,9 +255,9 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto shrink-0">
-            {/* Toggle switch (first, like the rounding section) */}
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3 self-end sm:self-auto shrink-0">
+            {/* Toggle switch: Enable/Disable default due date */}
+            <div className="flex items-center gap-3">
               <span className={`text-xs font-bold ${selectedDefaultDueDateEnabled ? 'text-teal-700' : 'text-slate-500'}`}>
                 {selectedDefaultDueDateEnabled ? 'Enabled' : 'Disabled'}
               </span>
@@ -245,60 +281,80 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
               </button>
             </div>
 
-            {/* Field combo: due-day input + quick selects */}
-            <div ref={dueDayDropdownRef} className="relative flex items-center gap-1.5">
-              <span className={`text-xs font-bold whitespace-nowrap ${selectedDefaultDueDateEnabled ? 'text-slate-700' : 'text-slate-400'}`}>Day</span>
-              <div className="relative w-16">
-                <input
-                  type="number"
-                  id="input-default-due-day"
-                  min="1"
-                  max="31"
-                  disabled={!hasPermission('settings.manage') || !selectedDefaultDueDateEnabled}
-                  value={selectedDefaultDueDay}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val)) {
-                      setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
-                    } else if (e.target.value === '') {
-                      setSelectedDefaultDueDay(1);
-                    }
-                  }}
-                  className="w-full py-1.5 pl-2 pr-5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 text-center disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <span className="absolute right-1.5 top-2 text-xs font-bold text-slate-400 pointer-events-none">th</span>
-              </div>
-
-              {/* Quick select presets */}
+            {/* Typeable Combobox with dropdown quick selections */}
+            <div ref={dueDayDropdownRef} className="relative w-36">
+              <span className="absolute left-3 top-2 text-xs font-bold text-slate-400 pointer-events-none select-none">
+                Day
+              </span>
+              <input
+                type="number"
+                id="input-default-due-day"
+                min="1"
+                max="31"
+                disabled={!hasPermission('settings.manage') || !selectedDefaultDueDateEnabled}
+                value={selectedDefaultDueDay}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) {
+                    setSelectedDefaultDueDay(Math.min(31, Math.max(1, val)));
+                  } else if (e.target.value === '') {
+                    setSelectedDefaultDueDay(1);
+                  }
+                }}
+                onFocus={() => {
+                  if (hasPermission('settings.manage') && selectedDefaultDueDateEnabled) {
+                    setIsDueDayDropdownOpen(true);
+                  }
+                }}
+                className="w-full pl-11 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                placeholder="10"
+              />
               <button
                 type="button"
                 id="btn-due-day-presets"
+                tabIndex={-1}
                 disabled={!hasPermission('settings.manage') || !selectedDefaultDueDateEnabled}
-                onClick={() => setIsDueDayDropdownOpen((prev) => !prev)}
-                className="p-1.5 rounded-xl border border-slate-300 bg-slate-50 text-slate-500 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                title="Quick select due day"
+                onClick={() => setIsDueDayDropdownOpen(!isDueDayDropdownOpen)}
+                className="absolute right-2 top-2 p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition"
+                title="Quick select due day presets"
               >
-                <ChevronDown className="w-4 h-4" />
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform duration-150 ${
+                    isDueDayDropdownOpen ? 'rotate-180 text-teal-600' : ''
+                  }`}
+                />
               </button>
 
+              {/* Quick Select Presets Dropdown with screen location awareness */}
               {isDueDayDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1.5 w-32 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-40 animate-in fade-in zoom-in-95 duration-100">
-                  {[5, 15, 31].map((day) => (
+                <div
+                  className={`absolute ${
+                    dropdownPlacement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+                  } right-0 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-50 animate-in fade-in zoom-in-95 duration-100`}
+                >
+                  <div className="px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-0.5">
+                    Quick Select Day
+                  </div>
+                  {DUE_DAY_PRESETS.map((preset) => (
                     <button
-                      key={day}
+                      key={preset.day}
                       type="button"
+                      id={`preset-due-day-${preset.day}`}
                       disabled={!hasPermission('settings.manage')}
                       onClick={() => {
-                        setSelectedDefaultDueDay(day);
+                        setSelectedDefaultDueDay(preset.day);
                         setIsDueDayDropdownOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-1.5 font-bold transition cursor-pointer ${
-                        selectedDefaultDueDay === day
-                          ? 'bg-teal-50 text-teal-700'
-                          : 'text-slate-600 hover:bg-slate-100'
+                      className={`w-full text-left px-3 py-1.5 font-bold transition flex items-center justify-between cursor-pointer ${
+                        selectedDefaultDueDay === preset.day
+                          ? 'bg-teal-50 text-teal-700 font-extrabold'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                       }`}
                     >
-                      {day === 31 ? 'End of month' : `${day}th`}
+                      <span>{preset.label}</span>
+                      {selectedDefaultDueDay === preset.day && (
+                        <Check className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                      )}
                     </button>
                   ))}
                 </div>

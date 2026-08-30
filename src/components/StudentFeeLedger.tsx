@@ -1168,6 +1168,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
               {/* Left Pane: Particulars Editor */}
               <div className="lg:col-span-6 space-y-2">
                 <VoucherParticularsEditor
+                  compact={true}
                   items={collectItems}
                   onChange={(updated) => {
                     setCollectItems(updated);
@@ -1256,7 +1257,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                         min={1}
                         value={collectAmount}
                         onChange={(e) => setCollectAmount(e.target.value)}
-                        className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                        className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-base text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/20 h-[42px]"
                       />
                     </div>
                   </div>
@@ -1269,7 +1270,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                         onChange={(e) =>
                           setCollectMode(e.target.value as PaymentTransaction['paymentMode'])
                         }
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs"
+                        className="w-full px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs h-[38px] focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                       >
                         <option value="Cash">Cash</option>
                         <option value="BankTransfer">Bank Transfer</option>
@@ -1287,33 +1288,35 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                         onChange={(newDate) => setCollectDate(newDate)}
                         idPrefix="ledger-collect-date"
                         placeholder="Select Collection Date"
-                        className="w-full"
+                        className="w-full h-[38px]"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">
-                      Reference # / Cheque No / Bank Txn (Optional)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. TR-98231"
-                      value={collectRef}
-                      onChange={(e) => setCollectRef(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">
+                        Bank Ref / Slip # (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. TR-98231"
+                        value={collectRef}
+                        onChange={(e) => setCollectRef(e.target.value)}
+                        className="w-full px-2.5 bg-white border border-slate-200 rounded-lg text-xs h-[38px] focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                      />
+                    </div>
 
-                  <div>
-                    <label className="font-bold text-slate-700 block mb-1">Notes (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="Additional remarks..."
-                      value={collectNotes}
-                      onChange={(e) => setCollectNotes(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
+                    <div>
+                      <label className="font-bold text-slate-700 block mb-1">Notes (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="Additional remarks..."
+                        value={collectNotes}
+                        onChange={(e) => setCollectNotes(e.target.value)}
+                        className="w-full px-2.5 bg-white border border-slate-200 rounded-lg text-xs h-[38px] focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-200">

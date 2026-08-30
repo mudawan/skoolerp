@@ -12,6 +12,7 @@ export interface DatePickerProps {
   maxYear?: number;
   themeColor?: string;
   className?: string;
+  size?: 'sm' | 'md';
   idPrefix?: string;
   placeholder?: string;
   required?: boolean;
@@ -41,6 +42,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   maxYear = 2050,
   themeColor = 'teal',
   className = '',
+  size = 'md',
   idPrefix = 'date-picker',
   placeholder = 'Select date',
   required = false,
@@ -51,6 +53,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Screen Location Aware dynamic positioning state
   const [placement, setPlacement] = useState<{
@@ -63,8 +66,10 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
   // Parse value
   const parsedDate = useMemo(() => {
-    if (!value || !value.includes('-')) return null;
-    const [y, m, d] = value.split('-').map(Number);
+    if (!value || typeof value !== 'string') return null;
+    const delimiter = value.includes('-') ? '-' : value.includes('/') ? '/' : null;
+    if (!delimiter) return null;
+    const [y, m, d] = value.split(delimiter).map(Number);
     if (!y || !m || !d) return null;
     return { year: y, month: m - 1, day: d };
   }, [value]);
@@ -97,51 +102,63 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
   }, [parsedDate]);
 
+  // Position updater
+  const updatePosition = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const popoverHeight = 240; // ultra-compact height with safety margin
+    const popoverWidth = 224;  // ultra-compact width
+
+    // If trigger is scrolled completely out of viewport, close
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      setIsOpen(false);
+      return;
+    }
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const spaceRight = window.innerWidth - rect.left;
+
+    const vertical = spaceBelow < popoverHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
+
+    let horizontal = align;
+    if (align === 'center') {
+      const centerPos = rect.left + rect.width / 2;
+      if (centerPos < popoverWidth / 2) horizontal = 'left';
+      else if (window.innerWidth - centerPos < popoverWidth / 2) horizontal = 'right';
+    } else if (align === 'left' && spaceRight < popoverWidth) {
+      horizontal = 'right';
+    } else if (align === 'right' && rect.right < popoverWidth) {
+      horizontal = 'left';
+    }
+
+    setPlacement({ vertical, horizontal });
+
+    let top: number;
+    if (vertical === 'bottom') {
+      top = rect.bottom + 4;
+    } else {
+      top = rect.top - popoverHeight - 4;
+    }
+    let left: number;
+    if (horizontal === 'right') {
+      left = rect.right - popoverWidth;
+    } else if (horizontal === 'center') {
+      left = rect.left + rect.width / 2 - popoverWidth / 2;
+    } else {
+      left = rect.left;
+    }
+
+    // Viewport bounds clamping
+    const safeTop = Math.max(8, Math.min(top, window.innerHeight - popoverHeight - 8));
+    const safeLeft = Math.max(8, Math.min(left, window.innerWidth - popoverWidth - 8));
+
+    setPopoverPos({ top: safeTop, left: safeLeft });
+  };
+
   // Screen location awareness: detect available space above/below and left/right
   useEffect(() => {
     if (!isOpen) return;
-
-    const updatePosition = () => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const popoverHeight = 220; // ultra-compact height
-      const popoverWidth = 216;  // ultra-compact width
-
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-      const spaceRight = window.innerWidth - rect.left;
-
-      const vertical = spaceBelow < popoverHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
-
-      let horizontal = align;
-      if (align === 'center') {
-        const centerPos = rect.left + rect.width / 2;
-        if (centerPos < popoverWidth / 2) horizontal = 'left';
-        else if (window.innerWidth - centerPos < popoverWidth / 2) horizontal = 'right';
-      } else if (align === 'left' && spaceRight < popoverWidth) {
-        horizontal = 'right';
-      } else if (align === 'right' && rect.right < popoverWidth) {
-        horizontal = 'left';
-      }
-
-      setPlacement({ vertical, horizontal });
-
-      let top: number;
-      if (vertical === 'bottom') {
-        top = rect.bottom + 4;
-      } else {
-        top = rect.top - popoverHeight - 4;
-      }
-      let left: number;
-      if (horizontal === 'right') {
-        left = rect.right - popoverWidth;
-      } else if (horizontal === 'center') {
-        left = rect.left + rect.width / 2 - popoverWidth / 2;
-      } else {
-        left = rect.left;
-      }
-      setPopoverPos({ top, left });
-    };
 
     updatePosition();
     window.addEventListener('resize', updatePosition);
@@ -155,8 +172,14 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
   // Click outside and Escape key listener
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (!target) return;
+
+      const isInsideContainer = containerRef.current?.contains(target);
+      const isInsidePopover = popoverRef.current?.contains(target);
+
+      if (!isInsideContainer && !isInsidePopover) {
         setIsOpen(false);
       }
     };
@@ -172,10 +195,12 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
       document.addEventListener('keydown', handleKeyDown);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen]);
@@ -184,7 +209,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const isPrevDisabled = disabled || (viewYear <= minYear && viewMonth === 0);
   const isNextDisabled = disabled || (viewYear >= maxYear && viewMonth === 11);
 
-  const handlePrevMonth = () => {
+  const handlePrevMonth = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (isPrevDisabled) return;
     if (viewMonth === 0) {
       setViewMonth(11);
@@ -194,7 +220,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
   };
 
-  const handleNextMonth = () => {
+  const handleNextMonth = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (isNextDisabled) return;
     if (viewMonth === 11) {
       setViewMonth(0);
@@ -204,20 +231,23 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
   };
 
-  const handleSelectDay = (day: number, monthOffset = 0) => {
+  const handleSelectDay = (day: number, monthOffset = 0, explicitDateStr?: string) => {
     if (disabled) return;
-    let targetYear = viewYear;
-    let targetMonth = viewMonth + monthOffset;
+    let dateStr = explicitDateStr;
+    if (!dateStr) {
+      let targetYear = viewYear;
+      let targetMonth = viewMonth + monthOffset;
 
-    if (targetMonth < 0) {
-      targetMonth = 11;
-      targetYear -= 1;
-    } else if (targetMonth > 11) {
-      targetMonth = 0;
-      targetYear += 1;
+      if (targetMonth < 0) {
+        targetMonth = 11;
+        targetYear -= 1;
+      } else if (targetMonth > 11) {
+        targetMonth = 0;
+        targetYear += 1;
+      }
+
+      dateStr = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
-
-    const dateStr = `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     
     // Guard against selecting out-of-bound disabled days
     if (minDate && dateStr < minDate) return;
@@ -232,7 +262,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     disabled || (minDate && today.str < minDate) || (maxDate && today.str > maxDate)
   );
 
-  const handleTodayClick = () => {
+  const handleTodayClick = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (disabled || isTodayDisabled) return;
     setViewYear(today.year);
     setViewMonth(today.month);
@@ -244,6 +275,24 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     e.stopPropagation();
     if (disabled || required) return;
     onChange('');
+  };
+
+  const handleToggle = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (disabled) return;
+    if (!isOpen) {
+      updatePosition();
+      if (parsedDate) {
+        setViewYear(parsedDate.year);
+        setViewMonth(parsedDate.month);
+      } else {
+        setViewYear(today.year);
+        setViewMonth(today.month);
+      }
+      setIsOpen(true);
+    } else {
+      setIsOpen(false);
+    }
   };
 
   // Generate calendar days for current viewMonth and viewYear
@@ -301,8 +350,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       });
     }
 
-    // Next month trailing days to complete 6 rows (42 days) or 5 rows
-    const totalSlots = days.length <= 35 ? 35 : 42;
+    // Next month trailing days to complete fixed 6 rows (42 days) to prevent height jumps
+    const totalSlots = 42;
     const remaining = totalSlots - days.length;
     for (let d = 1; d <= remaining; d++) {
       let nextY = viewYear;
@@ -336,14 +385,25 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     return `${parsedDate.day} ${SHORT_MONTH_NAMES[parsedDate.month]} ${parsedDate.year}`;
   }, [parsedDate, value]);
 
+  // Dynamic min and max year to ensure any existing selected date is always represented
+  const effectiveMinYear = useMemo(() => {
+    if (parsedDate && parsedDate.year < minYear) return parsedDate.year - 2;
+    return minYear;
+  }, [parsedDate, minYear]);
+
+  const effectiveMaxYear = useMemo(() => {
+    if (parsedDate && parsedDate.year > maxYear) return parsedDate.year + 2;
+    return maxYear;
+  }, [parsedDate, maxYear]);
+
   // Generate Year options (fast jump for DOB)
   const yearsList = useMemo(() => {
     const yrs: number[] = [];
-    for (let y = maxYear; y >= minYear; y--) {
+    for (let y = effectiveMaxYear; y >= effectiveMinYear; y--) {
       yrs.push(y);
     }
     return yrs;
-  }, [minYear, maxYear]);
+  }, [effectiveMinYear, effectiveMaxYear]);
 
   return (
     <div ref={containerRef} className={`relative inline-block w-full text-left ${className}`}>
@@ -357,7 +417,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               }
             : undefined
         }
-        className={`w-full flex items-center justify-between px-2 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 ${
+        className={`w-full flex items-center justify-between bg-white border border-slate-200 rounded-lg text-xs font-semibold transition hover:border-slate-300 ${
+          size === 'sm' ? 'px-2.5 py-1.5' : 'px-2.5 h-[38px]'
+        } ${
           disabled ? 'opacity-50 cursor-not-allowed bg-slate-50' : 'text-slate-800'
         }`}
       >
@@ -368,7 +430,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
           disabled={disabled}
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          onClick={() => !disabled && setIsOpen(!isOpen)}
+          onClick={handleToggle}
           className="flex items-center gap-1.5 min-w-0 flex-1 text-left bg-transparent border-0 p-0 focus:outline-none cursor-pointer disabled:cursor-not-allowed"
         >
           <CalendarIcon className="w-3.5 h-3.5 shrink-0" style={{ color: preset.primaryColor }} />
@@ -400,10 +462,11 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         popoverPos &&
         createPortal(
           <div
+            ref={popoverRef}
             role="dialog"
             aria-modal="true"
             style={{ top: popoverPos.top, left: popoverPos.left }}
-            className="fixed z-[9999] w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed z-[9999] w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 select-none"
           >
           {/* Header Controls (Compact) */}
           <div className="flex items-center justify-between pb-1 border-b border-slate-100">
@@ -477,8 +540,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             ))}
           </div>
 
-          {/* Days Grid (Ultra-compact 23px day buttons) */}
-          <div className="grid grid-cols-7 gap-0.5 py-0.5">
+          {/* Days Grid (Always fixed 6 rows = 42 slots, invariant height) */}
+          <div className="grid grid-cols-7 grid-rows-6 gap-0.5 py-0.5 h-[146px]">
             {calendarDays.map((item, idx) => {
               const { day, isCurrentMonth, isSelected, isToday, isDisabled, dateStr } = item;
 
@@ -487,7 +550,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                   key={`${dateStr}-${idx}`}
                   type="button"
                   disabled={isDisabled}
-                  onClick={() => handleSelectDay(day, item.monthOffset)}
+                  onClick={() => handleSelectDay(day, item.monthOffset, dateStr)}
                   style={{
                     backgroundColor: isSelected
                       ? preset.primaryColor

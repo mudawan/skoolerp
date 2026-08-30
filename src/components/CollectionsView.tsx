@@ -92,6 +92,7 @@ export const CollectionsView: React.FC = () => {
 
   // Direct Collection Modal State
   const [showDirectModal, setShowDirectModal] = useState(false);
+  const [isChangingVoucher, setIsChangingVoucher] = useState(false);
   const [directSearch, setDirectSearch] = useState('');
   const [selectedVoucherId, setSelectedVoucherId] = useState('');
   const [directAmount, setDirectAmount] = useState<number | string>('');
@@ -203,10 +204,12 @@ export const CollectionsView: React.FC = () => {
       setDirectItems(preSelectedVoucher.particulars.map((p) => ({ ...p })));
       const remaining = Math.max(0, preSelectedVoucher.netDue - preSelectedVoucher.amountPaid);
       setDirectAmount(remaining > 0 ? remaining : preSelectedVoucher.netDue);
+      setIsChangingVoucher(false);
     } else {
       setSelectedVoucherId('');
       setDirectItems([]);
       setDirectAmount('');
+      setIsChangingVoucher(false);
     }
 
     setDirectSearch('');
@@ -1096,110 +1099,24 @@ export const CollectionsView: React.FC = () => {
 
       {/* Direct Payment / Single Collection Modal */}
       {showDirectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-4 my-auto sm:my-8 animate-in fade-in duration-200 border border-slate-200/80">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[92vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
-                  <Coins className="w-5 h-5" />
+                <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200">
+                  <Coins className="w-4.5 h-4.5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Record Fee Collection</h3>
-                  <p className="text-xs text-slate-500">Collect full, remaining, or partial fee payments directly</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowDirectModal(false)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveDirectPayment} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-                {/* Left Pane: Voucher Search & Particulars Editor */}
-                <div className="lg:col-span-6 space-y-3">
-                  {/* Voucher Search & Selection */}
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Select Fee Voucher *</label>
-                    <div className="space-y-1.5">
-                      <div className="relative">
-                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          placeholder="Search voucher #, student name (e.g. FE2026-000202)..."
-                          value={directSearch}
-                          onChange={(e) => setDirectSearch(e.target.value)}
-                          className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                        />
-                      </div>
-                      <select
-                        value={selectedVoucherId}
-                        onChange={(e) => handleSelectVoucher(e.target.value)}
-                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-semibold text-slate-800 text-xs"
-                        size={searchedVouchers.length > 4 ? 4 : Math.max(3, searchedVouchers.length + 1)}
-                      >
-                        <option value="" className="text-slate-400 font-normal">
-                          -- Select a Student / Fee Voucher ({searchedVouchers.length} found) --
-                        </option>
-                        {searchedVouchers.map((v) => {
-                          const s = students.find((stu) => stu.id === v.studentId);
-                          const rem = Math.max(0, v.netDue - v.amountPaid);
-                          const excess = v.amountPaid > v.netDue ? v.amountPaid - v.netDue : 0;
-                          return (
-                            <option key={v.id} value={v.id} className="py-0.5">
-                              {v.voucherNo} &bull; {s?.name} &bull; {rem > 0 ? `Bal: Rs. ${Math.round(rem).toLocaleString()}` : excess > 0 ? `Adv: Rs. ${Math.round(excess).toLocaleString()}` : 'Paid'} ({v.status}) [{v.month}]
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Editable Voucher Line Items / Particulars */}
-                  {selectedVoucher && (
-                    <VoucherParticularsEditor
-                      items={directItems}
-                      onChange={(updated) => {
-                        setDirectItems(updated);
-                        const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, selectedVoucher?.roundingMultiple);
-                        const newNet = Math.max(0, roundUpToMultiple(updated.reduce((s, p) => s + (Number(p.amount) || 0), 0), mult));
-                        const newRem = Math.max(0, newNet - (selectedVoucher.amountPaid || 0));
-                        if (Number(directAmount) === selectedRemaining && newRem > 0) {
-                          setDirectAmount(newRem);
-                        }
-                      }}
-                      originalItems={selectedVoucher.particulars}
-                      onResetToOriginal={() => {
-                        setDirectItems(selectedVoucher.particulars.map((p) => ({ ...p })));
-                        const rem = Math.max(0, selectedVoucher.netDue - selectedVoucher.amountPaid);
-                        setDirectAmount(rem > 0 ? rem : selectedVoucher.netDue);
-                      }}
-                      onSaveLineItems={handleSaveLineItemsOnly}
-                      amountPaid={selectedVoucher.amountPaid}
-                      studentId={selectedVoucher.studentId}
-                    />
-                  )}
-                </div>
-
-                {/* Right Pane: Live Overview & Payment Inputs */}
-                <div className="lg:col-span-6 space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
-                  {/* Selected Voucher Live Overview Card */}
-                  {selectedVoucher ? (
-                    <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <StudentAvatar photoUrl={selectedStudent?.photoUrl} name={selectedStudent?.name || 'Student'} size="sm" />
-                          <div>
-                            <div className="font-bold text-slate-900 text-sm">{selectedStudent?.name}</div>
-                            <div className="text-[11px] text-slate-500 font-mono">
-                              {selectedVoucher.voucherNo} &bull; {selectedClass?.name} &bull; {formatMonthName(selectedVoucher.month)}
-                            </div>
-                          </div>
-                        </div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900">Record Fee Collection</h3>
+                    {selectedVoucher && (
+                      <>
+                        <span className="font-mono font-bold text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                          {selectedVoucher.voucherNo}
+                        </span>
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                             selectedVoucher.status === 'Paid'
                               ? 'bg-emerald-100 text-emerald-800'
                               : selectedVoucher.status === 'Partial'
@@ -1209,179 +1126,394 @@ export const CollectionsView: React.FC = () => {
                         >
                           {selectedVoucher.status}
                         </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-1.5 pt-1.5 border-t border-slate-100 text-center font-mono">
-                        <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
-                          <div className="text-[9px] text-slate-500 font-sans">Original Due</div>
-                          <div className="font-bold text-slate-800 text-xs">{formatCurrency(selectedVoucher.netDue)}</div>
-                        </div>
-                        <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
-                          <div className="text-[9px] text-slate-500 font-sans">Already Paid</div>
-                          <div className="font-bold text-emerald-700 text-xs">{formatCurrency(selectedVoucher.amountPaid)}</div>
-                        </div>
-                        <div className="bg-emerald-50/80 p-1.5 rounded border border-emerald-200">
-                          <div className="text-[9px] text-emerald-800 font-sans font-bold">
-                            {selectedVoucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Revised Remaining'}
-                          </div>
-                          <div className="font-black text-emerald-800 text-xs">
-                            {selectedVoucher.amountPaid >= dynamicNetDue
-                              ? selectedVoucher.amountPaid > dynamicNetDue
-                                ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Adv`
-                                : 'Fully Settled'
-                              : formatCurrency(dynamicRemaining)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-4 text-center text-slate-400 bg-white rounded-lg border border-dashed border-slate-200 text-xs">
-                      Please select a fee voucher on the left to collect payment.
-                    </div>
-                  )}
-
-                  {/* Amount Input with Quick-fill Buttons */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block font-bold text-slate-700">Collection Amount (Rs.) *</label>
-                      {selectedVoucher && dynamicRemaining > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => setDirectAmount(dynamicRemaining)}
-                          className="text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
-                        >
-                          Auto-fill Remaining ({formatCurrency(dynamicRemaining)})
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">Rs.</span>
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        required
-                        value={directAmount}
-                        onChange={(e) => setDirectAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                        placeholder="Enter Amount"
-                        className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-base text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                      />
-                    </div>
-
-                    {/* Quick amount suggestion chips */}
-                    {selectedVoucher && (
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {dynamicRemaining > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => setDirectAmount(dynamicRemaining)}
-                            className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
-                          >
-                            Full Balance: {formatCurrency(dynamicRemaining)}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setDirectAmount(dynamicNetDue)}
-                            className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
-                          >
-                            Fill Fee: {formatCurrency(dynamicNetDue)}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setDirectAmount(dynamicNetDue)}
-                          className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[10px] font-semibold transition cursor-pointer"
-                        >
-                          Net Due: {formatCurrency(dynamicNetDue)}
-                        </button>
-                      </div>
+                      </>
                     )}
-                    {selectedVoucher &&
-                      typeof directAmount === 'number' &&
-                      directAmount > dynamicRemaining && (
-                        <div className="mt-2 flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md px-2.5 py-1.5">
-                          <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                          <span className="text-[11px] font-medium">
-                            Excess {formatCurrency(directAmount - dynamicRemaining)} to be held as credit / advance.
-                          </span>
-                        </div>
-                      )}
                   </div>
+                  <p className="text-[11px] text-slate-500">
+                    Collect full, remaining, or partial fee payments directly
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDirectModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-                  {/* Payment Mode & Date */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Payment Mode *</label>
-                      <select
-                        value={directMode}
-                        onChange={(e) => setDirectMode(e.target.value as any)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs"
-                      >
-                        <option value="Cash">Cash Desk</option>
-                        <option value="BankTransfer">Bank Transfer / Online</option>
-                        <option value="Cheque">Cheque Deposit</option>
-                        <option value="Online">Credit/Debit Card</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Collection Date *</label>
-                      <DatePicker
-                        value={directDate}
-                        required
-                        themeColor={themeConfig?.color || 'teal'}
-                        onChange={(newDate) => setDirectDate(newDate)}
-                        idPrefix="collection-direct-date"
-                        placeholder="Select Collection Date"
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Deposit Slip / Ref # (Optional)</label>
+            {/* Header Voucher Ribbon: Search & Select OR Student Summary Card */}
+            {!selectedVoucher || isChangingVoucher ? (
+              <div className="bg-slate-50/90 rounded-xl px-3 py-2 border border-slate-200 space-y-1.5 shrink-0">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-[11px] text-slate-700 flex items-center gap-1.5">
+                    <Search className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Search & Select Fee Voucher *</span>
+                    <span className="text-[10px] font-normal text-slate-400">
+                      ({searchedVouchers.length} vouchers available)
+                    </span>
+                  </label>
+                  {selectedVoucher && isChangingVoucher && (
+                    <button
+                      type="button"
+                      onClick={() => setIsChangingVoucher(false)}
+                      className="text-[11px] text-slate-500 hover:text-slate-800 font-semibold hover:underline cursor-pointer"
+                    >
+                      Keep {selectedVoucher.voucherNo}
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-5 relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder="e.g. PK-MZB-981120 or Cash Receipt #"
-                      value={directRef}
-                      onChange={(e) => setDirectRef(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
+                      placeholder="Filter student name, reg #, voucher #..."
+                      value={directSearch}
+                      onChange={(e) => setDirectSearch(e.target.value)}
+                      className="w-full h-[38px] pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                     />
                   </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Receipt Notes / Remarks (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Cleared remaining balance"
-                      value={directNotes}
-                      onChange={(e) => setDirectNotes(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
+                  <div className="sm:col-span-7">
+                    <select
+                      value={selectedVoucherId}
+                      onChange={(e) => {
+                        handleSelectVoucher(e.target.value);
+                        if (e.target.value) {
+                          setIsChangingVoucher(false);
+                        }
+                      }}
+                      className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
+                    >
+                      <option value="" className="text-slate-400 font-normal">
+                        -- Choose a Student / Fee Voucher ({searchedVouchers.length}) --
+                      </option>
+                      {searchedVouchers.map((v) => {
+                        const s = students.find((stu) => stu.id === v.studentId);
+                        const rem = Math.max(0, v.netDue - v.amountPaid);
+                        const excess = v.amountPaid > v.netDue ? v.amountPaid - v.netDue : 0;
+                        return (
+                          <option key={v.id} value={v.id}>
+                            {v.voucherNo} • {s?.name} • {rem > 0 ? `Bal: Rs. ${Math.round(rem).toLocaleString()}` : excess > 0 ? `Adv: Rs. ${Math.round(excess).toLocaleString()}` : 'Paid'} ({v.status}) [{v.month}]
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
                 </div>
               </div>
+            ) : (
+              <div className="bg-slate-50/90 rounded-xl px-3 py-2 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shrink-0">
+                {/* Student Info */}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <StudentAvatar
+                    photoUrl={selectedStudent?.photoUrl}
+                    name={selectedStudent?.name || 'Student'}
+                    size="sm"
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate">
+                        {selectedStudent?.name || 'Unknown Student'}
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={() => setIsChangingVoucher(true)}
+                        className="text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 px-1.5 py-0.5 rounded cursor-pointer transition flex items-center gap-1"
+                        title="Choose a different voucher"
+                      >
+                        <Search className="w-2.5 h-2.5" />
+                        Change Voucher
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
+                      <span>{selectedVoucher.voucherNo}</span>
+                      {selectedStudent?.regNo && (
+                        <>
+                          <span>&bull;</span>
+                          <span>Reg: {selectedStudent.regNo}</span>
+                        </>
+                      )}
+                      {selectedClass?.name && (
+                        <>
+                          <span>&bull;</span>
+                          <span>Class: {selectedClass.name}</span>
+                        </>
+                      )}
+                      <span>&bull;</span>
+                      <span>{formatMonthName(selectedVoucher.month)}</span>
+                    </p>
+                  </div>
+                </div>
 
-              {/* Modal Footer Controls */}
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setShowDirectModal(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 cursor-pointer text-xs font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!selectedVoucher || Number(directAmount) <= 0}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
-                >
-                  <Receipt className="w-4 h-4" />
-                  <span>Record Collection ({directAmount ? formatCurrency(Number(directAmount)) : 'Rs. 0'})</span>
-                </button>
+                {/* 3 Metric Pills */}
+                <div className="flex items-center gap-1.5 shrink-0 self-stretch sm:self-auto justify-between sm:justify-end">
+                  <div className="grid grid-cols-3 gap-1.5 font-mono text-center">
+                    <div className="bg-white px-2 py-0.5 rounded-md border border-slate-200 min-w-[70px]">
+                      <div className="text-[9px] text-slate-500 font-sans font-medium">Original Due</div>
+                      <div className="font-bold text-slate-800 text-[11px] sm:text-xs">
+                        {formatCurrency(selectedVoucher.netDue)}
+                      </div>
+                    </div>
+                    <div className="bg-white px-2 py-0.5 rounded-md border border-slate-200 min-w-[70px]">
+                      <div className="text-[9px] text-slate-500 font-sans font-medium">Already Paid</div>
+                      <div className="font-bold text-emerald-700 text-[11px] sm:text-xs">
+                        {formatCurrency(selectedVoucher.amountPaid)}
+                      </div>
+                    </div>
+                    <div className="bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 min-w-[76px]">
+                      <div className="text-[9px] text-emerald-800 font-sans font-bold">
+                        {selectedVoucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Remaining'}
+                      </div>
+                      <div className="font-black text-emerald-800 text-[11px] sm:text-xs">
+                        {selectedVoucher.amountPaid >= dynamicNetDue
+                          ? selectedVoucher.amountPaid > dynamicNetDue
+                            ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Adv`
+                            : 'Settled'
+                          : formatCurrency(dynamicRemaining)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </form>
+            )}
+
+            {/* Main Content Grid: Left & Right Panes */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch overflow-y-auto flex-1 min-h-0 pr-0.5">
+              {/* Left Pane: Particulars Editor */}
+              <div className="lg:col-span-6 flex flex-col h-full min-h-0">
+                {selectedVoucher ? (
+                  <VoucherParticularsEditor
+                    compact={true}
+                    items={directItems}
+                    onChange={(updated) => {
+                      setDirectItems(updated);
+                      const mult = getEffectiveMultiple(
+                        roundingEnabled,
+                        roundingMultiple,
+                        selectedVoucher?.roundingMultiple
+                      );
+                      const newNet = Math.max(
+                        0,
+                        roundUpToMultiple(
+                          updated.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+                          mult
+                        )
+                      );
+                      const newRem = Math.max(0, newNet - (selectedVoucher.amountPaid || 0));
+                      if (Number(directAmount) === selectedRemaining && newRem > 0) {
+                        setDirectAmount(newRem);
+                      }
+                    }}
+                    originalItems={selectedVoucher.particulars}
+                    onResetToOriginal={() => {
+                      setDirectItems(selectedVoucher.particulars.map((p) => ({ ...p })));
+                      const rem = Math.max(0, selectedVoucher.netDue - selectedVoucher.amountPaid);
+                      setDirectAmount(rem > 0 ? rem : selectedVoucher.netDue);
+                    }}
+                    onSaveLineItems={handleSaveLineItemsOnly}
+                    amountPaid={selectedVoucher.amountPaid}
+                    studentId={selectedVoucher.studentId}
+                  />
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-6 text-center flex flex-col items-center justify-center h-full min-h-[260px] text-slate-400">
+                    <div className="p-2.5 bg-white text-slate-400 rounded-full mb-2 border border-slate-200 shadow-2xs">
+                      <Receipt className="w-4 h-4 text-teal-600" />
+                    </div>
+                    <div className="font-bold text-slate-700 text-xs mb-1">
+                      Fee Heads & Breakdown
+                    </div>
+                    <p className="text-[11px] text-slate-500 max-w-xs">
+                      Select a fee voucher in the header above to review, customize, and save particulars.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Pane: Collection Form */}
+              <div className="lg:col-span-6 flex flex-col h-full min-h-0">
+                <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200 flex flex-col justify-between h-full space-y-2.5">
+                  <form onSubmit={handleSaveDirectPayment} className="flex flex-col justify-between h-full space-y-2.5 text-xs">
+                    <div className="space-y-2.5">
+                      {/* Amount Section */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block font-bold text-slate-700 text-[11px]">
+                            Collection Amount (Rs.) *
+                          </label>
+                          {selectedVoucher && dynamicRemaining > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setDirectAmount(dynamicRemaining)}
+                              className="text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
+                            >
+                              Auto-fill Remaining ({formatCurrency(dynamicRemaining)})
+                            </button>
+                          ) : selectedVoucher ? (
+                            <button
+                              type="button"
+                              onClick={() => setDirectAmount(dynamicNetDue)}
+                              className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
+                            >
+                              Fill Voucher Fee ({formatCurrency(dynamicNetDue)})
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">
+                            Rs.
+                          </span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            required
+                            disabled={!selectedVoucher}
+                            value={directAmount}
+                            onChange={(e) =>
+                              setDirectAmount(
+                                e.target.value === '' ? '' : Number(e.target.value)
+                              )
+                            }
+                            placeholder={selectedVoucher ? "Enter Amount" : "Select voucher first"}
+                            className="w-full h-[38px] pl-9 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                        </div>
+
+                        {/* Quick suggestion chips */}
+                        {selectedVoucher && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {dynamicRemaining > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setDirectAmount(dynamicRemaining)}
+                                className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
+                              >
+                                Full Balance: {formatCurrency(dynamicRemaining)}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDirectAmount(dynamicNetDue)}
+                                className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
+                              >
+                                Fill Fee: {formatCurrency(dynamicNetDue)}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setDirectAmount(dynamicNetDue)}
+                              className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[10px] font-semibold transition cursor-pointer"
+                            >
+                              Net Due: {formatCurrency(dynamicNetDue)}
+                            </button>
+                          </div>
+                        )}
+
+                        {selectedVoucher &&
+                          typeof directAmount === 'number' &&
+                          directAmount > dynamicRemaining && (
+                            <div className="mt-1.5 flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md px-2 py-1">
+                              <Info className="w-3 h-3 shrink-0" />
+                              <span className="text-[10px] font-medium">
+                                Excess {formatCurrency(directAmount - dynamicRemaining)} to be held as credit / advance.
+                              </span>
+                            </div>
+                          )}
+                      </div>
+
+                      {/* Payment Mode & Date - Exactly 38px matching heights */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                            Payment Mode *
+                          </label>
+                          <select
+                            value={directMode}
+                            disabled={!selectedVoucher}
+                            onChange={(e) => setDirectMode(e.target.value as any)}
+                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
+                          >
+                            <option value="Cash">Cash Desk</option>
+                            <option value="BankTransfer">Bank Transfer / Online</option>
+                            <option value="Cheque">Cheque Deposit</option>
+                            <option value="Online">Credit/Debit Card</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                            Collection Date *
+                          </label>
+                          <DatePicker
+                            value={directDate}
+                            required
+                            disabled={!selectedVoucher}
+                            themeColor={themeConfig?.color || 'teal'}
+                            onChange={(newDate) => setDirectDate(newDate)}
+                            idPrefix="collection-direct-date"
+                            placeholder="Select Collection Date"
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Compacted Bank Ref & Notes - 2 columns */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                            Bank Ref / Slip #
+                          </label>
+                          <input
+                            type="text"
+                            disabled={!selectedVoucher}
+                            placeholder="e.g. PK-MZB-981120"
+                            value={directRef}
+                            onChange={(e) => setDirectRef(e.target.value)}
+                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                            Notes (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            disabled={!selectedVoucher}
+                            placeholder="Optional receipt notes"
+                            value={directNotes}
+                            onChange={(e) => setDirectNotes(e.target.value)}
+                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Modal Footer Controls */}
+                    <div className="flex items-center justify-end gap-2 pt-2.5 border-t border-slate-200 mt-auto">
+                      <button
+                        type="button"
+                        onClick={() => setShowDirectModal(false)}
+                        className="px-3.5 py-1.5 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer text-xs font-semibold transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!selectedVoucher || Number(directAmount) <= 0}
+                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Record Collection ({directAmount ? formatCurrency(Number(directAmount)) : 'Rs. 0'})</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

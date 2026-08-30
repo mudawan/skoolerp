@@ -689,6 +689,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                       </div>
                       <DatePicker
                         value={admDueDate}
+                        size="sm"
                         themeColor={themeConfig?.color || 'teal'}
                         onChange={(d) => {
                           setAdmDueDateTouched(true);

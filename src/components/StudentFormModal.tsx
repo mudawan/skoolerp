@@ -784,10 +784,10 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 </div>
                 <DatePicker
                   value={formData.dob}
-                  minYear={1990}
+                  minYear={1960}
                   maxYear={new Date().getFullYear()}
                   themeColor={themeConfig?.color || 'teal'}
-                  onChange={(newDob) => setFormData({ ...formData, dob: newDob })}
+                  onChange={(newDob) => setFormData((prev) => ({ ...prev, dob: newDob }))}
                   idPrefix="student-dob"
                   placeholder="Select Date of Birth"
                   className="w-full"
