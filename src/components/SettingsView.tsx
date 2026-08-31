@@ -3613,10 +3613,10 @@ export const SettingsView: React.FC = () => {
                       Default Voucher Due Date
                     </span>
                     <span className="text-[10px] font-bold text-slate-400">
-                      {defaultDueDateEnabled ? `Day ${defaultDueDay}th` : 'Disabled'}{' '}
+                      {defaultDueDateEnabled ? `Day ${defaultDueDay}th` : 'No default'}{' '}
                       &rarr;{' '}
                       <span className="text-teal-700 font-extrabold">
-                        {selectedDefaultDueDateEnabled ? `Day ${selectedDefaultDueDay}th` : 'Disabled'}
+                        {selectedDefaultDueDateEnabled ? `Day ${selectedDefaultDueDay}th` : 'No default'}
                       </span>
                     </span>
                   </div>
@@ -3624,7 +3624,7 @@ export const SettingsView: React.FC = () => {
                     <strong>Impact:</strong>{' '}
                     {selectedDefaultDueDateEnabled
                       ? `Pre-fills voucher due date to day ${selectedDefaultDueDay} of billing month in generator.`
-                      : 'Disables automatic due date pre-fill in generator.'}
+                      : 'No default due date pre-fill in generator (left blank).'}
                   </div>
                 </div>
               )}
@@ -3638,19 +3638,16 @@ export const SettingsView: React.FC = () => {
                       Net Due Rounding
                     </span>
                     <span className="text-[10px] font-bold text-slate-400">
-                      {!selectedRoundingEnabled ? (
-                        <span className="text-rose-700 font-extrabold">Disabled</span>
-                      ) : (
-                        <>
-                          {roundingEnabled ? roundingMultiple : 'Off'} &rarr;{' '}
-                          <span className="text-teal-700 font-extrabold">{selectedRoundingMultiple}</span>
-                        </>
-                      )}
+                      {roundingEnabled && roundingMultiple > 1 ? `Nearest Rs. ${roundingMultiple}` : 'Exact (1)'}{' '}
+                      &rarr;{' '}
+                      <span className="text-indigo-700 font-extrabold">
+                        {selectedRoundingMultiple > 1 ? `Nearest Rs. ${selectedRoundingMultiple}` : 'Exact (1)'}
+                      </span>
                     </span>
                   </div>
                   <div className="p-2 bg-indigo-50/80 border border-indigo-200/70 rounded-lg text-[11px] text-indigo-900 leading-relaxed">
                     <strong>Impact:</strong>{' '}
-                    {!selectedRoundingEnabled
+                    {selectedRoundingMultiple <= 1
                       ? 'Net due rounding is turned OFF — new vouchers are billed at their exact amounts; late fines are not rounded.'
                       : `Voucher net due amounts round up to the nearest multiple of ${selectedRoundingMultiple}; late fines carried forward round the same way. Negative balances remain unrounded.`}
                   </div>

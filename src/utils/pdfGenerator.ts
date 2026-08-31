@@ -1,7 +1,18 @@
 import jsPDF from 'jspdf';
 import JSZip from 'jszip';
-import { FeeVoucher, InstituteProfile, BankAccount, Student, SchoolClass, FeeTemplate, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount } from './feeMath';
+import {
+  FeeVoucher,
+  InstituteProfile,
+  BankAccount,
+  Student,
+  SchoolClass,
+  FeeTemplate,
+  ParticularKind,
+  VoucherItem,
+  PaymentTransaction,
+  PaymentReceiptData,
+} from '../types';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords } from './feeMath';
 
 export interface PdfExportContext {
   institute: InstituteProfile;
@@ -2300,5 +2311,726 @@ export async function exportFeeCollectionReportPdf(
   const safeFilename = filename || `${reportTitle.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`;
   doc.save(safeFilename);
 }
+
+/**
+ * Render a single payment receipt slip onto an A4 jsPDF canvas (Dual or Single slip mode)
+ */
+function renderPaymentReceiptSlip(
+  doc: jsPDF,
+  receipt: PaymentReceiptData,
+  context: PdfExportContext,
+  copyTitle: string,
+  startX: number,
+  startY: number,
+  width: number,
+  height: number,
+  isDualMode: boolean
+) {
+  const [themeR, themeG, themeB] = hexToRgb(context.themeColor || '#0f766e');
+  const student = receipt.student;
+  const voucher = receipt.voucher;
+  const txn = receipt.transaction;
+  const schoolClass = receipt.schoolClass || context.classes.find((c) => c.id === student?.classId || c.id === voucher?.classId);
+  const activeBank = receipt.bankAccount || context.bankAccounts.find((b) => b.active && b.isDefault) || context.bankAccounts.find((b) => b.active);
+
+  // Outer Slip Border
+  doc.setDrawColor(203, 213, 225); // slate-300
+  doc.setLineWidth(0.3);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(startX, startY, width, height, 2, 2, 'FD');
+
+  let curY = startY + 3;
+
+  // 1. Header: Logo + Institute Details + Receipt Badge
+  const hasLogo = !!context.institute.logoUrl && context.institute.logoUrl.startsWith('data:image/');
+  const logoSize = isDualMode ? 12 : 15;
+  let headerTextX = startX + 4;
+
+  if (hasLogo) {
+    try {
+      doc.addImage(context.institute.logoUrl, 'PNG', startX + 4, curY, logoSize, logoSize);
+      headerTextX = startX + 4 + logoSize + 3;
+    } catch {
+      // fallback if image embedding fails
+    }
+  }
+
+  // Institute Name
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 10.5 : 13);
+  doc.setTextColor(15, 23, 42); // slate-900
+  const instName = (context.institute.name || 'INSTITUTE NAME').toUpperCase();
+  doc.text(instName, headerTextX, curY + (isDualMode ? 4 : 4.5));
+
+  // Institute Address & Contact
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(isDualMode ? 6 : 7);
+  doc.setTextColor(100, 116, 139); // slate-500
+  const subLine = [
+    context.institute.address,
+    context.institute.phone ? `Ph: ${context.institute.phone}` : '',
+    context.institute.regNo ? `Reg: ${context.institute.regNo}` : '',
+  ]
+    .filter(Boolean)
+    .join(' • ');
+  doc.text(truncatePdfText(doc, subLine, width - (headerTextX - startX) - 52), headerTextX, curY + (isDualMode ? 7.5 : 8.5));
+
+  // Right Header Badge (Official Receipt + Copy Title)
+  const badgeWidth = isDualMode ? 48 : 56;
+  const badgeX = startX + width - badgeWidth - 4;
+  doc.setFillColor(themeR, themeG, themeB);
+  doc.roundedRect(badgeX, curY, badgeWidth, isDualMode ? 11 : 13, 1.5, 1.5, 'F');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 7.5 : 9);
+  doc.setTextColor(255, 255, 255);
+  doc.text('PAYMENT RECEIPT', badgeX + badgeWidth / 2, curY + (isDualMode ? 4.5 : 5.5), { align: 'center' });
+
+  // Copy Pill Inside Header Badge
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(badgeX + 2, curY + (isDualMode ? 6.2 : 7.2), badgeWidth - 4, isDualMode ? 3.8 : 4.8, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 5.5 : 6.5);
+  doc.setTextColor(themeR, themeG, themeB);
+  doc.text(copyTitle, badgeX + badgeWidth / 2, curY + (isDualMode ? 9 : 10.6), { align: 'center' });
+
+  curY += isDualMode ? 13 : 16;
+
+  // 2. Student & Transaction Metadata Ribbon
+  const metaHeight = isDualMode ? 16 : 20;
+  doc.setFillColor(248, 250, 252); // slate-50
+  doc.setDrawColor(226, 232, 240); // slate-200
+  doc.roundedRect(startX + 3, curY, width - 6, metaHeight, 1.5, 1.5, 'FD');
+
+  const col1X = startX + 6;
+  const col2X = startX + (width / 2) + 2;
+
+  // Left Column - Student Info
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(isDualMode ? 6 : 7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Student Name:', col1X, curY + (isDualMode ? 3.5 : 4));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(student?.name || 'N/A', col1X + 22, curY + (isDualMode ? 3.5 : 4));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Reg # / Roll #:', col1X, curY + (isDualMode ? 7 : 8));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(themeR, themeG, themeB);
+  doc.text(`${student?.regNo || 'N/A'}${student?.studentNo ? ` (${student.studentNo})` : ''}`, col1X + 22, curY + (isDualMode ? 7 : 8));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Class / Section:', col1X, curY + (isDualMode ? 10.5 : 12));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(schoolClass?.name || 'General', col1X + 22, curY + (isDualMode ? 10.5 : 12));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text("Father's Name:", col1X, curY + (isDualMode ? 14 : 16));
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(30, 41, 59);
+  doc.text(student?.fatherName || 'N/A', col1X + 22, curY + (isDualMode ? 14 : 16));
+
+  // Right Column - Payment & Voucher Reference
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Receipt / Txn #:', col2X, curY + (isDualMode ? 3.5 : 4));
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(isDualMode ? 6.5 : 8);
+  doc.setTextColor(15, 118, 110);
+  doc.text(txn?.txnNo || 'TXN-000000', col2X + 24, curY + (isDualMode ? 3.5 : 4));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(isDualMode ? 6 : 7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Payment Date:', col2X, curY + (isDualMode ? 7 : 8));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(txn?.date || new Date().toISOString().split('T')[0], col2X + 24, curY + (isDualMode ? 7 : 8));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Payment Mode:', col2X, curY + (isDualMode ? 10.5 : 12));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  const modeStr = `${txn?.paymentMode || 'Cash'}${txn?.referenceNo ? ` [Ref: ${txn.referenceNo}]` : ''}`;
+  doc.text(truncatePdfText(doc, modeStr, (width / 2) - 30), col2X + 24, curY + (isDualMode ? 10.5 : 12));
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text('Voucher #:', col2X, curY + (isDualMode ? 14 : 16));
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 41, 59);
+  doc.text(`${voucher?.voucherNo || 'N/A'} (${formatMonthName(voucher?.month || '')})`, col2X + 24, curY + (isDualMode ? 14 : 16));
+
+  curY += metaHeight + (isDualMode ? 2.5 : 4);
+
+  // 3. Fee Breakdown / Particulars Table (Lists ALL fee particulars, not just non-zero ones)
+  const standardOrder: { kind: ParticularKind; defaultLabel: string }[] = [
+    { kind: 'Tuition', defaultLabel: 'Tuition Fee' },
+    { kind: 'Flex1', defaultLabel: 'Admission Fee' },
+    { kind: 'Flex2', defaultLabel: 'Registration Fee' },
+    { kind: 'Transport', defaultLabel: 'Transport Fee' },
+    { kind: 'Fine', defaultLabel: 'Fine' },
+    { kind: 'Flex3', defaultLabel: 'Exam Fee' },
+    { kind: 'Flex4', defaultLabel: 'Other' },
+    { kind: 'PreviousBalance', defaultLabel: 'Previous Balance' },
+    { kind: 'Discount', defaultLabel: 'Discount in Fee' },
+  ];
+
+  const globalTemplates = (context.templates || [])
+    .filter((t) => !t.studentId && !t.classId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const classTemplates = (context.templates || []).filter(
+    (t) => !t.studentId && t.classId === voucher?.classId && (!t.month || t.month === voucher?.month)
+  );
+  const studentTemplates = (context.templates || []).filter(
+    (t) => t.studentId === student?.id && (!t.month || t.month === voucher?.month)
+  );
+
+  const sortMap = new Map<ParticularKind, number>();
+  globalTemplates.forEach((t) => sortMap.set(t.kind, t.sortOrder));
+  classTemplates.forEach((t) => {
+    if (t.sortOrder !== undefined) sortMap.set(t.kind, t.sortOrder);
+  });
+  studentTemplates.forEach((t) => {
+    if (t.sortOrder !== undefined) sortMap.set(t.kind, t.sortOrder);
+  });
+
+  const orderedKinds = standardOrder.slice().sort((a, b) => {
+    const orderA = sortMap.get(a.kind) ?? 99;
+    const orderB = sortMap.get(b.kind) ?? 99;
+    return orderA - orderB;
+  });
+
+  const allParticularsToRender: VoucherItem[] = orderedKinds.map((ordered) => {
+    const existing = (voucher?.particulars || []).find((p) => p.kind === ordered.kind);
+    const studentOverride = studentTemplates.find((t) => t.kind === ordered.kind);
+    const classOverride = classTemplates.find((t) => t.kind === ordered.kind);
+    const globalTpl = globalTemplates.find((t) => t.kind === ordered.kind);
+    let label =
+      studentOverride?.label ||
+      classOverride?.label ||
+      globalTpl?.label ||
+      (existing ? existing.label : ordered.defaultLabel);
+    if (ordered.kind === 'Tuition') {
+      label = label.replace(/\s*\(Class[^)]*\)/gi, '').trim() || 'Tuition Fee';
+    } else if (ordered.kind === 'Transport') {
+      label = studentOverride?.label || classOverride?.label || globalTpl?.label || 'Transport Fee';
+    }
+    return {
+      kind: ordered.kind,
+      label,
+      amount: existing ? existing.amount : 0,
+    };
+  });
+
+  const tableX = startX + 3;
+  const tableW = width - 6;
+  const colWDesc = tableW - 32;
+
+  // Table Header
+  doc.setFillColor(241, 245, 249); // slate-100
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(tableX, curY, tableW, isDualMode ? 4 : 5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 5.5 : 7);
+  doc.setTextColor(71, 85, 105); // slate-600
+  doc.text('FEE HEAD / PARTICULAR DESCRIPTION', tableX + 3, curY + (isDualMode ? 2.8 : 3.5));
+  doc.text('AMOUNT (PKR)', tableX + tableW - 3, curY + (isDualMode ? 2.8 : 3.5), { align: 'right' });
+
+  curY += isDualMode ? 4 : 5;
+
+  const rowHeight = isDualMode ? 3.3 : 4.4;
+  allParticularsToRender.forEach((p, idx) => {
+    const isEven = idx % 2 === 1;
+    if (isEven) {
+      doc.setFillColor(250, 250, 250);
+      doc.rect(tableX, curY, tableW, rowHeight, 'F');
+    }
+    doc.setDrawColor(241, 245, 249);
+    doc.line(tableX, curY + rowHeight, tableX + tableW, curY + rowHeight);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(isDualMode ? 5.5 : 6.8);
+    doc.setTextColor(51, 65, 85);
+    doc.text(truncatePdfText(doc, p.label, colWDesc - 6), tableX + 3, curY + (rowHeight - 1));
+
+    doc.setFont('courier', 'bold');
+    doc.setTextColor(p.amount < 0 ? 15 : 30, p.amount < 0 ? 118 : 41, p.amount < 0 ? 110 : 59);
+    doc.text(formatCurrency(p.amount), tableX + tableW - 3, curY + (rowHeight - 1), { align: 'right' });
+
+    curY += rowHeight;
+  });
+
+  // Table Totals / Summary Row
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(tableX, curY, tableW, isDualMode ? 4.5 : 5.5, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 6 : 7.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text('Total Voucher Net Due:', tableX + 3, curY + (isDualMode ? 3.2 : 4));
+
+  doc.setFont('courier', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(formatCurrency(voucher?.netDue || 0), tableX + tableW - 3, curY + (isDualMode ? 3.2 : 4), { align: 'right' });
+
+  curY += isDualMode ? 6.5 : 8;
+
+  // 4. Prominent Amount Paid Highlight Card
+  const payBoxH = isDualMode ? 12 : 15;
+  doc.setFillColor(236, 253, 245); // emerald-50
+  doc.setDrawColor(167, 243, 208); // emerald-200
+  doc.roundedRect(startX + 3, curY, width - 6, payBoxH, 1.5, 1.5, 'FD');
+
+  // Left: Amount Paid in Figures & Words
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 5.5 : 6.5);
+  doc.setTextColor(4, 120, 87); // emerald-700
+  doc.text('AMOUNT RECEIVED / PAID TODAY:', startX + 6, curY + (isDualMode ? 3.2 : 3.8));
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 9 : 11);
+  doc.setTextColor(6, 95, 70); // emerald-800
+  doc.text(formatCurrency(txn?.amount || 0), startX + 6, curY + (isDualMode ? 7.2 : 8.5));
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(isDualMode ? 5 : 6);
+  doc.setTextColor(51, 65, 85);
+  const wordsStr = `In Words: ${numberToWords(txn?.amount || 0)}`;
+  doc.text(truncatePdfText(doc, wordsStr, width - 68), startX + 6, curY + (isDualMode ? 10.2 : 12.5));
+
+  // Right: Status Badge & Remaining Balance
+  const totalPaid = voucher?.amountPaid || txn?.amount || 0;
+  const netDue = voucher?.netDue || 0;
+  const remaining = Math.max(0, netDue - totalPaid);
+  const isFullyPaid = totalPaid >= netDue && netDue > 0;
+
+  const statusBoxW = isDualMode ? 46 : 54;
+  const statusBoxX = startX + width - statusBoxW - 6;
+
+  doc.setFillColor(isFullyPaid ? 209 : 254, isFullyPaid ? 250 : 243, isFullyPaid ? 229 : 199);
+  doc.setDrawColor(isFullyPaid ? 110 : 251, isFullyPaid ? 231 : 191, isFullyPaid ? 183 : 36);
+  doc.roundedRect(statusBoxX, curY + 1.5, statusBoxW, isDualMode ? 4.2 : 5.2, 1, 1, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 5.5 : 6.5);
+  doc.setTextColor(isFullyPaid ? 4 : 180, isFullyPaid ? 120 : 83, isFullyPaid ? 87 : 9);
+  doc.text(isFullyPaid ? '✓ FULLY PAID' : '⚠ PARTIAL PAYMENT', statusBoxX + statusBoxW / 2, curY + (isDualMode ? 4.5 : 5.2), { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(isDualMode ? 5.5 : 6.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Remaining Balance: ${formatCurrency(remaining)}`, statusBoxX + statusBoxW / 2, curY + (isDualMode ? 9.5 : 11.8), { align: 'center' });
+
+  curY += payBoxH + (isDualMode ? 2 : 3);
+
+  // 5. Notes / Bank details if present
+  if (txn?.notes || activeBank) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(isDualMode ? 5 : 6);
+    doc.setTextColor(100, 116, 139);
+    let noteText = '';
+    if (txn?.notes) noteText += `Notes: ${txn.notes}  `;
+    if (activeBank && txn?.paymentMode !== 'Cash') {
+      noteText += `Bank: ${activeBank.bankName} (A/C: ${activeBank.accountNumber})`;
+    }
+    if (noteText) {
+      doc.text(truncatePdfText(doc, noteText, width - 12), startX + 4, curY + 2.5);
+      curY += isDualMode ? 3.5 : 4.5;
+    }
+  }
+
+  // 6. Signatures & Stamp Lines
+  const sigY = startY + height - (isDualMode ? 9.5 : 13);
+  const sigW = isDualMode ? 38 : 50;
+
+  // Depositor Signature
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.line(startX + 6, sigY, startX + 6 + sigW, sigY);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(isDualMode ? 5 : 6.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Depositor / Parent Signature', startX + 6 + sigW / 2, sigY + 3, { align: 'center' });
+
+  // Cashier / Officer Signature
+  const rightSigX = startX + width - sigW - 6;
+  doc.line(rightSigX, sigY, rightSigX + sigW, sigY);
+  doc.text('Authorized Signatory / Stamp', rightSigX + sigW / 2, sigY + 3, { align: 'center' });
+
+  // Bottom Watermark / Notice
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(isDualMode ? 4.5 : 5.2);
+  doc.setTextColor(148, 163, 184);
+  doc.text('Official computer-generated payment receipt • Subject to realization of funds', startX + width / 2, startY + height - 1.8, { align: 'center' });
+}
+
+/**
+ * Dedicated renderer for 80mm POS Thermal Receipt roll (crisp typography, compact layout, no overlaps)
+ */
+function renderThermalReceiptSlip(
+  doc: jsPDF,
+  receipt: PaymentReceiptData,
+  context: PdfExportContext
+) {
+  const student = receipt.student;
+  const voucher = receipt.voucher;
+  const txn = receipt.transaction;
+  const schoolClass = receipt.schoolClass || context.classes.find((c) => c.id === student?.classId || c.id === voucher?.classId);
+
+  const totalPaid = voucher?.amountPaid || txn?.amount || 0;
+  const netDue = voucher?.netDue || 0;
+  const remaining = Math.max(0, netDue - totalPaid);
+  const isFullyPaid = totalPaid >= netDue && netDue > 0;
+
+  const width = 80;
+  const leftX = 4;
+  const rightX = 76;
+  const contentW = 72;
+  const centerX = width / 2;
+
+  let curY = 5;
+
+  // 1. Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(0, 0, 0);
+  const instName = (context.institute.name || 'INSTITUTE NAME').toUpperCase();
+  doc.text(truncatePdfText(doc, instName, contentW), centerX, curY, { align: 'center' });
+  curY += 3.5;
+
+  if (context.institute.address) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(60, 60, 60);
+    doc.text(truncatePdfText(doc, context.institute.address, contentW), centerX, curY, { align: 'center' });
+    curY += 3;
+  }
+
+  if (context.institute.phone) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(60, 60, 60);
+    doc.text(`Ph: ${context.institute.phone}`, centerX, curY, { align: 'center' });
+    curY += 3;
+  }
+
+  // Receipt Badge
+  curY += 1;
+  doc.setFillColor(0, 0, 0);
+  doc.rect(leftX + 16, curY, contentW - 32, 4.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('PAYMENT RECEIPT', centerX, curY + 3.2, { align: 'center' });
+  curY += 6.5;
+
+  // Dashed separator
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.2);
+  doc.setLineDashPattern([1, 1], 0);
+  doc.line(leftX, curY, rightX, curY);
+  curY += 3;
+
+  // 2. Transaction & Student Meta
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.8);
+  doc.setTextColor(40, 40, 40);
+
+  const drawThermalMetaRow = (label: string, value: string, isBoldVal = false) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(70, 70, 70);
+    doc.text(label, leftX, curY);
+    doc.setFont('helvetica', isBoldVal ? 'bold' : 'normal');
+    doc.setTextColor(0, 0, 0);
+    doc.text(truncatePdfText(doc, value, contentW - 22), rightX, curY, { align: 'right' });
+    curY += 3.2;
+  };
+
+  drawThermalMetaRow('Txn #:', txn?.txnNo || 'N/A', true);
+  drawThermalMetaRow('Date:', txn?.date || new Date().toISOString().split('T')[0]);
+  drawThermalMetaRow('Student:', student?.name || 'N/A', true);
+  drawThermalMetaRow('Reg / Roll #:', `${student?.regNo || 'N/A'}${student?.studentNo ? ` (${student.studentNo})` : ''}`);
+  drawThermalMetaRow('Class:', schoolClass?.name || 'General');
+  drawThermalMetaRow('Voucher #:', `${voucher?.voucherNo || 'N/A'} (${formatMonthName(voucher?.month || '')})`);
+  drawThermalMetaRow('Mode:', `${txn?.paymentMode || 'Cash'}${txn?.referenceNo ? ` [${txn.referenceNo}]` : ''}`);
+
+  curY += 1;
+  doc.line(leftX, curY, rightX, curY);
+  curY += 3;
+
+  // 3. Particulars Section (show non-zero particulars on compact roll)
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(0, 0, 0);
+  doc.text('PARTICULARS', leftX, curY);
+  doc.text('AMOUNT (PKR)', rightX, curY, { align: 'right' });
+  curY += 2.5;
+
+  doc.setLineDashPattern([], 0);
+  doc.setDrawColor(200, 200, 200);
+  doc.line(leftX, curY, rightX, curY);
+  curY += 2.8;
+
+  const particulars = (voucher?.particulars || []).filter((p) => p.amount !== 0);
+  const thermalRows = particulars.length > 0 ? particulars : [{ label: 'Tuition Fee', amount: voucher?.netDue || 0, kind: 'Tuition' as ParticularKind }];
+
+  thermalRows.forEach((p) => {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(40, 40, 40);
+    doc.text(truncatePdfText(doc, p.label, contentW - 25), leftX, curY);
+    doc.setFont('courier', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(formatCurrency(p.amount), rightX, curY, { align: 'right' });
+    curY += 3.2;
+  });
+
+  // Net Due Line
+  doc.setLineDashPattern([1, 1], 0);
+  doc.setDrawColor(150, 150, 150);
+  doc.line(leftX, curY, rightX, curY);
+  curY += 3;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7);
+  doc.setTextColor(0, 0, 0);
+  doc.text('Net Due:', leftX, curY);
+  doc.setFont('courier', 'bold');
+  doc.text(formatCurrency(voucher?.netDue || 0), rightX, curY, { align: 'right' });
+  curY += 4;
+
+  // 4. Amount Received Box
+  doc.setLineDashPattern([], 0);
+  doc.setFillColor(245, 245, 245);
+  doc.setDrawColor(200, 200, 200);
+  doc.rect(leftX, curY, contentW, 14, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(50, 50, 50);
+  doc.text('PAID AMOUNT', centerX, curY + 3.2, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
+  doc.text(formatCurrency(txn?.amount || 0), centerX, curY + 7.2, { align: 'center' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6);
+  doc.setTextColor(isFullyPaid ? 0 : 150, isFullyPaid ? 100 : 80, 0);
+  doc.text(
+    isFullyPaid ? '*** FULLY PAID ***' : `Remaining: ${formatCurrency(remaining)}`,
+    centerX,
+    curY + 11.5,
+    { align: 'center' }
+  );
+  curY += 16;
+
+  // 5. In Words & Notes
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(5.5);
+  doc.setTextColor(80, 80, 80);
+  const wordsStr = `In Words: ${numberToWords(txn?.amount || 0)}`;
+  doc.text(truncatePdfText(doc, wordsStr, contentW), centerX, curY, { align: 'center' });
+  curY += 3.5;
+
+  if (txn?.notes) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    doc.setTextColor(80, 80, 80);
+    doc.text(truncatePdfText(doc, `Notes: ${txn.notes}`, contentW), centerX, curY, { align: 'center' });
+    curY += 3.5;
+  }
+
+  // 6. Signatures & Footer
+  curY += 2;
+  doc.setDrawColor(180, 180, 180);
+  doc.line(leftX + 16, curY + 5, rightX - 16, curY + 5);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(5.5);
+  doc.setTextColor(100, 100, 100);
+  doc.text('Cashier Signature', centerX, curY + 8, { align: 'center' });
+
+  curY += 11;
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(5);
+  doc.setTextColor(120, 120, 120);
+  doc.text('Thank you for your payment!', centerX, curY, { align: 'center' });
+}
+
+/**
+ * Builds the official Payment Receipt PDF Document supporting single or multiple receipts in dual slip (A4), single slip (A4), or thermal POS slip (80mm).
+ */
+export function buildPaymentReceiptPdf(
+  receiptData: PaymentReceiptData | PaymentReceiptData[],
+  context: PdfExportContext,
+  options?: { copyMode?: 'dual' | 'single' | 'thermal' }
+): jsPDF {
+  const receipts = Array.isArray(receiptData) ? receiptData : [receiptData];
+  const mode = options?.copyMode || 'dual';
+
+  if (receipts.length === 0) {
+    return new jsPDF();
+  }
+
+  if (mode === 'thermal') {
+    // Thermal 80mm roll format
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [80, 190],
+    });
+    receipts.forEach((r, idx) => {
+      if (idx > 0) {
+        doc.addPage([80, 190], 'portrait');
+      }
+      renderThermalReceiptSlip(doc, r, context);
+    });
+    return doc;
+  }
+
+  if (mode === 'single') {
+    // Single full-page A4
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    receipts.forEach((r, idx) => {
+      if (idx > 0) {
+        doc.addPage('a4', 'portrait');
+      }
+      renderPaymentReceiptSlip(doc, r, context, 'ORIGINAL RECEIPT', 10, 10, 190, 277, false);
+    });
+    return doc;
+  }
+
+  // Default: Dual Slip on A4 (Top: Student Copy, Bottom: Institute Copy)
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const slipW = 194;
+  const slipH = 136;
+  const leftX = 8;
+
+  receipts.forEach((r, idx) => {
+    if (idx > 0) {
+      doc.addPage('a4', 'portrait');
+    }
+
+    // 1. Top Slip: Student Copy
+    renderPaymentReceiptSlip(doc, r, context, 'STUDENT / PARENT COPY', leftX, 7, slipW, slipH, true);
+
+    // 2. Perforated divider line between slips
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.25);
+    doc.setLineDashPattern([2, 2], 0);
+    doc.line(leftX, 147, leftX + slipW, 147);
+    doc.setLineDashPattern([], 0);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    doc.setTextColor(148, 163, 184);
+    doc.text('✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -', leftX + 2, 148);
+
+    // 3. Bottom Slip: Institute Copy
+    renderPaymentReceiptSlip(doc, r, context, 'INSTITUTE / ACCOUNTS COPY', leftX, 153, slipW, slipH, true);
+  });
+
+  return doc;
+}
+
+/**
+ * Export and download the official payment receipt as a PDF file
+ */
+export async function exportPaymentReceiptPdf(
+  receiptData: PaymentReceiptData | PaymentReceiptData[],
+  context: PdfExportContext,
+  options?: { copyMode?: 'dual' | 'single' | 'thermal' },
+  filename?: string
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const receipts = Array.isArray(receiptData) ? receiptData : [receiptData];
+  const doc = buildPaymentReceiptPdf(receipts, context, options);
+
+  let safeFilename = filename;
+  if (!safeFilename) {
+    if (receipts.length === 1) {
+      const cleanTxnNo = (receipts[0].transaction?.txnNo || 'Receipt').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanRegNo = (receipts[0].student?.regNo || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      safeFilename = `Payment_Receipt_${cleanTxnNo}_${cleanRegNo}.pdf`;
+    } else {
+      safeFilename = `Batch_Payment_Receipts_${receipts.length}_Students.pdf`;
+    }
+  }
+  doc.save(safeFilename);
+}
+
+/**
+ * Print the official payment receipt directly via clean PDF iframe stream
+ */
+export async function printPaymentReceiptPdf(
+  receiptData: PaymentReceiptData | PaymentReceiptData[],
+  context: PdfExportContext,
+  options?: { copyMode?: 'dual' | 'single' | 'thermal' }
+) {
+  if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
+    const loadedLogo = await preloadImageForPdf(context.institute.logoUrl);
+    if (loadedLogo) {
+      context = { ...context, institute: { ...context.institute, logoUrl: loadedLogo } };
+    }
+  }
+
+  const receipts = Array.isArray(receiptData) ? receiptData : [receiptData];
+  const doc = buildPaymentReceiptPdf(receipts, context, options);
+  doc.autoPrint();
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+
+  const iframe = document.createElement('iframe');
+  iframe.id = `pdf-receipt-print-iframe-${Date.now()}`;
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.src = blobUrl;
+  document.body.appendChild(iframe);
+
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch (e) {
+      console.warn('Iframe printing was blocked, opening PDF in new window:', e);
+      window.open(blobUrl, '_blank');
+    }
+  };
+
+  setTimeout(() => {
+    try {
+      if (document.body.contains(iframe)) {
+        document.body.removeChild(iframe);
+      }
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // ignore
+    }
+  }, 120000);
+}
+
+
 
 

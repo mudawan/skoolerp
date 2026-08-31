@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { VoucherItem, ParticularKind } from '../types';
 import { RotateCcw, Tag, Save } from 'lucide-react';
 import { formatCurrency, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
@@ -220,11 +220,11 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
 
   // Totals calculations
   const grossTotal = reconciledItems
-    .filter((p) => p.amount > 0 && p.kind !== 'PreviousBalance')
+    .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
     .reduce((sum, p) => sum + p.amount, 0);
 
   const discountTotal = reconciledItems
-    .filter((p) => p.kind === 'Discount' || (p.amount < 0 && p.kind !== 'PreviousBalance'))
+    .filter((p) => p.kind === 'Discount' || (p.amount < 0 && p.kind !== 'PreviousBalance' && p.kind !== 'Fine'))
     .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
   const netDue = roundUpToMultiple(
@@ -232,13 +232,24 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
     getEffectiveMultiple(roundingEnabled, roundingMultiple)
   );
 
-  const handleAmountChange = (kind: ParticularKind, valStr: string) => {
-    // Only Flex1-4 heads and values are editable
-    const isFlex = STANDARD_ROSTER_DEFS.find((d) => d.kind === kind)?.isFlex ?? false;
-    if (!canEdit || !isFlex) return;
+  // Local state to track raw input strings during typing (supports empty string and negative '-')
+  const [localInputValues, setLocalInputValues] = useState<Record<string, string>>({});
 
-    const rawVal = parseFloat(valStr);
-    const numericVal = isNaN(rawVal) ? 0 : rawVal;
+  const handleAmountChange = (kind: ParticularKind, valStr: string) => {
+    // Flex1-4 heads and Fine are editable
+    const isFlex = STANDARD_ROSTER_DEFS.find((d) => d.kind === kind)?.isFlex ?? false;
+    const isFine = kind === 'Fine';
+    if (!canEdit || (!isFlex && !isFine)) return;
+
+    // Retain raw input string so intermediate states like '-' or empty '' don't jump or erase
+    setLocalInputValues((prev) => ({ ...prev, [kind]: valStr }));
+
+    // Evaluate numeric value (treat solitary '-' or empty '' as 0 for totals calculation)
+    let numericVal = 0;
+    if (valStr !== '' && valStr !== '-') {
+      const rawVal = parseFloat(valStr);
+      numericVal = isNaN(rawVal) ? 0 : rawVal;
+    }
 
     const updatedList = reconciledItems.map((item) => {
       if (item.kind !== kind) return item;
@@ -249,6 +260,14 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
     });
 
     onChange(updatedList);
+  };
+
+  const handleInputBlur = (kind: ParticularKind) => {
+    setLocalInputValues((prev) => {
+      const next = { ...prev };
+      delete next[kind];
+      return next;
+    });
   };
 
   const handleLabelChange = (kind: ParticularKind, newLabel: string) => {
@@ -309,7 +328,10 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
         {hasModifications && onResetToOriginal && (
           <button
             type="button"
-            onClick={onResetToOriginal}
+            onClick={() => {
+              setLocalInputValues({});
+              onResetToOriginal();
+            }}
             className="text-[10px] text-slate-500 hover:text-slate-800 font-semibold flex items-center gap-1 hover:underline cursor-pointer"
             title="Reset to original voucher amounts"
           >
@@ -324,9 +346,18 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
         {reconciledItems.map((item, index) => {
           const spec = STANDARD_ROSTER_DEFS.find((sr) => sr.kind === item.kind);
           const isFlexField = spec?.isFlex ?? false;
-          const isDiscount = item.kind === 'Discount' || item.amount < 0;
+          const isFine = item.kind === 'Fine';
+          const isEditableAmount = (isFlexField || isFine) && canEdit;
+          const isDiscount = item.kind === 'Discount' || (item.kind !== 'Fine' && item.amount < 0);
           const displayAmount = isDiscount ? Math.abs(item.amount) : item.amount;
-          const isZero = displayAmount === 0;
+          const isZero = item.amount === 0;
+
+          const currentInputValue =
+            localInputValues[item.kind] !== undefined
+              ? localInputValues[item.kind]
+              : item.amount === 0
+              ? ''
+              : String(item.amount);
 
           return (
             <div
@@ -336,6 +367,8 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
               } ${
                 isFlexField
                   ? 'bg-teal-50/20 hover:bg-teal-50/40'
+                  : isFine
+                  ? 'bg-amber-50/20 hover:bg-amber-50/40'
                   : isDiscount
                   ? 'bg-rose-50/20 hover:bg-rose-50/40'
                   : 'hover:bg-slate-50/80'
@@ -362,18 +395,27 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
 
               {/* Amount Display / Input */}
               <div className="flex items-center gap-1 shrink-0">
-                {isFlexField && canEdit ? (
+                {isEditableAmount ? (
                   <div className="flex items-center gap-1">
                     <span className="font-mono text-[10px] text-slate-400 font-bold">Rs.</span>
                     <input
-                      type="number"
-                      step="1"
-                      value={displayAmount === 0 ? '' : displayAmount}
-                      onChange={(e) => handleAmountChange(item.kind, e.target.value)}
+                      type="text"
+                      inputMode="numeric"
+                      value={currentInputValue}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        // Allow digits, single decimal point, and optional leading minus sign
+                        if (val === '' || /^-?\d*\.?\d*$/.test(val)) {
+                          handleAmountChange(item.kind, val);
+                        }
+                      }}
+                      onBlur={() => handleInputBlur(item.kind)}
                       placeholder="0"
-                      className={`px-1.5 bg-white border border-teal-300 rounded text-right font-mono font-bold text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                        compact ? 'w-18 py-0.5 text-[11px] h-6' : 'w-20 py-0.5 text-xs'
-                      }`}
+                      className={`px-1.5 bg-white border rounded text-right font-mono font-bold focus:outline-none focus:ring-1 ${
+                        isFine
+                          ? 'border-amber-300 text-slate-900 focus:border-amber-500 focus:ring-amber-500'
+                          : 'border-teal-300 text-teal-900 focus:border-teal-500 focus:ring-teal-500'
+                      } ${compact ? 'w-20 py-0.5 text-[11px] h-6' : 'w-24 py-0.5 text-xs'}`}
                     />
                   </div>
                 ) : (
@@ -381,6 +423,10 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                     {isDiscount ? (
                       <span className="text-rose-600">
                         {displayAmount > 0 ? `-${formatCurrency(displayAmount)}` : 'Rs. 0'}
+                      </span>
+                    ) : item.amount < 0 ? (
+                      <span className="text-rose-600">
+                        -{formatCurrency(Math.abs(item.amount))}
                       </span>
                     ) : isZero ? (
                       <span className="text-slate-300 font-normal">Rs. 0</span>

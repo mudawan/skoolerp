@@ -224,6 +224,7 @@ interface AppContextType {
       studentId?: string;
       voucherId?: string;
       amount: number;
+      fine?: number;
       paymentMode?: string;
       refNo?: string;
       date?: string;
@@ -2168,11 +2169,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
 
             const grossTotal = cleanParticulars
-              .filter((p) => p.amount > 0)
+              .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
               .reduce((sum, p) => sum + p.amount, 0);
 
             const discountTotal = cleanParticulars
-              .filter((p) => p.amount < 0 && p.kind === 'Discount')
+              .filter((p) => p.kind === 'Discount')
               .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
             const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
@@ -2243,11 +2244,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
 
     const grossTotal = cleanParticulars
-      .filter((p) => p.amount > 0)
+      .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
       .reduce((sum, p) => sum + p.amount, 0);
 
     const discountTotal = cleanParticulars
-      .filter((p) => p.amount < 0 && p.kind === 'Discount')
+      .filter((p) => p.kind === 'Discount')
       .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
     const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
@@ -2318,10 +2319,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         amount: Number(p.amount) || 0,
       }));
       grossTotal = cleanParticulars
-        .filter((p) => p.amount > 0)
+        .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
         .reduce((sum, p) => sum + p.amount, 0);
       discountTotal = cleanParticulars
-        .filter((p) => p.amount < 0 && p.kind === 'Discount')
+        .filter((p) => p.kind === 'Discount')
         .reduce((sum, p) => sum + Math.abs(p.amount), 0);
       const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
       netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
@@ -2343,6 +2344,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isBulkImport: false,
     };
 
+    const originalFine = voucher.particulars.find((p) => p.kind === 'Fine')?.amount || 0;
+    const newFine = cleanParticulars.find((p) => p.kind === 'Fine')?.amount || 0;
+    const fineDiff = newFine - originalFine;
+
     const newTxn: PaymentTransaction = {
       id: `txn-${Date.now()}`,
       txnNo,
@@ -2351,6 +2356,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       studentId: voucher.studentId,
       month: voucher.month,
       amount,
+      fineAdded: fineDiff !== 0 ? fineDiff : undefined,
       paymentMode,
       referenceNo,
       notes,
@@ -2399,6 +2405,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       studentId?: string;
       voucherId?: string;
       amount: number;
+      fine?: number;
       paymentMode?: string;
       refNo?: string;
       date?: string;
@@ -2416,7 +2423,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const collectionId = `col-bulk-${Date.now()}`;
     const collectionNo = nextDocumentNumber('COL', yearStr);
 
-    const updatedVouchersMap = new Map<string, { paid: number; status: FeeVoucher['status'] }>();
+    const updatedVouchersMap = new Map<
+      string,
+      {
+        paid: number;
+        status: FeeVoucher['status'];
+        particulars?: VoucherItem[];
+        grossTotal?: number;
+        discountTotal?: number;
+        netDue?: number;
+      }
+    >();
 
     rows.forEach((row, idx) => {
       // Find voucher by voucherId, studentId, or by matching student's regNo in target month
@@ -2494,17 +2511,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       const mode: PaymentTransaction['paymentMode'] = normalizedMode || 'BankTransfer';
 
-      const currentPaid = updatedVouchersMap.get(voucher.id)?.paid ?? voucher.amountPaid;
+      const currentEntry = updatedVouchersMap.get(voucher.id);
+      let cleanParticulars = currentEntry?.particulars
+        ? [...currentEntry.particulars]
+        : voucher.particulars.map((p) => ({ ...p }));
+      let effectiveGrossTotal = currentEntry?.grossTotal ?? voucher.grossTotal;
+      let effectiveDiscountTotal = currentEntry?.discountTotal ?? voucher.discountTotal;
+      let effectiveNetDue = currentEntry?.netDue ?? voucher.netDue;
+
+      // Add fine amount in collection CSV to voucher (e.g. 500 existing fine + 500 CSV fine = 1000 fine)
+      const hasFineUpdate = row.fine !== undefined && !isNaN(row.fine) && row.fine !== 0;
+      if (hasFineUpdate) {
+        const fineIndex = cleanParticulars.findIndex((p) => p.kind === 'Fine');
+        if (fineIndex >= 0) {
+          cleanParticulars[fineIndex] = {
+            ...cleanParticulars[fineIndex],
+            amount: cleanParticulars[fineIndex].amount + (row.fine || 0),
+          };
+        } else {
+          cleanParticulars.push({
+            kind: 'Fine',
+            label: 'Fine',
+            amount: row.fine || 0,
+          });
+        }
+
+        const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
+        effectiveGrossTotal = cleanParticulars
+          .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
+          .reduce((sum, p) => sum + p.amount, 0);
+        effectiveDiscountTotal = cleanParticulars
+          .filter((p) => p.kind === 'Discount')
+          .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+        effectiveNetDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
+      }
+
+      const currentPaid = currentEntry?.paid ?? voucher.amountPaid;
       const newPaid = currentPaid + row.amount;
 
       let newStatus: FeeVoucher['status'] = voucher.status;
-      if (newPaid >= voucher.netDue) {
+      if (newPaid >= effectiveNetDue && effectiveNetDue > 0) {
         newStatus = 'Paid';
       } else if (newPaid > 0) {
         newStatus = 'Partial';
+      } else if (effectiveNetDue <= 0 && newPaid === 0) {
+        newStatus = 'Paid';
+      } else {
+        newStatus = 'Issued';
       }
 
-      updatedVouchersMap.set(voucher.id, { paid: newPaid, status: newStatus });
+      updatedVouchersMap.set(voucher.id, {
+        paid: newPaid,
+        status: newStatus,
+        particulars: cleanParticulars,
+        grossTotal: effectiveGrossTotal,
+        discountTotal: effectiveDiscountTotal,
+        netDue: effectiveNetDue,
+      });
 
       const txnNo = nextDocumentNumber('TXN', yearStr);
 
@@ -2518,6 +2581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         studentId: voucher.studentId,
         month,
         amount: row.amount,
+        fineAdded: hasFineUpdate && (row.fine || 0) !== 0 ? row.fine : undefined,
         paymentMode: mode,
         referenceNo: row.refNo,
         notes: `Bulk CSV Import Payment for ${voucher.voucherNo}${studentRegText}`,
@@ -2547,7 +2611,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setVouchers((prev) =>
         prev.map((v) => {
           const upd = updatedVouchersMap.get(v.id);
-          return upd ? { ...v, amountPaid: upd.paid, status: upd.status } : v;
+          if (!upd) return v;
+          return {
+            ...v,
+            amountPaid: upd.paid,
+            status: upd.status,
+            ...(upd.particulars ? { particulars: upd.particulars } : {}),
+            ...(upd.grossTotal !== undefined ? { grossTotal: upd.grossTotal } : {}),
+            ...(upd.discountTotal !== undefined ? { discountTotal: upd.discountTotal } : {}),
+            ...(upd.netDue !== undefined ? { netDue: upd.netDue } : {}),
+          };
         })
       );
     }
@@ -2645,11 +2718,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const grossTotal = targetParticulars
-        .filter((p) => p.amount > 0)
+        .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
         .reduce((sum, p) => sum + p.amount, 0);
 
       const discountTotal = targetParticulars
-        .filter((p) => p.amount < 0 && p.kind === 'Discount')
+        .filter((p) => p.kind === 'Discount')
         .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
       const netDue = roundUpToMultiple(
@@ -2881,11 +2954,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         const grossTotal = cleanParticulars
-          .filter((p) => p.amount > 0)
+          .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
           .reduce((sum, p) => sum + p.amount, 0);
 
         const discountTotal = cleanParticulars
-          .filter((p) => p.amount < 0 && p.kind === 'Discount')
+          .filter((p) => p.kind === 'Discount')
           .reduce((sum, p) => sum + Math.abs(p.amount), 0);
 
         const netDue = roundUpToMultiple(
@@ -3151,35 +3224,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Collections Ledger Delete
   const deleteCollection = (id: string) => {
     const colTxns = transactions.filter((t) => t.collectionId === id);
+    if (colTxns.length === 0) {
+      setCollections((prev) => prev.filter((c) => c.id !== id));
+      return;
+    }
 
-    // Group deductions per voucher
+    // Group deductions, fine reversals, and affected students per voucher
     const deductions = new Map<string, number>();
+    const fineReversals = new Map<string, number>();
+    const affectedStudentIds = new Set<string>();
+
     colTxns.forEach((t) => {
       deductions.set(t.voucherId, (deductions.get(t.voucherId) || 0) + t.amount);
+      if (t.fineAdded && t.fineAdded !== 0) {
+        fineReversals.set(t.voucherId, (fineReversals.get(t.voucherId) || 0) + t.fineAdded);
+      }
+      if (t.studentId) {
+        affectedStudentIds.add(t.studentId);
+      }
     });
 
     setCollections((prev) => prev.filter((c) => c.id !== id));
     setTransactions((prev) => prev.filter((t) => t.collectionId !== id));
 
-    // Recalculate vouchers
-    setVouchers((prev) =>
-      prev.map((v) => {
-        const deduct = deductions.get(v.id);
-        if (!deduct) return v;
+    // Recalculate vouchers with payment deduction and fine reversal
+    setVouchers((prev) => {
+      let updatedVouchers = prev.map((v) => {
+        const deduct = deductions.get(v.id) || 0;
+        const fineToRevert = fineReversals.get(v.id) || 0;
+
+        if (deduct === 0 && fineToRevert === 0) return v;
+
+        let cleanParticulars = v.particulars.map((p) => ({ ...p }));
+        let grossTotal = v.grossTotal;
+        let discountTotal = v.discountTotal;
+        let netDue = v.netDue;
+
+        // Undo fine additions if any
+        if (fineToRevert !== 0) {
+          const fineIndex = cleanParticulars.findIndex((p) => p.kind === 'Fine');
+          if (fineIndex >= 0) {
+            const currentFineAmount = cleanParticulars[fineIndex].amount;
+            const revertedFineAmount = Math.max(0, currentFineAmount - fineToRevert);
+            if (revertedFineAmount > 0) {
+              cleanParticulars[fineIndex] = {
+                ...cleanParticulars[fineIndex],
+                amount: revertedFineAmount,
+              };
+            } else {
+              cleanParticulars = cleanParticulars.filter((_, idx) => idx !== fineIndex);
+            }
+          }
+
+          const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
+          grossTotal = cleanParticulars
+            .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
+            .reduce((sum, p) => sum + p.amount, 0);
+          discountTotal = cleanParticulars
+            .filter((p) => p.kind === 'Discount')
+            .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+          netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
+        }
+
         const newPaid = Math.max(0, v.amountPaid - deduct);
-        let newStatus = v.status;
-        if (newStatus === 'Paid' || newStatus === 'Partial') {
-          if (newPaid >= v.netDue) {
+        let newStatus: FeeVoucher['status'] = v.status;
+        if (newStatus === 'Paid' || newStatus === 'Partial' || newStatus === 'Issued') {
+          if (newPaid >= netDue && netDue > 0) {
             newStatus = 'Paid';
           } else if (newPaid > 0) {
             newStatus = 'Partial';
+          } else if (netDue <= 0 && newPaid === 0) {
+            newStatus = 'Paid';
           } else {
             newStatus = 'Issued';
           }
         }
-        return { ...v, amountPaid: newPaid, status: newStatus };
-      })
-    );
+
+        return {
+          ...v,
+          particulars: cleanParticulars,
+          grossTotal,
+          discountTotal,
+          netDue,
+          amountPaid: newPaid,
+          status: newStatus,
+        };
+      });
+
+      // Recalculate downstream student voucher sequence if previous balance / arrears are affected
+      if (affectedStudentIds.size > 0) {
+        updatedVouchers = recalculateVouchersSequence(updatedVouchers, Array.from(affectedStudentIds));
+      }
+
+      return updatedVouchers;
+    });
   };
 
   // Settings

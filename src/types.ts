@@ -208,6 +208,7 @@ export interface PaymentTransaction {
   studentId: string;
   month: string;
   amount: number;
+  fineAdded?: number;
   paymentMode: PaymentMode;
   referenceNo?: string;
   notes?: string;
@@ -305,3 +306,16 @@ export interface CleanupResult {
   clearedTables: string[];
   recordsClearedCount: number;
 }
+
+export interface PaymentReceiptData {
+  transaction: PaymentTransaction;
+  voucher: FeeVoucher;
+  student: Student;
+  schoolClass?: SchoolClass;
+  bankAccount?: BankAccount;
+  collectorName?: string;
+  previousBalance?: number;
+  remainingBalance?: number;
+  collectionDate?: string;
+}
+

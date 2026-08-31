@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
-import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem } from '../types';
+import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem, PaymentReceiptData } from '../types';
 import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
 import { normalizePaymentMode } from '../utils/paymentMode';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
@@ -9,6 +9,7 @@ import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
+import { PaymentReceiptModal } from './PaymentReceiptModal';
 import {
   AlertCircle,
   ArrowDown,
@@ -16,6 +17,7 @@ import {
   ArrowUpDown,
   Check,
   CheckCircle,
+  ChevronDown,
   Coins,
   Copy,
   CreditCard,
@@ -26,6 +28,7 @@ import {
   LayoutGrid,
   List,
   Plus,
+  Printer,
   Receipt,
   Save,
   Search,
@@ -56,6 +59,11 @@ export const CollectionsView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [collectionToDelete, setCollectionToDelete] = useState<FeeCollection | null>(null);
+
+  // Payment Receipt Modal State
+  const [receiptModalData, setReceiptModalData] = useState<PaymentReceiptData | PaymentReceiptData[] | null>(null);
+  const [receiptInitialIndex, setReceiptInitialIndex] = useState<number>(0);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   // Sorting state - default to oldest first (asc) so Sr# 1 refers to oldest transaction
   type SortField = 'sr' | 'date' | 'type' | 'transactions' | 'totalAmount';
@@ -95,12 +103,33 @@ export const CollectionsView: React.FC = () => {
   const [isChangingVoucher, setIsChangingVoucher] = useState(false);
   const [directSearch, setDirectSearch] = useState('');
   const [selectedVoucherId, setSelectedVoucherId] = useState('');
+  const [isVoucherPickerOpen, setIsVoucherPickerOpen] = useState(false);
+  const [highlightedVoucherIndex, setHighlightedVoucherIndex] = useState(0);
+  const voucherPickerContainerRef = useRef<HTMLDivElement>(null);
+  const voucherInputRef = useRef<HTMLInputElement>(null);
   const [directAmount, setDirectAmount] = useState<number | string>('');
   const [directMode, setDirectMode] = useState<'Cash' | 'BankTransfer' | 'Cheque' | 'Online'>('Cash');
   const [directRef, setDirectRef] = useState('');
   const [directDate, setDirectDate] = useState(new Date().toISOString().split('T')[0]);
   const [directNotes, setDirectNotes] = useState('');
   const [directItems, setDirectItems] = useState<VoucherItem[]>([]);
+
+  // Click outside to close voucher picker dropdown
+  useEffect(() => {
+    if (!isVoucherPickerOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        voucherPickerContainerRef.current &&
+        !voucherPickerContainerRef.current.contains(e.target as Node)
+      ) {
+        setIsVoucherPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isVoucherPickerOpen]);
 
   // Bulk CSV Modal State
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,6 +143,7 @@ export const CollectionsView: React.FC = () => {
       id: string;
       regNo: string;
       amount: number;
+      fine?: number;
       date: string;
       paymentMode: string;
       refNo: string;
@@ -122,6 +152,7 @@ export const CollectionsView: React.FC = () => {
       className?: string;
       voucherId?: string;
       voucherNo?: string;
+      originalNetDue?: number;
       netDue?: number;
       alreadyPaid?: number;
       remainingBalance?: number;
@@ -133,12 +164,16 @@ export const CollectionsView: React.FC = () => {
   >([]);
 
   useEscapeKey(() => {
+    if (isVoucherPickerOpen) {
+      setIsVoucherPickerOpen(false);
+      return;
+    }
     if (showDirectModal) {
       setShowDirectModal(false);
     } else if (showBulkModal) {
       setShowBulkModal(false);
     }
-  }, showDirectModal || showBulkModal);
+  }, isVoucherPickerOpen || showDirectModal || showBulkModal);
 
   // Filtered & Sorted Collections (Sr# 1 = oldest transaction of the month by default)
   const sortedCollections = useMemo(() => {
@@ -171,11 +206,41 @@ export const CollectionsView: React.FC = () => {
   // Backward compatible alias
   const filteredCollections = sortedCollections;
 
-  // Available vouchers for collection
-  const availableVouchers = vouchers.filter(
-    (v) => v.status !== 'Reversed' && v.status !== 'Carried'
-  );
-  const selectedVoucher = availableVouchers.find((v) => v.id === selectedVoucherId);
+  // Available vouchers for collection - only the single latest voucher per student
+  const availableVouchers = useMemo(() => {
+    // Exclude reversed and carried vouchers
+    const validVouchers = vouchers.filter(
+      (v) => v.status !== 'Reversed' && v.status !== 'Carried'
+    );
+
+    // Sort valid vouchers so newest ones (by month, date, voucherNo) are evaluated first
+    const sorted = [...validVouchers].sort((a, b) => {
+      // 1. Month comparison (descending, e.g. '2026-08' > '2026-07')
+      const monthDiff = (b.month || '').localeCompare(a.month || '');
+      if (monthDiff !== 0) return monthDiff;
+
+      // 2. Issue date or created date comparison (descending)
+      const dateA = a.issueDate || a.createdDate || '';
+      const dateB = b.issueDate || b.createdDate || '';
+      const dateDiff = dateB.localeCompare(dateA);
+      if (dateDiff !== 0) return dateDiff;
+
+      // 3. Voucher number comparison (descending)
+      return (b.voucherNo || '').localeCompare(a.voucherNo || '');
+    });
+
+    // Group by studentId and pick only the latest voucher for each student
+    const studentLatestMap = new Map<string, FeeVoucher>();
+    for (const v of sorted) {
+      if (!studentLatestMap.has(v.studentId)) {
+        studentLatestMap.set(v.studentId, v);
+      }
+    }
+
+    return Array.from(studentLatestMap.values());
+  }, [vouchers]);
+
+  const selectedVoucher = vouchers.find((v) => v.id === selectedVoucherId);
   const selectedStudent = selectedVoucher ? students.find((s) => s.id === selectedVoucher.studentId) : undefined;
   const selectedClass = selectedVoucher ? classes.find((c) => c.id === selectedVoucher.classId) : undefined;
 
@@ -205,14 +270,17 @@ export const CollectionsView: React.FC = () => {
       const remaining = Math.max(0, preSelectedVoucher.netDue - preSelectedVoucher.amountPaid);
       setDirectAmount(remaining > 0 ? remaining : preSelectedVoucher.netDue);
       setIsChangingVoucher(false);
+      setIsVoucherPickerOpen(false);
     } else {
       setSelectedVoucherId('');
       setDirectItems([]);
       setDirectAmount('');
-      setIsChangingVoucher(false);
+      setIsChangingVoucher(true);
+      setIsVoucherPickerOpen(false);
     }
 
     setDirectSearch('');
+    setHighlightedVoucherIndex(0);
     setDirectMode('Cash');
     setDirectRef('');
     setDirectDate(new Date().toISOString().split('T')[0]);
@@ -222,7 +290,10 @@ export const CollectionsView: React.FC = () => {
 
   const handleSelectVoucher = (vId: string) => {
     setSelectedVoucherId(vId);
-    const v = availableVouchers.find((item) => item.id === vId);
+    setIsChangingVoucher(false);
+    setIsVoucherPickerOpen(false);
+    setDirectSearch('');
+    const v = vouchers.find((item) => item.id === vId);
     if (v) {
       setDirectItems(v.particulars.map((p) => ({ ...p })));
       const remaining = Math.max(0, v.netDue - v.amountPaid);
@@ -230,6 +301,35 @@ export const CollectionsView: React.FC = () => {
     } else {
       setDirectItems([]);
       setDirectAmount('');
+    }
+  };
+
+  const handlePickerKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isVoucherPickerOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') {
+        setIsVoucherPickerOpen(true);
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedVoucherIndex((prev) =>
+        prev < searchedVouchers.length - 1 ? prev + 1 : 0
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedVoucherIndex((prev) =>
+        prev > 0 ? prev - 1 : Math.max(0, searchedVouchers.length - 1)
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (searchedVouchers[highlightedVoucherIndex]) {
+        handleSelectVoucher(searchedVouchers[highlightedVoucherIndex].id);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setIsVoucherPickerOpen(false);
     }
   };
 
@@ -241,6 +341,62 @@ export const CollectionsView: React.FC = () => {
     } else {
       showToast(res.error || 'Failed to update voucher particulars', 'error');
     }
+  };
+
+  const handleOpenTransactionReceipt = (t: PaymentTransaction) => {
+    const vch = vouchers.find((v) => v.id === t.voucherId);
+    const stu = students.find((s) => s.id === t.studentId);
+    const cls = classes.find((c) => c.id === stu?.classId || c.id === vch?.classId);
+    if (!vch || !stu) {
+      showToast('Could not find voucher or student record for this receipt.', 'error');
+      return;
+    }
+    setReceiptModalData({
+      transaction: t,
+      voucher: vch,
+      student: stu,
+      schoolClass: cls,
+    });
+    setReceiptInitialIndex(0);
+    setShowReceiptModal(true);
+  };
+
+  const handleOpenCollectionReceipts = (col: FeeCollection, initialStudentTxnId?: string) => {
+    const colTxns = transactions.filter((t) => t.collectionId === col.id);
+    if (colTxns.length === 0) {
+      showToast('No transactions found in this collection session.', 'error');
+      return;
+    }
+    const receipts: PaymentReceiptData[] = [];
+    colTxns.forEach((t) => {
+      const vch = vouchers.find((v) => v.id === t.voucherId);
+      const stu = students.find((s) => s.id === t.studentId);
+      const cls = classes.find((c) => c.id === stu?.classId || c.id === vch?.classId);
+      if (vch && stu) {
+        receipts.push({
+          transaction: t,
+          voucher: vch,
+          student: stu,
+          schoolClass: cls,
+          collectionDate: col.date,
+        });
+      }
+    });
+
+    if (receipts.length === 0) {
+      showToast('Could not find voucher or student records for this collection.', 'error');
+      return;
+    }
+
+    let initialIdx = 0;
+    if (initialStudentTxnId) {
+      const foundIdx = receipts.findIndex((r) => r.transaction.id === initialStudentTxnId);
+      if (foundIdx >= 0) initialIdx = foundIdx;
+    }
+
+    setReceiptModalData(receipts);
+    setReceiptInitialIndex(initialIdx);
+    setShowReceiptModal(true);
   };
 
   const handleSaveDirectPayment = (e: React.FormEvent) => {
@@ -266,12 +422,31 @@ export const CollectionsView: React.FC = () => {
       directItems
     );
 
-    if (res.success) {
+    if (res.success && res.transaction) {
       showToast(
         `Recorded ${formatCurrency(numAmount)} payment for ${selectedVoucher.voucherNo} (${selectedStudent?.name || 'Student'}).`,
         'success'
       );
       setShowDirectModal(false);
+
+      const targetStudent = selectedStudent || students.find((s) => s.id === selectedVoucher.studentId);
+      const studentClass = classes.find((c) => c.id === targetStudent?.classId || c.id === selectedVoucher.classId);
+      const updatedAmountPaid = (selectedVoucher.amountPaid || 0) + numAmount;
+      const updatedNetDue = dynamicNetDue > 0 ? dynamicNetDue : selectedVoucher.netDue;
+
+      setReceiptModalData({
+        transaction: res.transaction,
+        voucher: {
+          ...selectedVoucher,
+          particulars: directItems.length > 0 ? directItems : selectedVoucher.particulars,
+          amountPaid: updatedAmountPaid,
+          netDue: updatedNetDue,
+          status: updatedAmountPaid >= updatedNetDue && updatedNetDue > 0 ? 'Paid' : 'Partial',
+        },
+        student: targetStudent!,
+        schoolClass: studentClass,
+      });
+      setShowReceiptModal(true);
     } else {
       showToast(res.error || 'Failed to record fee collection', 'error');
     }
@@ -334,6 +509,7 @@ export const CollectionsView: React.FC = () => {
         let colMap = {
           regNo: 0,
           amount: 1,
+          fine: -1,
           date: 2,
           paymentMode: 3,
           refNo: 4,
@@ -345,6 +521,7 @@ export const CollectionsView: React.FC = () => {
           colMap = {
             regNo: firstTokens.findIndex((t) => t.includes('reg') || t.includes('student') || t.includes('roll') || t.includes('admission') || t === 'id'),
             amount: firstTokens.findIndex((t) => t.includes('amount') || t.includes('paid') || t.includes('fee') || t.includes('collec')),
+            fine: firstTokens.findIndex((t) => t.includes('fine') || t.includes('penalty') || t.includes('latefee') || t.includes('latecharge') || t.includes('late')),
             date: firstTokens.findIndex((t) => t.includes('date') || t.includes('day') || t.includes('time') || t.includes('dt')),
             paymentMode: firstTokens.findIndex((t) => t.includes('mode') || t.includes('method') || t.includes('type') || t.includes('channel')),
             refNo: firstTokens.findIndex((t) => t.includes('ref') || t.includes('txn') || t.includes('trn') || t.includes('receipt') || t.includes('cheque') || t.includes('memo')),
@@ -359,13 +536,15 @@ export const CollectionsView: React.FC = () => {
           dataLines = rawLines.slice(1);
         } else {
           const sampleParts = parseCsvLine(rawLines[0]);
-          if (sampleParts.length >= 5) {
-            colMap = { regNo: 0, amount: 1, date: 2, paymentMode: 3, refNo: 4 };
+          if (sampleParts.length >= 6) {
+            colMap = { regNo: 0, amount: 1, fine: 2, date: 3, paymentMode: 4, refNo: 5 };
+          } else if (sampleParts.length >= 5) {
+            colMap = { regNo: 0, amount: 1, fine: -1, date: 2, paymentMode: 3, refNo: 4 };
           } else if (sampleParts.length === 4) {
             if (/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}/.test(sampleParts[2])) {
-              colMap = { regNo: 0, amount: 1, date: 2, paymentMode: 3, refNo: -1 };
+              colMap = { regNo: 0, amount: 1, fine: -1, date: 2, paymentMode: 3, refNo: -1 };
             } else {
-              colMap = { regNo: 0, amount: 1, date: -1, paymentMode: 2, refNo: 3 };
+              colMap = { regNo: 0, amount: 1, fine: -1, date: -1, paymentMode: 2, refNo: 3 };
             }
           }
         }
@@ -384,11 +563,23 @@ export const CollectionsView: React.FC = () => {
 
           const rawReg = (parts[colMap.regNo] || '').trim();
           const rawAmt = parts[colMap.amount] || '0';
+          const rawFine = colMap.fine >= 0 && parts[colMap.fine] !== undefined ? parts[colMap.fine].trim() : '';
           const rawDate = colMap.date >= 0 && parts[colMap.date] ? parts[colMap.date].trim() : '';
           const rawMode = colMap.paymentMode >= 0 && parts[colMap.paymentMode] ? parts[colMap.paymentMode].trim() : 'BankTransfer';
           const rawRef = colMap.refNo >= 0 && parts[colMap.refNo] ? parts[colMap.refNo].trim() : '';
 
           const amount = parseFloat(rawAmt.replace(/[^0-9.-]+/g, '')) || 0;
+          let fineValue: number | undefined = undefined;
+          if (rawFine !== '') {
+            const cleanFineStr = rawFine.replace(/[^0-9.-]+/g, '');
+            if (cleanFineStr !== '' && cleanFineStr !== '-') {
+              const parsedFine = parseFloat(cleanFineStr);
+              if (!isNaN(parsedFine)) {
+                fineValue = parsedFine;
+              }
+            }
+          }
+
           const cleanReg = rawReg.toLowerCase();
           const rowDate = normalizeDate(rawDate);
 
@@ -407,7 +598,33 @@ export const CollectionsView: React.FC = () => {
             : undefined;
 
           const alreadyPaid = targetVoucher?.amountPaid || 0;
-          const netDue = targetVoucher?.netDue || 0;
+          const originalNetDue = targetVoucher?.netDue || 0;
+          let netDue = originalNetDue;
+
+          // If fine column is provided and voucher exists, add the fine to the voucher
+          if (targetVoucher && fineValue !== undefined && fineValue !== 0) {
+            const simulatedParticulars = targetVoucher.particulars.map((p) => ({ ...p }));
+            const fineIndex = simulatedParticulars.findIndex((p) => p.kind === 'Fine');
+            if (fineIndex >= 0) {
+              simulatedParticulars[fineIndex] = {
+                ...simulatedParticulars[fineIndex],
+                amount: simulatedParticulars[fineIndex].amount + fineValue,
+              };
+            } else {
+              simulatedParticulars.push({
+                kind: 'Fine',
+                label: 'Fine',
+                amount: fineValue,
+              });
+            }
+
+            const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, targetVoucher.roundingMultiple);
+            netDue = roundUpToMultiple(
+              simulatedParticulars.reduce((sum, p) => sum + p.amount, 0),
+              mult
+            );
+          }
+
           const remainingBalance = Math.max(0, netDue - alreadyPaid);
 
           let isValid = true;
@@ -445,6 +662,7 @@ export const CollectionsView: React.FC = () => {
             id: `row-${idx}-${Date.now()}`,
             regNo: rawReg || (student?.regNo ?? 'N/A'),
             amount,
+            fine: fineValue,
             date: rowDate,
             paymentMode: normalizePaymentMode(rawMode) || rawMode || 'BankTransfer',
             refNo: rawRef,
@@ -453,6 +671,7 @@ export const CollectionsView: React.FC = () => {
             className: studentClass?.name,
             voucherId: targetVoucher?.id,
             voucherNo: targetVoucher?.voucherNo,
+            originalNetDue,
             netDue,
             alreadyPaid,
             remainingBalance,
@@ -517,6 +736,7 @@ export const CollectionsView: React.FC = () => {
         studentId: r.studentId,
         voucherId: r.voucherId,
         amount: r.amount,
+        fine: r.fine,
         paymentMode: r.paymentMode,
         refNo: r.refNo,
         date: r.date,
@@ -537,22 +757,24 @@ export const CollectionsView: React.FC = () => {
   const handleDownloadSampleBulkCsv = () => {
     const todayStr = new Date().toISOString().split('T')[0];
     const sampleVouchers = vouchers.filter((v) => v.month === activeMonth && v.status !== 'Reversed').slice(0, 4);
-    let sampleContent = `RegNo,PaidAmount,CollectionDate,PaymentMode,ReferenceNo\n`;
+    let sampleContent = `RegNo,PaidAmount,Fine,CollectionDate,PaymentMode,ReferenceNo\n`;
     if (sampleVouchers.length > 0) {
       sampleVouchers.forEach((v, i) => {
         const student = students.find((s) => s.id === v.studentId);
         const regNo = student?.regNo || `REG-${1001 + i}`;
         const remaining = Math.max(0, v.netDue - v.amountPaid);
-        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${todayStr},BankTransfer,PK-BANK-${1000 + i}\n`;
+        const sampleFine = i === 0 ? 500 : 0;
+        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${sampleFine},${todayStr},BankTransfer,PK-BANK-${1000 + i}\n`;
       });
     } else {
       const sampleStudents = students.slice(0, 3);
       if (sampleStudents.length > 0) {
         sampleStudents.forEach((s, i) => {
-          sampleContent += `${s.regNo},5000,${todayStr},BankTransfer,PK-BANK-${1001 + i}\n`;
+          const sampleFine = i === 0 ? 500 : 0;
+          sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankTransfer,PK-BANK-${1001 + i}\n`;
         });
       } else {
-        sampleContent += `REG-1001,7800,${todayStr},BankTransfer,PK-MZB-9811\nREG-1002,3300,${todayStr},Cash,DESK-402\nREG-1003,4500,${todayStr},Online,EP-9021\n`;
+        sampleContent += `REG-1001,8000,500,${todayStr},BankTransfer,PK-MZB-9811\nREG-1002,3200,0,${todayStr},Cash,DESK-402\nREG-1003,4500,0,${todayStr},Online,EP-9021\n`;
       }
     }
 
@@ -702,18 +924,27 @@ export const CollectionsView: React.FC = () => {
     setCollectionToDelete(null);
   };
 
-  // Filtered voucher options for direct payment search
-  const searchedVouchers = availableVouchers.filter((v) => {
-    if (!directSearch.trim()) return true;
-    const term = directSearch.toLowerCase();
-    const stu = students.find((s) => s.id === v.studentId);
-    return (
-      v.voucherNo.toLowerCase().includes(term) ||
-      (stu && stu.name.toLowerCase().includes(term)) ||
-      (stu && stu.studentNo.toLowerCase().includes(term)) ||
-      (stu && stu.regNo.toLowerCase().includes(term))
-    );
-  });
+  // Filtered voucher options for direct payment search & picker
+  const searchedVouchers = useMemo(() => {
+    if (!directSearch.trim()) return availableVouchers;
+    const term = directSearch.toLowerCase().trim();
+    return availableVouchers.filter((v) => {
+      const stu = students.find((s) => s.id === v.studentId);
+      const cls = classes.find((c) => c.id === v.classId);
+      return (
+        v.voucherNo.toLowerCase().includes(term) ||
+        (v.month && v.month.toLowerCase().includes(term)) ||
+        (v.status && v.status.toLowerCase().includes(term)) ||
+        (stu && (
+          stu.name.toLowerCase().includes(term) ||
+          stu.studentNo.toLowerCase().includes(term) ||
+          stu.regNo.toLowerCase().includes(term) ||
+          (stu.fatherName && stu.fatherName.toLowerCase().includes(term))
+        )) ||
+        (cls && cls.name.toLowerCase().includes(term))
+      );
+    });
+  }, [availableVouchers, directSearch, students, classes]);
 
   return (
     <div className="space-y-6 relative">
@@ -894,10 +1125,29 @@ export const CollectionsView: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                       <span className="text-lg font-bold text-emerald-600">
                         {formatCurrency(col.totalAmount)}
                       </span>
+                      {colTxns.length > 1 ? (
+                        <button
+                          onClick={() => handleOpenCollectionReceipts(col)}
+                          title={`View & print all ${colTxns.length} payment receipts in batch`}
+                          className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>Batch Receipts ({colTxns.length})</span>
+                        </button>
+                      ) : colTxns.length === 1 ? (
+                        <button
+                          onClick={() => handleOpenCollectionReceipts(col)}
+                          title="Print Payment Receipt Slip"
+                          className="px-2.5 py-1 text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>Receipt</span>
+                        </button>
+                      ) : null}
                       {hasPermission('fees.delete') && (
                         <button
                           onClick={() => handleDeleteSession(col)}
@@ -933,13 +1183,21 @@ export const CollectionsView: React.FC = () => {
                               </span>
                             </div>
 
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3">
                               <span className="text-[11px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-medium">
                                 {t.paymentMode} {t.referenceNo ? `(${t.referenceNo})` : ''}
                               </span>
                               <span className="font-bold text-emerald-700">
                                 {formatCurrency(t.amount)}
                               </span>
+                              <button
+                                onClick={() => handleOpenCollectionReceipts(col, t.id)}
+                                title={`View & print payment receipt for ${stu?.name || 'student'}`}
+                                className="px-2 py-0.5 text-[11px] font-medium text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded flex items-center gap-1 transition cursor-pointer"
+                              >
+                                <Printer className="w-3 h-3" />
+                                <span>Slip</span>
+                              </button>
                             </div>
                           </div>
                         );
@@ -1015,16 +1273,14 @@ export const CollectionsView: React.FC = () => {
                       {renderSortIndicator('totalAmount')}
                     </div>
                   </th>
-                  {hasPermission('fees.delete') && (
-                    <th className="p-3.5 text-right w-16 whitespace-nowrap">Actions</th>
-                  )}
+                  <th className="p-3.5 text-right w-24 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredCollections.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={hasPermission('fees.delete') ? 7 : 6}
+                      colSpan={7}
                       className="p-8 text-center text-slate-400 italic"
                     >
                       No fee collection sessions match your search.
@@ -1061,14 +1317,17 @@ export const CollectionsView: React.FC = () => {
                             {colTxns.map((t) => {
                               const stu = students.find((s) => s.id === t.studentId);
                               return (
-                                <span
+                                <button
                                   key={t.id}
-                                  className="inline-flex items-center gap-1 bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded whitespace-nowrap"
+                                  type="button"
+                                  onClick={() => handleOpenCollectionReceipts(col, t.id)}
+                                  title={`View & print payment receipt for ${stu?.name || 'student'}`}
+                                  className="inline-flex items-center gap-1 bg-slate-100 hover:bg-teal-50 hover:border-teal-300 border border-slate-200 text-slate-700 hover:text-teal-800 text-[10px] font-semibold px-2 py-0.5 rounded whitespace-nowrap transition cursor-pointer"
                                 >
                                   <StudentAvatar photoUrl={stu?.photoUrl} name={stu?.name || 'Student'} size="xs" />
                                   <span>{stu?.name || 'Student'}</span>
                                   <span className="text-emerald-700 font-bold ml-0.5">({formatCurrency(t.amount)})</span>
-                                </span>
+                                </button>
                               );
                             })}
                           </div>
@@ -1076,17 +1335,37 @@ export const CollectionsView: React.FC = () => {
                         <td className="p-3.5 text-right font-mono font-bold text-sm text-emerald-700 whitespace-nowrap">
                           {formatCurrency(col.totalAmount)}
                         </td>
-                        {hasPermission('fees.delete') && (
-                          <td className="p-3.5 text-right whitespace-nowrap">
-                            <button
-                              onClick={() => handleDeleteSession(col)}
-                              title="Delete Collection Session"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        )}
+                        <td className="p-3.5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {colTxns.length > 1 ? (
+                              <button
+                                onClick={() => handleOpenCollectionReceipts(col)}
+                                title={`View & print all ${colTxns.length} payment receipts in batch`}
+                                className="px-2 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                              >
+                                <Receipt className="w-3.5 h-3.5" />
+                                <span>Receipts ({colTxns.length})</span>
+                              </button>
+                            ) : colTxns.length === 1 ? (
+                              <button
+                                onClick={() => handleOpenCollectionReceipts(col)}
+                                title="Print Payment Receipt"
+                                className="p-1.5 text-teal-600 hover:text-teal-800 hover:bg-teal-50 rounded-lg transition cursor-pointer"
+                              >
+                                <Receipt className="w-4 h-4" />
+                              </button>
+                            ) : null}
+                            {hasPermission('fees.delete') && (
+                              <button
+                                onClick={() => handleDeleteSession(col)}
+                                title="Delete Collection Session"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })
@@ -1146,62 +1425,196 @@ export const CollectionsView: React.FC = () => {
 
             {/* Header Voucher Ribbon: Search & Select OR Student Summary Card */}
             {!selectedVoucher || isChangingVoucher ? (
-              <div className="bg-slate-50/90 rounded-xl px-3 py-2 border border-slate-200 space-y-1.5 shrink-0">
+              <div
+                ref={voucherPickerContainerRef}
+                className="bg-slate-50/95 rounded-xl p-3 border border-slate-200 space-y-2 shrink-0 relative"
+              >
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-[11px] text-slate-700 flex items-center gap-1.5">
-                    <Search className="w-3.5 h-3.5 text-teal-600" />
+                    <Search className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Search & Select Fee Voucher *</span>
                     <span className="text-[10px] font-normal text-slate-400">
-                      ({searchedVouchers.length} vouchers available)
+                      ({searchedVouchers.length} latest student vouchers)
                     </span>
                   </label>
                   {selectedVoucher && isChangingVoucher && (
                     <button
                       type="button"
-                      onClick={() => setIsChangingVoucher(false)}
+                      onClick={() => {
+                        setIsChangingVoucher(false);
+                        setIsVoucherPickerOpen(false);
+                      }}
                       className="text-[11px] text-slate-500 hover:text-slate-800 font-semibold hover:underline cursor-pointer"
                     >
                       Keep {selectedVoucher.voucherNo}
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                  <div className="sm:col-span-5 relative">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+
+                {/* Integrated Search & Picker Combobox */}
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
+                      ref={voucherInputRef}
                       type="text"
-                      placeholder="Filter student name, reg #, voucher #..."
+                      placeholder="Search by student name, Reg #, voucher #, class..."
                       value={directSearch}
-                      onChange={(e) => setDirectSearch(e.target.value)}
-                      className="w-full h-[38px] pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-7">
-                    <select
-                      value={selectedVoucherId}
                       onChange={(e) => {
-                        handleSelectVoucher(e.target.value);
-                        if (e.target.value) {
-                          setIsChangingVoucher(false);
-                        }
+                        const val = e.target.value;
+                        setDirectSearch(val);
+                        setHighlightedVoucherIndex(0);
+                        setIsVoucherPickerOpen(val.trim().length > 0);
                       }}
-                      className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
-                    >
-                      <option value="" className="text-slate-400 font-normal">
-                        -- Choose a Student / Fee Voucher ({searchedVouchers.length}) --
-                      </option>
-                      {searchedVouchers.map((v) => {
-                        const s = students.find((stu) => stu.id === v.studentId);
-                        const rem = Math.max(0, v.netDue - v.amountPaid);
-                        const excess = v.amountPaid > v.netDue ? v.amountPaid - v.netDue : 0;
-                        return (
-                          <option key={v.id} value={v.id}>
-                            {v.voucherNo} • {s?.name} • {rem > 0 ? `Bal: Rs. ${Math.round(rem).toLocaleString()}` : excess > 0 ? `Adv: Rs. ${Math.round(excess).toLocaleString()}` : 'Paid'} ({v.status}) [{v.month}]
-                          </option>
-                        );
-                      })}
-                    </select>
+                      onKeyDown={handlePickerKeyDown}
+                      className="w-full h-10 pl-9 pr-16 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition shadow-xs"
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      {directSearch ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDirectSearch('');
+                            setHighlightedVoucherIndex(0);
+                            voucherInputRef.current?.focus();
+                          }}
+                          className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition cursor-pointer"
+                          title="Clear search"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsVoucherPickerOpen((prev) => !prev);
+                          if (!isVoucherPickerOpen) {
+                            voucherInputRef.current?.focus();
+                          }
+                        }}
+                        className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition cursor-pointer"
+                        title="Toggle voucher list"
+                      >
+                        <ChevronDown
+                          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                            isVoucherPickerOpen ? 'rotate-180 text-emerald-600' : ''
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Dropdown Popover List */}
+                  {isVoucherPickerOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto divide-y divide-slate-100 ring-1 ring-slate-900/10">
+                      {searchedVouchers.length > 0 ? (
+                        searchedVouchers.slice(0, 100).map((v, index) => {
+                          const s = students.find((stu) => stu.id === v.studentId);
+                          const cls = classes.find((c) => c.id === v.classId);
+                          const rem = Math.max(0, v.netDue - v.amountPaid);
+                          const excess = v.amountPaid > v.netDue ? v.amountPaid - v.netDue : 0;
+                          const isSelected = v.id === selectedVoucherId;
+                          const isHighlighted = index === highlightedVoucherIndex;
+
+                          return (
+                            <button
+                              key={v.id}
+                              type="button"
+                              onClick={() => handleSelectVoucher(v.id)}
+                              onMouseEnter={() => setHighlightedVoucherIndex(index)}
+                              className={`w-full text-left p-2.5 transition flex items-center justify-between gap-3 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-50 font-medium'
+                                  : isHighlighted
+                                  ? 'bg-slate-50'
+                                  : 'hover:bg-slate-50/80'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <StudentAvatar
+                                  photoUrl={s?.photoUrl}
+                                  name={s?.name || 'Student'}
+                                  size="sm"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-slate-900 text-xs truncate">
+                                      {s?.name || 'Unknown Student'}
+                                    </span>
+                                    {s?.regNo && (
+                                      <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 border border-teal-200/60 px-1.5 py-0.2 rounded shrink-0">
+                                        {s.regNo}
+                                      </span>
+                                    )}
+                                    {cls && (
+                                      <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded shrink-0 font-medium">
+                                        {cls.name}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                    <span className="font-bold text-slate-700">{v.voucherNo}</span>
+                                    <span>&bull;</span>
+                                    <span className="text-slate-600 font-sans">{formatMonthName(v.month)}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Balance & Status Tag */}
+                              <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                                <div>
+                                  {rem > 0 ? (
+                                    <span className="font-mono font-bold text-xs text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-md">
+                                      Bal: Rs. {Math.round(rem).toLocaleString()}
+                                    </span>
+                                  ) : excess > 0 ? (
+                                    <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                                      Adv: Rs. {Math.round(excess).toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                                      Paid in Full
+                                    </span>
+                                  )}
+                                </div>
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider ${
+                                    v.status === 'Paid'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : v.status === 'Partial'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : 'bg-rose-100 text-rose-800'
+                                  }`}
+                                >
+                                  {v.status}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="p-4 text-center text-slate-500 text-xs">
+                          <p className="font-medium text-slate-700">No fee vouchers found</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Try searching with a different student name, reg #, or voucher number.
+                          </p>
+                          {directSearch && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDirectSearch('');
+                                setHighlightedVoucherIndex(0);
+                                voucherInputRef.current?.focus();
+                              }}
+                              className="mt-2 text-xs font-bold text-emerald-600 hover:text-emerald-700 underline cursor-pointer"
+                            >
+                              Clear Search
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1220,7 +1633,13 @@ export const CollectionsView: React.FC = () => {
                       </h4>
                       <button
                         type="button"
-                        onClick={() => setIsChangingVoucher(true)}
+                        onClick={() => {
+                          setIsChangingVoucher(true);
+                          setIsVoucherPickerOpen(false);
+                          setTimeout(() => {
+                            voucherInputRef.current?.focus();
+                          }, 50);
+                        }}
                         className="text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 px-1.5 py-0.5 rounded cursor-pointer transition flex items-center gap-1"
                         title="Choose a different voucher"
                       >
@@ -1303,7 +1722,7 @@ export const CollectionsView: React.FC = () => {
                         )
                       );
                       const newRem = Math.max(0, newNet - (selectedVoucher.amountPaid || 0));
-                      if (Number(directAmount) === selectedRemaining && newRem > 0) {
+                      if (Number(directAmount) === selectedRemaining && newRem >= 0) {
                         setDirectAmount(newRem);
                       }
                     }}
@@ -1551,14 +1970,20 @@ export const CollectionsView: React.FC = () => {
                 <p>
                   Upload a CSV file with fee collection records for <strong>{formatMonthName(activeMonth)}</strong>. First row must contain column headers.
                 </p>
-                <button
-                  type="button"
-                  onClick={handleDownloadSampleBulkCsv}
-                  className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  Download Sample CSV Format
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleDownloadSampleBulkCsv}
+                    className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Download Sample CSV Format
+                  </button>
+                  <span className="text-slate-300">|</span>
+                  <span className="text-[11px] text-slate-500">
+                    Supports optional <strong>Fine</strong> column (e.g. <code className="bg-slate-100 text-amber-800 px-1 py-0.5 rounded font-mono">500</code>) to add fine to voucher (e.g. Rs. 500 in fine column adds Rs. 500 to the existing voucher fine).
+                  </span>
+                </div>
 
                 {/* Status alerts */}
                 {bulkImportStatus.message && (
@@ -1584,7 +2009,7 @@ export const CollectionsView: React.FC = () => {
                     Click to select CSV File
                   </span>
                   <span className="text-[11px] text-slate-500 block mt-1">
-                    Supports standard comma-separated .csv files
+                    Supports standard comma-separated .csv files (RegNo, PaidAmount, Fine, Date, PaymentMode, RefNo)
                   </span>
                   <button
                     type="button"
@@ -1623,7 +2048,7 @@ export const CollectionsView: React.FC = () => {
                       </span>
                     </div>
                     <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 shadow-2xs">
-                      <span className="text-teal-700 font-semibold text-[11px]">Total Amount:</span>
+                      <span className="text-teal-700 font-semibold text-[11px]">Total Collection:</span>
                       <span className="font-bold text-teal-800">
                         {formatCurrency(
                           bulkPreviewRows
@@ -1632,6 +2057,18 @@ export const CollectionsView: React.FC = () => {
                         )}
                       </span>
                     </div>
+                    {bulkPreviewRows.some((r) => r.fine !== undefined && r.fine !== 0) && (
+                      <div className="inline-flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/80 shadow-2xs">
+                        <span className="text-amber-700 font-semibold text-[11px]">Net Fines:</span>
+                        <span className="font-bold text-amber-800 font-mono">
+                          {formatCurrency(
+                            bulkPreviewRows
+                              .filter((r) => r.selected && r.isValid && r.fine !== undefined)
+                              .reduce((sum, r) => sum + (r.fine || 0), 0)
+                          )}
+                        </span>
+                      </div>
+                    )}
                     <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
                       <span className="text-rose-700 font-semibold text-[11px]">Duplicates:</span>
                       <span className="font-bold text-rose-800">
@@ -1684,6 +2121,7 @@ export const CollectionsView: React.FC = () => {
                         <th className="p-3 w-10 text-center">Import</th>
                         <th className="p-3">Student (Reg #)</th>
                         <th className="p-3">Active Voucher</th>
+                        <th className="p-3 text-right">Fine Adj.</th>
                         <th className="p-3 text-right">Net Due</th>
                         <th className="p-3 text-right">Paid So Far</th>
                         <th className="p-3 text-right">Remaining</th>
@@ -1738,8 +2176,36 @@ export const CollectionsView: React.FC = () => {
                               <span className="text-slate-400 italic">No Voucher</span>
                             )}
                           </td>
+                          <td className="p-3 text-right font-mono">
+                            {r.fine !== undefined ? (
+                              r.fine > 0 ? (
+                                <span className="inline-flex items-center font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 text-[11px]">
+                                  +{formatCurrency(r.fine)}
+                                </span>
+                              ) : r.fine < 0 ? (
+                                <span className="inline-flex items-center font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[11px]">
+                                  {formatCurrency(r.fine)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 text-[11px]">0 (No change)</span>
+                              )
+                            ) : (
+                              <span className="text-slate-300 text-[11px]">—</span>
+                            )}
+                          </td>
                           <td className="p-3 text-right font-mono text-slate-600">
-                            {r.netDue !== undefined ? formatCurrency(r.netDue) : '—'}
+                            {r.netDue !== undefined ? (
+                              <div>
+                                <span className="font-semibold text-slate-800">{formatCurrency(r.netDue)}</span>
+                                {r.fine !== undefined && r.originalNetDue !== undefined && r.originalNetDue !== r.netDue && (
+                                  <span className="text-[10px] text-slate-400 block font-normal">
+                                    was {formatCurrency(r.originalNetDue)}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td className="p-3 text-right font-mono text-slate-500">
                             {r.alreadyPaid !== undefined ? formatCurrency(r.alreadyPaid) : '—'}
@@ -1829,6 +2295,14 @@ export const CollectionsView: React.FC = () => {
         variant="danger"
         onConfirm={handleConfirmDeleteSession}
         onClose={() => setCollectionToDelete(null)}
+      />
+
+      {/* Official Payment Receipt Modal Generator */}
+      <PaymentReceiptModal
+        isOpen={showReceiptModal}
+        onClose={() => setShowReceiptModal(false)}
+        receiptData={receiptModalData}
+        initialIndex={receiptInitialIndex}
       />
     </div>
   );

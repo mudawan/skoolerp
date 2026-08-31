@@ -1204,7 +1204,7 @@ export const DefaultersView: React.FC = () => {
                     const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
                     const newNet = Math.max(0, roundUpToMultiple(updated.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult));
                     const newRem = Math.max(0, newNet - (collectingVoucher.amountPaid || 0));
-                    if (Number(collectAmount) === collectDynamicRemaining && newRem > 0) {
+                    if (Number(collectAmount) === collectDynamicRemaining && newRem >= 0) {
                       setCollectAmount(newRem);
                     }
                   }}

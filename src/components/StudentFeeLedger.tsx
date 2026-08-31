@@ -1175,7 +1175,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                     const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectModalVoucher?.roundingMultiple);
                     const newNet = Math.max(0, roundUpToMultiple(updated.reduce((s, p) => s + (Number(p.amount) || 0), 0), mult));
                     const newRem = Math.max(0, newNet - (collectModalVoucher.amountPaid || 0));
-                    if (Number(collectAmount) === collectDynamicRemaining && newRem > 0) {
+                    if (Number(collectAmount) === collectDynamicRemaining && newRem >= 0) {
                       setCollectAmount(newRem);
                     }
                   }}

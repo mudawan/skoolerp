@@ -199,7 +199,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                   )
                 );
                 const newRem = Math.max(0, newNet - (voucher.amountPaid || 0));
-                if (Number(amount) === dynamicRemaining && newRem > 0) {
+                if (Number(amount) === dynamicRemaining && newRem >= 0) {
                   setAmount(newRem);
                 }
               }}
