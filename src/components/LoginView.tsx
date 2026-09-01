@@ -199,7 +199,57 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-slate-700/70 text-center">
+          {/* Quick Demo Access Bar */}
+          <div className="mt-5 pt-4 border-t border-slate-700/70">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Quick Demo Access
+              </span>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Pwd: <strong className="text-slate-300">Demo@1234</strong>
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                id="demo-login-admin"
+                onClick={() => {
+                  setIdentifier('admin');
+                  setPassword('Demo@1234');
+                  setErrorMsg(null);
+                }}
+                className="px-2.5 py-1.5 bg-slate-700/60 hover:bg-slate-700 hover:text-white border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-300 transition text-center cursor-pointer"
+              >
+                Admin
+              </button>
+              <button
+                type="button"
+                id="demo-login-accountant"
+                onClick={() => {
+                  setIdentifier('accountant');
+                  setPassword('Demo@1234');
+                  setErrorMsg(null);
+                }}
+                className="px-2.5 py-1.5 bg-slate-700/60 hover:bg-slate-700 hover:text-white border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-300 transition text-center cursor-pointer"
+              >
+                Accountant
+              </button>
+              <button
+                type="button"
+                id="demo-login-viewer"
+                onClick={() => {
+                  setIdentifier('viewer');
+                  setPassword('Demo@1234');
+                  setErrorMsg(null);
+                }}
+                className="px-2.5 py-1.5 bg-slate-700/60 hover:bg-slate-700 hover:text-white border border-slate-600/60 rounded-xl text-xs font-semibold text-slate-300 transition text-center cursor-pointer"
+              >
+                Auditor
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 text-center">
             <p className="text-[11px] text-slate-400">
               Multi-Tenant Cloud Platform &bull; End-to-End Encrypted Session
             </p>
