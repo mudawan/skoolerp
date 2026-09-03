@@ -3,10 +3,14 @@ import { useApp } from '../../context/AppContext';
 import {
   PriorMonthVoucherRule,
   SkippedMonthVoucherRule,
+  VoucherCopyType,
   VoucherDeletionResolution,
 } from '../../types';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Calculator,
   Calendar,
@@ -14,7 +18,12 @@ import {
   CheckCircle,
   ChevronDown,
   Clock,
+  FileText,
+  GripHorizontal,
+  Layers,
+  Printer,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldAlert,
   Sliders,
@@ -57,14 +66,18 @@ export interface PoliciesPanelProps {
   dueDayDropdownRef: React.RefObject<HTMLDivElement | null>;
   isDueDayDropdownOpen: boolean;
   setIsDueDayDropdownOpen: (v: boolean) => void;
-  policyCategoryTab: 'prior' | 'skipped' | 'deletion';
-  setPolicyCategoryTab: (t: 'prior' | 'skipped' | 'deletion') => void;
+  policyCategoryTab: 'copies' | 'prior' | 'skipped' | 'deletion';
+  setPolicyCategoryTab: (t: 'copies' | 'prior' | 'skipped' | 'deletion') => void;
   selectedPriorRule: PriorMonthVoucherRule;
   setSelectedPriorRule: (r: PriorMonthVoucherRule) => void;
   selectedSkippedRule: SkippedMonthVoucherRule;
   setSelectedSkippedRule: (r: SkippedMonthVoucherRule) => void;
   selectedDeletionResolution: VoucherDeletionResolution;
   setSelectedDeletionResolution: (r: VoucherDeletionResolution) => void;
+  selectedVoucherCopyOrder: VoucherCopyType[];
+  setSelectedVoucherCopyOrder: (order: VoucherCopyType[]) => void;
+  selectedVoucherDefaultCopies: VoucherCopyType[];
+  setSelectedVoucherDefaultCopies: (copies: VoucherCopyType[]) => void;
   hasPolicyChanges: boolean;
   handleResetPolicyDrafts: () => void;
   handleSavePolicyClick: () => void;
@@ -97,6 +110,10 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
     setSelectedSkippedRule,
     selectedDeletionResolution,
     setSelectedDeletionResolution,
+    selectedVoucherCopyOrder,
+    setSelectedVoucherCopyOrder,
+    selectedVoucherDefaultCopies,
+    setSelectedVoucherDefaultCopies,
     hasPolicyChanges,
     handleResetPolicyDrafts,
     handleSavePolicyClick,
@@ -460,11 +477,25 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
         </div>
       </div>
 
-      {/* Main Card: Three Category Tabs for Policies */}
+      {/* Main Card: Four Category Tabs for Policies */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
         {/* Category Tab Bar */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl w-full sm:w-auto overflow-x-auto">
+            <button
+              type="button"
+              id="tab-policy-copies"
+              onClick={() => setPolicyCategoryTab('copies')}
+              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                policyCategoryTab === 'copies'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Printer className="w-3.5 h-3.5 text-indigo-600" />
+              <span>1. Copies &amp; Print Layout</span>
+            </button>
+
             <button
               type="button"
               id="tab-policy-prior"
@@ -476,7 +507,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
               }`}
             >
               <Sliders className="w-3.5 h-3.5 text-teal-600" />
-              <span>1. Prior Month Policy</span>
+              <span>2. Prior Month Policy</span>
             </button>
 
             <button
@@ -490,7 +521,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
               }`}
             >
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-              <span>2. Skipped Month Policy</span>
+              <span>3. Skipped Month Policy</span>
             </button>
 
             <button
@@ -504,12 +535,281 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
               }`}
             >
               <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-              <span>3. Deletion & Sequence</span>
+              <span>4. Deletion &amp; Sequence</span>
             </button>
           </div>
         </div>
 
-        {/* Tab 1 Content: Prior Month Voucher Generation Rules */}
+        {/* Tab 1 Content: Voucher Copies Sequence & Default Inclusion */}
+        {policyCategoryTab === 'copies' && (
+          <div className="space-y-5 animate-in fade-in duration-150">
+            {/* Header */}
+            <div>
+              <h4 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <Printer className="w-4 h-4 text-indigo-600" />
+                Voucher Copy Order &amp; Default Generation Setup
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Configure the column sequence of the 3 voucher copies on printed A4 sheets (Bank, Institute, Student) and select default copies generated during billing runs.
+              </p>
+            </div>
+
+            {/* Grid with 2 Columns: 1. Order & Inclusion Controls, 2. Live Sheet Layout Preview */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Left Column (7 cols): Order Sequence & Default Copies Selection */}
+              <div className="lg:col-span-7 space-y-4">
+                {/* 1. Copy Order Sequence */}
+                <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                        1. Copy Print Sequence (Left-to-Right on A4 Sheet)
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        Use the arrow buttons to change the order in which copies appear across the page.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Order Item Cards */}
+                  <div className="space-y-2">
+                    {selectedVoucherCopyOrder.map((copyType, index) => {
+                      const copyMeta = {
+                        bank: {
+                          name: 'Bank Copy',
+                          badgeBg: 'bg-blue-900 text-white',
+                          desc: 'For collection branch or bank teller records',
+                        },
+                        institute: {
+                          name: 'Institute Copy',
+                          badgeBg: 'bg-teal-800 text-white',
+                          desc: 'For institute accounts office reconciliation & audit',
+                        },
+                        student: {
+                          name: 'Student Copy',
+                          badgeBg: 'bg-slate-800 text-white',
+                          desc: 'For student / parent acknowledgement & receipt',
+                        },
+                      }[copyType];
+
+                      return (
+                        <div
+                          key={copyType}
+                          className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-xl shadow-2xs transition hover:border-slate-300"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-extrabold text-[11px] flex items-center justify-center shrink-0 border border-slate-200">
+                              {index + 1}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${copyMeta.badgeBg}`}
+                            >
+                              {copyMeta.name}
+                            </span>
+                            <span className="text-[11px] text-slate-500 truncate hidden sm:inline">
+                              {copyMeta.desc}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              title="Move left / earlier in sequence"
+                              disabled={index === 0}
+                              onClick={() => {
+                                if (index === 0) return;
+                                const newOrder = [...selectedVoucherCopyOrder];
+                                const temp = newOrder[index - 1];
+                                newOrder[index - 1] = newOrder[index];
+                                newOrder[index] = temp;
+                                setSelectedVoucherCopyOrder(newOrder);
+                              }}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                            >
+                              <ArrowLeft className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              title="Move right / later in sequence"
+                              disabled={index === selectedVoucherCopyOrder.length - 1}
+                              onClick={() => {
+                                if (index === selectedVoucherCopyOrder.length - 1) return;
+                                const newOrder = [...selectedVoucherCopyOrder];
+                                const temp = newOrder[index + 1];
+                                newOrder[index + 1] = newOrder[index];
+                                newOrder[index] = temp;
+                                setSelectedVoucherCopyOrder(newOrder);
+                              }}
+                              className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition"
+                            >
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2. Default Copies Selection */}
+                <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block flex items-center gap-1.5">
+                        <CheckCircle className="w-3.5 h-3.5 text-teal-600" />
+                        2. Default Included Copies on Voucher Generation / Print
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        Choose whether 1, 2, or all 3 copies should be included by default when exporting or printing.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Checkbox Group */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {[
+                      {
+                        type: 'bank' as VoucherCopyType,
+                        title: 'Bank Copy',
+                        tagColor: 'text-blue-900 bg-blue-50 border-blue-200',
+                      },
+                      {
+                        type: 'institute' as VoucherCopyType,
+                        title: 'Institute Copy',
+                        tagColor: 'text-teal-900 bg-teal-50 border-teal-200',
+                      },
+                      {
+                        type: 'student' as VoucherCopyType,
+                        title: 'Student Copy',
+                        tagColor: 'text-slate-900 bg-slate-100 border-slate-200',
+                      },
+                    ].map((item) => {
+                      const isIncluded = selectedVoucherDefaultCopies.includes(item.type);
+                      return (
+                        <label
+                          key={item.type}
+                          className={`p-3 rounded-xl border-2 transition cursor-pointer flex items-center gap-2.5 ${
+                            isIncluded
+                              ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
+                              : 'border-slate-200 bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isIncluded}
+                            onChange={() => {
+                              if (isIncluded) {
+                                // Keep at least one copy selected
+                                if (selectedVoucherDefaultCopies.length > 1) {
+                                  setSelectedVoucherDefaultCopies(
+                                    selectedVoucherDefaultCopies.filter((c) => c !== item.type)
+                                  );
+                                }
+                              } else {
+                                setSelectedVoucherDefaultCopies([
+                                  ...selectedVoucherDefaultCopies,
+                                  item.type,
+                                ]);
+                              }
+                            }}
+                            className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
+                          />
+                          <div className="min-w-0">
+                            <span className="font-bold text-xs text-slate-900 block truncate">
+                              {item.title}
+                            </span>
+                            <span className="text-[10px] text-slate-500 block">
+                              {isIncluded ? 'Included in export' : 'Skipped'}
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column (5 cols): Visual Interactive Sheet Layout Preview */}
+              <div className="lg:col-span-5 bg-slate-900 text-white rounded-2xl p-4 sm:p-5 flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-teal-400" />
+                      <span className="font-bold text-xs text-white">
+                        Live Sheet Layout Preview (A4 Landscape)
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+                      {selectedVoucherDefaultCopies.length} of 3 Copies Active
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-300 mt-2.5 leading-relaxed">
+                    Visual simulation of how the voucher will render onto the exported PDF document:
+                  </p>
+
+                  {/* Sheet Container Mockup */}
+                  <div className="mt-3.5 bg-slate-800/80 rounded-xl p-3 border border-slate-700/80 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                      <span>297mm &times; 210mm Page Canvas</span>
+                      <span>Auto-Scaled Proportions</span>
+                    </div>
+
+                    {/* Miniature Page Box */}
+                    <div className="bg-white rounded-lg p-2.5 shadow-md grid grid-cols-3 gap-2 min-h-[140px] items-stretch">
+                      {selectedVoucherCopyOrder
+                        .filter((c) => selectedVoucherDefaultCopies.includes(c))
+                        .map((copyType, idx) => {
+                          const meta = {
+                            bank: { title: 'BANK COPY', bg: 'bg-blue-900', border: 'border-blue-300' },
+                            institute: { title: 'INSTITUTE COPY', bg: 'bg-teal-800', border: 'border-teal-300' },
+                            student: { title: 'STUDENT COPY', bg: 'bg-slate-800', border: 'border-slate-300' },
+                          }[copyType];
+
+                          return (
+                            <div
+                              key={copyType}
+                              className="bg-slate-50 border border-slate-300 rounded p-1.5 flex flex-col justify-between text-[9px] text-slate-700"
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span
+                                    className={`px-1 py-0.5 rounded text-[7px] font-bold text-white uppercase ${meta.bg}`}
+                                  >
+                                    {meta.title}
+                                  </span>
+                                  <span className="text-[7px] font-mono font-bold text-slate-400">
+                                    Col #{idx + 1}
+                                  </span>
+                                </div>
+                                <div className="h-1 bg-slate-200 rounded w-3/4 mx-auto mt-1" />
+                                <div className="h-0.5 bg-slate-200 rounded w-1/2 mx-auto" />
+                                <div className="border-t border-dashed border-slate-300 my-1" />
+                                <div className="space-y-0.5">
+                                  <div className="h-1 bg-slate-200 rounded w-full" />
+                                  <div className="h-1 bg-slate-200 rounded w-5/6" />
+                                  <div className="h-1 bg-slate-200 rounded w-4/5" />
+                                </div>
+                              </div>
+
+                              <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-[7px] font-bold text-teal-800">
+                                <span>NET DUE:</span>
+                                <span>Rs. XXXX</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2 Content: Prior Month Voucher Generation Rules */}
         {policyCategoryTab === 'prior' && (
           <div className="space-y-3 animate-in fade-in duration-150">
             <div className="flex items-center justify-between">

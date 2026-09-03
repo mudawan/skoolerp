@@ -51,7 +51,7 @@ export interface SchoolClass {
   studentCount?: number;
 }
 
-export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated';
+export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn';
 
 export interface StudentDocument {
   name: string;
@@ -253,6 +253,7 @@ export interface BankAccount {
 export interface MonthClosureStatus {
   month: string; // YYYY-MM
   isClosed: boolean;
+  isLocked?: boolean;
   totalVouchers: number;
   uncarriedUnpaidCount: number;
   paidCount: number;
@@ -270,6 +271,7 @@ export type ActiveTab =
   | 'defaulters'
   | 'transport'
   | 'reports'
+  | 'audit'
   | 'settings';
 
 export type ThemeColor = 'teal' | 'navy' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
@@ -285,6 +287,7 @@ export interface AppThemeConfig {
 export type PriorMonthVoucherRule = 'strict' | 'warning' | 'recalculate';
 export type SkippedMonthVoucherRule = 'strict' | 'warning' | 'allow';
 export type VoucherDeletionResolution = 'auto-heal' | 'cascade' | 'manual';
+export type VoucherCopyType = 'bank' | 'institute' | 'student';
 
 export interface DataCleanupOptions {
   students?: boolean;
@@ -318,4 +321,63 @@ export interface PaymentReceiptData {
   remainingBalance?: number;
   collectionDate?: string;
 }
+
+export type AuditActionType =
+  | 'fine_modification'
+  | 'bulk_collection'
+  | 'collection_payment'
+  | 'collection_reversal'
+  | 'voucher_generation'
+  | 'voucher_edit'
+  | 'voucher_deletion'
+  | 'carry_forward'
+  | 'month_closure'
+  | 'student_discount'
+  | 'operator_security'
+  | 'system_cleanup';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string; // ISO 8601
+  operatorId: string;
+  operatorUsername: string;
+  operatorName: string;
+  operatorRole: UserRole;
+  actionType: AuditActionType;
+  actionTitle: string;
+  description: string;
+  module: 'Collections' | 'Vouchers' | 'Defaulters' | 'Students' | 'Settings' | 'Security' | 'System';
+  targetId?: string; // Voucher No, Collection No, Student RegNo, User ID, etc.
+  targetLabel?: string; // Student Name / Voucher / Batch / etc.
+  month?: string; // YYYY-MM
+  amount?: number; // Primary financial impact
+  previousValue?: string | number;
+  newValue?: string | number;
+  metadata?: Record<string, any>; // Extra contextual details
+}
+
+export type AccountHistoryCategory =
+  | 'status'
+  | 'transport'
+  | 'academic'
+  | 'discount'
+  | 'family'
+  | 'enrollment';
+
+export interface StudentAccountHistoryEntry {
+  id: string;
+  studentId: string;
+  timestamp: string; // ISO 8601
+  date: string; // YYYY-MM-DD
+  category: AccountHistoryCategory;
+  actionTitle: string; // e.g. "Status Changed: Active → Withdrawn", "Transport Added"
+  description: string;
+  previousValue?: string;
+  newValue?: string;
+  operatorName?: string;
+  operatorRole?: string;
+  month?: string; // Optional billing month if applicable
+  metadata?: Record<string, any>;
+}
+
 

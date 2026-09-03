@@ -36,9 +36,12 @@ import {
 
 interface UserPermissionsModalProps {
   isOpen: boolean;
-  user: User | null;
+  user:
+    | User
+    | { id: string; name: string; username: string; role: UserRole; permissions: string[]; email?: string }
+    | null;
   onClose: () => void;
-  onSave: (userId: string, permissions: string[], role: UserRole) => Promise<void>;
+  onSave: (userId: string, permissions: string[], role: UserRole) => Promise<void> | void;
 }
 
 export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
@@ -191,23 +194,23 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
   return (
     <div
       id="user-permissions-modal"
-      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
     >
-      <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] sm:max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 my-auto">
         {/* Modal Header */}
-        <div className="bg-slate-900 text-white p-5 sm:p-6 border-b border-slate-800 flex items-start justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-500/40 text-teal-300 flex items-center justify-center font-bold text-base shrink-0 shadow-inner">
+        <div className="bg-slate-900 text-white p-3.5 sm:p-5 border-b border-slate-800 flex items-start justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-teal-500/20 border border-teal-500/40 text-teal-300 flex items-center justify-center font-bold text-sm sm:text-base shrink-0 shadow-inner">
               {user.name.substring(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg font-bold tracking-tight text-white truncate">{user.name}</h2>
-                <span className="font-mono text-xs text-teal-300 bg-teal-950/60 border border-teal-800/80 px-2 py-0.5 rounded-md">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-bold tracking-tight text-white truncate max-w-[180px] sm:max-w-none">{user.name}</h2>
+                <span className="font-mono text-[10px] sm:text-xs text-teal-300 bg-teal-950/60 border border-teal-800/80 px-1.5 sm:px-2 py-0.5 rounded-md">
                   @{user.username}
                 </span>
                 <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                  className={`text-[10px] sm:text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                     selectedRole === 'Admin'
                       ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                       : selectedRole === 'Accountant'
@@ -220,8 +223,8 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                   {selectedRole === 'Custom' ? 'Custom Permissions' : `${selectedRole} Role`}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Configure granular module permissions and security privileges for this operator account.
+              <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5 hidden xs:block line-clamp-1">
+                Configure module privileges and security rights for this operator.
               </p>
             </div>
           </div>
@@ -237,11 +240,11 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
         </div>
 
         {/* Quick Role & Specialty Presets Bar */}
-        <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 shrink-0">
-          <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-              <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-              <span>Apply Operational Presets:</span>
+        <div className="bg-slate-50 border-b border-slate-200 px-3.5 sm:px-5 py-2.5 sm:py-3 shrink-0">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-slate-700">
+              <Sparkles className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span>Presets:</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -257,7 +260,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                 onClick={handleDeselectAll}
                 className="text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer"
               >
-                Clear All
+                Clear
               </button>
               <span className="text-slate-300">&bull;</span>
               <button
@@ -267,13 +270,13 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                 title="Revert to saved permissions"
               >
                 <RotateCcw className="w-3 h-3" />
-                Reset
+                <span>Reset</span>
               </button>
             </div>
           </div>
 
           {/* Specialty Preset Chips */}
-          <div className="flex overflow-x-auto gap-2 pb-1 no-scrollbar">
+          <div className="flex overflow-x-auto gap-2 pb-1 no-scrollbar -mx-1 px-1">
             {SPECIALTY_PRESETS.map((preset) => {
               const isMatch =
                 preset.permissions.length === selectedPermissions.length &&
@@ -284,7 +287,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                   key={preset.id}
                   type="button"
                   onClick={() => handleApplyPreset(preset.permissions, preset.role)}
-                  className={`text-xs px-3 py-1.5 rounded-xl font-semibold border transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  className={`text-xs px-2.5 sm:px-3 py-1.5 rounded-xl font-semibold border transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0 ${
                     isMatch
                       ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
                       : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100/70'
@@ -302,18 +305,35 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                 </button>
               );
             })}
+
+            {!SPECIALTY_PRESETS.some(
+              (p) =>
+                p.permissions.length === selectedPermissions.length &&
+                p.permissions.every((code) => selectedPermissions.includes(code))
+            ) && (
+              <div
+                className="text-xs px-2.5 sm:px-3 py-1.5 rounded-xl font-semibold border bg-teal-950 text-teal-200 border-teal-800 flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs"
+                title="Granular permissions have been individually customized for this account"
+              >
+                <Sparkles className="w-3 h-3 text-teal-400" />
+                <span>Custom Configuration</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-md font-bold bg-teal-500/30 text-teal-200">
+                  {selectedPermissions.length} Active
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Access Metrics & Search Filter */}
-        <div className="p-4 sm:px-6 bg-white border-b border-slate-200 shrink-0 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="p-3 sm:p-4 sm:px-6 bg-white border-b border-slate-200 shrink-0 space-y-2.5 sm:space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
             {/* Progress Meter */}
             <div className="flex-1 max-w-sm">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
                 <span>Active Scope:</span>
-                <span className="text-teal-700 font-mono">
-                  {grantedCount} of {totalCount} ({percentGranted}%)
+                <span className="text-teal-700 font-mono text-[11px] sm:text-xs">
+                  {grantedCount} / {totalCount} ({percentGranted}%)
                 </span>
               </div>
               <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
@@ -339,7 +359,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search permissions (e.g. fees, delete)..."
+                placeholder="Search permissions..."
                 className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
               {searchQuery && (
@@ -354,17 +374,17 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
           </div>
 
           {/* Category Filter Pills */}
-          <div className="flex overflow-x-auto gap-1.5 pt-1 no-scrollbar">
+          <div className="flex overflow-x-auto gap-1.5 pt-0.5 no-scrollbar -mx-1 px-1">
             <button
               type="button"
               onClick={() => setActiveCategoryFilter('all')}
-              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition whitespace-nowrap cursor-pointer ${
+              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition whitespace-nowrap cursor-pointer shrink-0 ${
                 activeCategoryFilter === 'all'
-                  ? 'bg-teal-600 text-white'
+                  ? 'bg-teal-600 text-white shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              All Modules ({totalCount})
+              All ({totalCount})
             </button>
             {PERMISSION_CATEGORIES.map((cat) => {
               const { granted, total } = getGrantedCategoryCount(selectedPermissions, cat.id);
@@ -375,15 +395,15 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                   key={cat.id}
                   type="button"
                   onClick={() => setActiveCategoryFilter(cat.id)}
-                  className={`text-xs px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  className={`text-xs px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer shrink-0 ${
                     isActive
-                      ? 'bg-teal-600 text-white'
+                      ? 'bg-teal-600 text-white shadow-xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   <span>{cat.label}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
                       isActive
                         ? 'bg-teal-800 text-white'
                         : granted === total
@@ -402,13 +422,13 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
         </div>
 
         {/* Scrollable Permissions Matrix */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-slate-50/50">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6 bg-slate-50/50">
           {groupedCategories.size === 0 ? (
             <div className="text-center py-12 text-slate-500">
               <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
               <p className="font-bold text-sm text-slate-700">No permissions match your search</p>
               <p className="text-xs text-slate-400 mt-1">
-                Try clearing your search query or switching to "All Modules".
+                Try clearing your search query or switching to "All".
               </p>
               <button
                 type="button"
@@ -435,18 +455,18 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                   className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden"
                 >
                   {/* Category Header */}
-                  <div className="p-4 bg-slate-50/90 border-b border-slate-200/80 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="p-3 sm:p-4 bg-slate-50/90 border-b border-slate-200/80 flex items-center justify-between gap-2.5 flex-wrap">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 border border-teal-200/80 flex items-center justify-center shrink-0">
-                        <CatIcon className="w-4 h-4" />
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-teal-50 text-teal-700 border border-teal-200/80 flex items-center justify-center shrink-0">
+                        <CatIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-slate-900 text-sm">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                          <h3 className="font-bold text-slate-900 text-xs sm:text-sm">
                             {catInfo?.label || catId}
                           </h3>
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            className={`text-[9.5px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full border ${
                               allCategoryGranted
                                 ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
                                 : someCategoryGranted
@@ -454,10 +474,10 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                                 : 'bg-slate-100 text-slate-600 border-slate-200'
                             }`}
                           >
-                            {granted} of {total} enabled
+                            {granted}/{total} enabled
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
+                        <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 line-clamp-1">
                           {catInfo?.description}
                         </p>
                       </div>
@@ -466,7 +486,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                     <button
                       type="button"
                       onClick={() => toggleCategoryAll(catId)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold shadow-2xs transition cursor-pointer"
+                      className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-[11px] sm:text-xs font-semibold shadow-2xs transition cursor-pointer shrink-0 ml-auto sm:ml-0"
                     >
                       {allCategoryGranted ? (
                         <>
@@ -476,14 +496,14 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                       ) : (
                         <>
                           <Square className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Select All in Module</span>
+                          <span>Select All</span>
                         </>
                       )}
                     </button>
                   </div>
 
                   {/* Permissions Grid */}
-                  <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-2.5 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
                     {permissions.map((perm) => {
                       const isChecked = selectedPermissions.includes(perm.code);
 
@@ -491,7 +511,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                         <div
                           key={perm.code}
                           onClick={() => togglePermission(perm.code)}
-                          className={`p-3 rounded-xl border transition flex items-start gap-3 cursor-pointer select-none ${
+                          className={`p-2.5 sm:p-3 rounded-xl border transition flex items-start gap-2.5 sm:gap-3 cursor-pointer select-none ${
                             isChecked
                               ? 'bg-teal-50/40 border-teal-300 ring-1 ring-teal-400/30'
                               : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/60'
@@ -510,7 +530,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center justify-between gap-1.5">
                               <span
                                 className={`text-xs font-bold truncate ${
                                   isChecked ? 'text-slate-900' : 'text-slate-700'
@@ -520,26 +540,26 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
                               </span>
 
                               {perm.riskLevel === 'high' ? (
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 border border-rose-200 shrink-0">
+                                <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 border border-rose-200 shrink-0">
                                   High Risk
                                 </span>
                               ) : perm.riskLevel === 'medium' ? (
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                                <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
                                   Manage
                                 </span>
                               ) : (
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+                                <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
                                   View
                                 </span>
                               )}
                             </div>
 
-                            <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                            <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
                               {perm.description}
                             </p>
 
-                            <div className="mt-1.5">
-                              <span className="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                            <div className="mt-1">
+                              <span className="font-mono text-[9.5px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                 {perm.code}
                               </span>
                             </div>
@@ -555,19 +575,17 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 sm:p-5 bg-white border-t border-slate-200 flex items-center justify-between gap-4 shrink-0 flex-wrap">
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <Info className="w-4 h-4 text-teal-600 shrink-0" />
-            <span>
-              Changes take effect immediately on the operator's next page interaction.
-            </span>
+        <div className="p-3 sm:p-4 sm:px-5 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500">
+            <Info className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+            <span>Changes take effect immediately on next page interaction.</span>
           </div>
 
-          <div className="flex items-center gap-2.5 ml-auto">
+          <div className="flex items-center gap-2 sm:gap-2.5 sm:ml-auto">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-slate-200 rounded-xl font-bold text-xs text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              className="flex-1 sm:flex-initial px-4 py-2.5 sm:py-2 border border-slate-200 rounded-xl font-bold text-xs text-slate-600 hover:bg-slate-50 transition cursor-pointer text-center"
             >
               Cancel
             </button>
@@ -576,10 +594,10 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
               id="btn-save-user-permissions"
               disabled={isSaving}
               onClick={handleSave}
-              className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              className="flex-1 sm:flex-initial px-5 py-2.5 sm:py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-[38px]"
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>{isSaving ? 'Saving Changes...' : 'Save Permissions'}</span>
+              <span>{isSaving ? 'Saving...' : 'Save Permissions'}</span>
             </button>
           </div>
         </div>

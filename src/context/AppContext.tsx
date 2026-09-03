@@ -5,6 +5,8 @@ import { nextDocumentNumber, reconcileSequence } from '../utils/sequence';
 import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from '../utils/passwords';
 import {
   AppThemeConfig,
+  AuditActionType,
+  AuditLogEntry,
   BankAccount,
   CleanupResult,
   DataCleanupOptions,
@@ -20,17 +22,21 @@ import {
   SchoolClass,
   SkippedMonthVoucherRule,
   Student,
+  StudentAccountHistoryEntry,
+  StudentStatus,
   TransportAssignment,
   TransportBus,
   TransportStop,
   User,
   UserRole,
+  VoucherCopyType,
   VoucherDeletionResolution,
   VoucherItem,
   VoucherStatus,
 } from '../types';
 import { DEFAULT_THEME_CONFIG, applyThemeToDom } from '../utils/themeConfig';
 import {
+  INITIAL_AUDIT_LOGS,
   INITIAL_BANK_ACCOUNTS,
   INITIAL_BUSES,
   INITIAL_CLASSES,
@@ -39,6 +45,7 @@ import {
   INITIAL_GLOBAL_TEMPLATES,
   INITIAL_INSTITUTE,
   INITIAL_STOPS,
+  INITIAL_STUDENT_ACCOUNT_HISTORY,
   INITIAL_STUDENTS,
   INITIAL_TRANSACTIONS,
   INITIAL_VOUCHERS,
@@ -51,6 +58,7 @@ import {
 } from '../utils/permissions';
 import {
   calculateStudentVoucherPreview,
+  formatMonthName,
   getCurrentMonthString,
   getDaysInMonth,
   getEffectiveMultiple,
@@ -147,8 +155,9 @@ interface AppContextType {
 
   // Fee Particular Templates
   templates: FeeTemplate[];
-  saveGlobalTemplate: (template: Omit<FeeTemplate, 'id'>) => void;
-  updateGlobalTemplatesList: (newTemplates: FeeTemplate[]) => void;
+  saveGlobalTemplate: (template: Omit<FeeTemplate, 'id'>, month?: string) => void;
+  updateGlobalTemplatesList: (newTemplates: FeeTemplate[], month?: string) => void;
+  deleteGlobalTemplates: (month?: string) => void;
   saveClassTemplateOverrides: (
     classId: string,
     month: string,
@@ -244,7 +253,7 @@ interface AppContextType {
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ) => { successCount: number };
+  ) => { success: boolean; successCount: number; errors: string[] };
   undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
@@ -259,6 +268,10 @@ interface AppContextType {
     day?: number;
   }) => void;
   getComputedDefaultDueDate: (month: string) => string;
+  voucherCopyOrder: VoucherCopyType[];
+  setVoucherCopyOrder: (order: VoucherCopyType[]) => void;
+  voucherDefaultCopies: VoucherCopyType[];
+  setVoucherDefaultCopies: (copies: VoucherCopyType[]) => void;
   getDownstreamVouchersInfo: (ids: string[]) => {
     hasDownstream: boolean;
     conflicts: DownstreamConflict[];
@@ -302,12 +315,42 @@ interface AppContextType {
   deleteBankAccount: (id: string) => void;
   setDefaultBankAccount: (id: string) => void;
 
-  // Month Closure Check Helper
+  // Month Closure Check Helper & Lock Management
   getMonthClosureStatus: (month: string) => MonthClosureStatus;
+  lockedMonths: string[];
+  lockMonth: (month: string, notes?: string) => { success: boolean; error?: string };
+  unlockMonth: (month: string) => { success: boolean; error?: string };
+  isMonthLocked: (month: string) => boolean;
 
   // System Utility & Granular Cleanup
   resetToDemoData: () => void;
   cleanupDatabaseTables: (options: DataCleanupOptions) => CleanupResult;
+
+  // Audit Trail & Activity Logs
+  auditLogs: AuditLogEntry[];
+  logAuditEvent: (
+    entry: Omit<
+      AuditLogEntry,
+      'id' | 'timestamp' | 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole'
+    > &
+      Partial<Pick<AuditLogEntry, 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole' | 'timestamp'>>
+  ) => void;
+  clearAuditLogs: () => void;
+
+  // Student Account History (Chronological Status & Transport Log)
+  studentAccountHistory: StudentAccountHistoryEntry[];
+  addStudentAccountHistory: (
+    entry: Omit<StudentAccountHistoryEntry, 'id' | 'timestamp'> & {
+      id?: string;
+      timestamp?: string;
+    }
+  ) => void;
+  getStudentAccountHistory: (studentId: string) => StudentAccountHistoryEntry[];
+  updateStudentStatus: (
+    studentId: string,
+    newStatus: StudentStatus,
+    reason?: string
+  ) => { success: boolean; error?: string };
 
   // Global In-App Notifications / Toasts
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', durationMs?: number) => void;
@@ -480,6 +523,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [defaultDueDateEnabled, defaultDueDay]
   );
+
+  // Voucher Copy Order & Default Included Copies
+  const [voucherCopyOrder, setVoucherCopyOrderState] = useState<VoucherCopyType[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_voucher_copy_order`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {
+        // fallback
+      }
+    }
+    return ['bank', 'institute', 'student'];
+  });
+
+  const setVoucherCopyOrder = useCallback((order: VoucherCopyType[]) => {
+    const clean = Array.isArray(order) && order.length > 0 ? order : ['bank', 'institute', 'student'];
+    setVoucherCopyOrderState(clean);
+    localStorage.setItem(`${STORAGE_KEY}_voucher_copy_order`, JSON.stringify(clean));
+  }, []);
+
+  const [voucherDefaultCopies, setVoucherDefaultCopiesState] = useState<VoucherCopyType[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_voucher_default_copies`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {
+        // fallback
+      }
+    }
+    return ['bank', 'institute', 'student'];
+  });
+
+  const setVoucherDefaultCopies = useCallback((copies: VoucherCopyType[]) => {
+    const clean = Array.isArray(copies) && copies.length > 0 ? copies : ['bank', 'institute', 'student'];
+    setVoucherDefaultCopiesState(clean);
+    localStorage.setItem(`${STORAGE_KEY}_voucher_default_copies`, JSON.stringify(clean));
+  }, []);
 
   // Core domain state
   const [classes, setClasses] = useState<SchoolClass[]>(() => {
@@ -761,6 +843,241 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     applyThemeToDom(themeConfig);
   }, [themeConfig]);
 
+  // Audit Trail & Activity Logs
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_audit_logs`);
+    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+  });
+
+  const currentUserRef = useRef<User>(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  const logAuditEvent = useCallback(
+    (
+      entry: Omit<
+        AuditLogEntry,
+        'id' | 'timestamp' | 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole'
+      > &
+        Partial<Pick<AuditLogEntry, 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole' | 'timestamp'>>
+    ) => {
+      const activeUser = currentUserRef.current;
+      const newLog: AuditLogEntry = {
+        id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        timestamp: entry.timestamp || new Date().toISOString(),
+        operatorId: entry.operatorId || activeUser?.id || 'usr-system',
+        operatorUsername: entry.operatorUsername || activeUser?.username || 'system',
+        operatorName: entry.operatorName || activeUser?.name || 'System Operator',
+        operatorRole: entry.operatorRole || activeUser?.role || 'Admin',
+        actionType: entry.actionType,
+        actionTitle: entry.actionTitle,
+        description: entry.description,
+        module: entry.module,
+        targetId: entry.targetId,
+        targetLabel: entry.targetLabel,
+        month: entry.month,
+        amount: entry.amount,
+        previousValue: entry.previousValue,
+        newValue: entry.newValue,
+        metadata: entry.metadata,
+      };
+
+      setAuditLogs((prev) => [newLog, ...prev]);
+    },
+    []
+  );
+
+  // Student Account History (Chronological Status, Transport & Academic Event Log)
+  const [studentAccountHistory, setStudentAccountHistory] = useState<StudentAccountHistoryEntry[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_student_account_history`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error('Failed to parse student account history', e);
+      }
+    }
+    return INITIAL_STUDENT_ACCOUNT_HISTORY;
+  });
+
+  const addStudentAccountHistory = useCallback(
+    (
+      entry: Omit<StudentAccountHistoryEntry, 'id' | 'timestamp'> & {
+        id?: string;
+        timestamp?: string;
+      }
+    ) => {
+      const activeUser = currentUserRef.current;
+      const newEntry: StudentAccountHistoryEntry = {
+        id: entry.id || `sah-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        studentId: entry.studentId,
+        timestamp: entry.timestamp || new Date().toISOString(),
+        date: entry.date || new Date().toISOString().split('T')[0],
+        category: entry.category,
+        actionTitle: entry.actionTitle,
+        description: entry.description,
+        previousValue: entry.previousValue,
+        newValue: entry.newValue,
+        operatorName: entry.operatorName || activeUser?.name || 'System Operator',
+        operatorRole: entry.operatorRole || activeUser?.role || 'Admin',
+        month: entry.month,
+        metadata: entry.metadata,
+      };
+
+      setStudentAccountHistory((prev) => [newEntry, ...prev]);
+    },
+    []
+  );
+
+  const getStudentAccountHistory = useCallback(
+    (studentId: string): StudentAccountHistoryEntry[] => {
+      const explicitEntries = studentAccountHistory.filter((h) => h.studentId === studentId);
+      const student = students.find((s) => s.id === studentId);
+
+      const synthesized: StudentAccountHistoryEntry[] = [...explicitEntries];
+
+      // If no enrollment entry exists in explicit history, synthesize one from student admission data
+      const hasEnrollment = explicitEntries.some((e) => e.category === 'enrollment');
+      if (!hasEnrollment && student) {
+        const studentClass = classes.find((c) => c.id === student.classId);
+        const admDate = student.admissionDate || student.createdDate || '2024-01-01';
+        synthesized.push({
+          id: `synth-enr-${student.id}`,
+          studentId: student.id,
+          timestamp: `${admDate}T08:00:00.000Z`,
+          date: admDate,
+          category: 'enrollment',
+          actionTitle: 'Student Admission & Account Registered',
+          description: `Initial registration completed for Class ${studentClass?.name || 'Unassigned'} with status '${student.status}'. Registration #: ${student.regNo}.`,
+          previousValue: 'None',
+          newValue: student.status,
+          operatorName: 'System Registrar',
+          operatorRole: 'Admin',
+          metadata: { isSynthesized: true },
+        });
+      }
+
+      // Check for transport assignments that might not have an explicit history record
+      const studentAssignments = transportAssignments.filter((a) => a.studentId === studentId);
+      for (const asgn of studentAssignments) {
+        const hasMatchingTransport = explicitEntries.some(
+          (e) => e.category === 'transport' && e.month === asgn.month
+        );
+        if (!hasMatchingTransport) {
+          const stop = stops.find((s) => s.id === asgn.stopId);
+          const bus = buses.find((b) => b.id === asgn.busId);
+          const monthName = formatMonthName(asgn.month);
+          const fare = stop?.monthlyFare ? Math.max(0, stop.monthlyFare - (asgn.discount || 0)) : 0;
+          synthesized.push({
+            id: `synth-tr-${asgn.id}`,
+            studentId: asgn.studentId,
+            timestamp: `${asgn.month}-01T08:30:00.000Z`,
+            date: `${asgn.month}-01`,
+            category: 'transport',
+            actionTitle: `Transport Added (${monthName})`,
+            description: `Transport assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${asgn.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Net fare: Rs. ${fare}.`,
+            previousValue: 'No Transport',
+            newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+            month: asgn.month,
+            operatorName: 'Transport Incharge',
+            operatorRole: 'Accountant',
+            metadata: { isSynthesized: true, assignmentId: asgn.id },
+          });
+        }
+      }
+
+      // Sort descending (newest first)
+      return synthesized.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    },
+    [studentAccountHistory, students, classes, transportAssignments, stops, buses]
+  );
+
+  const updateStudentStatus = useCallback(
+    (studentId: string, newStatus: StudentStatus, reason?: string) => {
+      const target = students.find((s) => s.id === studentId);
+      if (!target) return { success: false, error: 'Student not found.' };
+
+      if (target.status === newStatus) {
+        return { success: false, error: `Student is already in '${newStatus}' status.` };
+      }
+
+      const oldStatus = target.status;
+      const activeUser = currentUserRef.current;
+      const timestamp = new Date().toISOString();
+      const date = timestamp.split('T')[0];
+
+      // Update student status
+      setStudents((prev) =>
+        prev.map((s) => (s.id === studentId ? { ...s, status: newStatus } : s))
+      );
+
+      // Add to student account history
+      const reasonText = reason?.trim() ? `. Note/Reason: ${reason.trim()}` : '';
+      const historyEntry: StudentAccountHistoryEntry = {
+        id: `sah-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        studentId,
+        timestamp,
+        date,
+        category: 'status',
+        actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
+        description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
+        previousValue: oldStatus,
+        newValue: newStatus,
+        operatorName: activeUser?.name || 'System Operator',
+        operatorRole: activeUser?.role || 'Admin',
+        metadata: {
+          oldStatus,
+          newStatus,
+          reason: reason?.trim() || undefined,
+        },
+      };
+
+      setStudentAccountHistory((prev) => [historyEntry, ...prev]);
+
+      // Log in central audit trail
+      logAuditEvent({
+        timestamp,
+        actionType: 'operator_security',
+        actionTitle: `Student Status Changed: ${target.name}`,
+        description: `Enrollment status transitioned from ${oldStatus} to ${newStatus} for ${target.name} (${target.regNo})${reasonText}`,
+        module: 'Students',
+        targetId: target.regNo,
+        targetLabel: `${target.name} (${target.regNo})`,
+        previousValue: oldStatus,
+        newValue: newStatus,
+        metadata: {
+          studentId: target.id,
+          oldStatus,
+          newStatus,
+          reason: reason?.trim(),
+        },
+      });
+
+      return { success: true };
+    },
+    [students, logAuditEvent]
+  );
+
+  const [lockedMonths, setLockedMonths] = useState<string[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_locked_months`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error('Failed to parse locked months', e);
+      }
+    }
+    return [];
+  });
+
+  const clearAuditLogs = useCallback(() => {
+    setAuditLogs([]);
+    localStorage.removeItem(`${STORAGE_KEY}_audit_logs`);
+  }, []);
+
   // Sync to local storage
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(users));
@@ -776,6 +1093,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_KEY}_transactions`, JSON.stringify(transactions));
     localStorage.setItem(`${STORAGE_KEY}_institute`, JSON.stringify(institute));
     localStorage.setItem(`${STORAGE_KEY}_banks`, JSON.stringify(bankAccounts));
+    localStorage.setItem(`${STORAGE_KEY}_audit_logs`, JSON.stringify(auditLogs));
+    localStorage.setItem(`${STORAGE_KEY}_student_account_history`, JSON.stringify(studentAccountHistory));
+    localStorage.setItem(`${STORAGE_KEY}_locked_months`, JSON.stringify(lockedMonths));
   }, [
     users,
     classes,
@@ -790,6 +1110,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     transactions,
     institute,
     bankAccounts,
+    auditLogs,
+    studentAccountHistory,
+    lockedMonths,
   ]);
 
   useEffect(() => {
@@ -960,7 +1283,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!userToUpdate) return { success: false, error: 'User not found.' };
 
     const determinedRole = role || getEffectiveRole(permissions);
-    return updateUser(id, { permissions, role: determinedRole });
+    const result = await updateUser(id, { permissions, role: determinedRole });
+    if (result.success) {
+      logAuditEvent({
+        actionType: 'operator_security',
+        actionTitle: 'Operator Security & Privileges Updated',
+        description: `Updated authorization profile for @${userToUpdate.username} (${userToUpdate.name}). Role set to ${determinedRole} with ${permissions.length} active privileges.`,
+        module: 'Security',
+        targetId: userToUpdate.id,
+        targetLabel: `@${userToUpdate.username} (${userToUpdate.name})`,
+        previousValue: userToUpdate.role,
+        newValue: determinedRole,
+        metadata: {
+          operatorId: userToUpdate.id,
+          operatorUsername: userToUpdate.username,
+          previousRole: userToUpdate.role,
+          newRole: determinedRole,
+          privilegesCount: permissions.length,
+        },
+      });
+    }
+    return result;
   };
 
   const deleteUser = (id: string) => {
@@ -1176,6 +1519,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    const studentClass = classes.find((c) => c.id === newStudent.classId);
+    addStudentAccountHistory({
+      studentId: newStudent.id,
+      date: newStudent.admissionDate || newStudent.createdDate || new Date().toISOString().split('T')[0],
+      category: 'enrollment',
+      actionTitle: 'Student Admission & Account Registered',
+      description: `Student admitted in Class ${studentClass?.name || 'Unassigned'} with status '${newStudent.status}'. Registration #: ${newStudent.regNo}.`,
+      previousValue: 'None',
+      newValue: newStudent.status,
+    });
+
     return { success: true, student: newStudent };
   };
 
@@ -1203,6 +1557,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         })
       );
+
+      const oldFam = families.find((f) => f.id === oldFamilyId);
+      const newFam = families.find((f) => f.id === newFamilyId);
+      addStudentAccountHistory({
+        studentId: id,
+        category: 'family',
+        actionTitle: newFamilyId ? 'Family Linked' : 'Family Unlinked',
+        description: newFamilyId
+          ? `Linked to Family ${newFam?.familyNo || 'New Family'} (Head: ${newFam?.headName || 'Guardian'}).`
+          : `Unlinked from Family ${oldFam?.familyNo || 'Family'}.`,
+        previousValue: oldFam?.familyNo || 'None',
+        newValue: newFam?.familyNo || 'None',
+      });
+    }
+
+    // Status Change
+    if (updates.status !== undefined && updates.status !== target.status) {
+      const oldStatus = target.status;
+      const newStatus = updates.status;
+      const timestamp = new Date().toISOString();
+      const reasonText = updates.notes ? `. Note: ${updates.notes}` : '';
+
+      addStudentAccountHistory({
+        studentId: id,
+        timestamp,
+        date: timestamp.split('T')[0],
+        category: 'status',
+        actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
+        description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
+        previousValue: oldStatus,
+        newValue: newStatus,
+        metadata: { oldStatus, newStatus },
+      });
+
+      logAuditEvent({
+        timestamp,
+        actionType: 'operator_security',
+        actionTitle: `Student Status Changed: ${target.name}`,
+        description: `Status changed from ${oldStatus} to ${newStatus} for ${target.name} (${target.regNo})${reasonText}`,
+        module: 'Students',
+        targetId: target.regNo,
+        targetLabel: `${target.name} (${target.regNo})`,
+        previousValue: oldStatus,
+        newValue: newStatus,
+        metadata: { studentId: target.id, oldStatus, newStatus },
+      });
+    }
+
+    // Academic / Class Change
+    if (updates.classId !== undefined && updates.classId !== target.classId) {
+      const oldClass = classes.find((c) => c.id === target.classId)?.name || 'Previous Class';
+      const newClass = classes.find((c) => c.id === updates.classId)?.name || 'New Class';
+      addStudentAccountHistory({
+        studentId: id,
+        category: 'academic',
+        actionTitle: `Class Transferred: ${oldClass} → ${newClass}`,
+        description: `Student class transferred from ${oldClass} to ${newClass}.`,
+        previousValue: oldClass,
+        newValue: newClass,
+      });
+    }
+
+    // Monthly Discount Change
+    if (updates.monthlyDiscount !== undefined && updates.monthlyDiscount !== target.monthlyDiscount) {
+      addStudentAccountHistory({
+        studentId: id,
+        category: 'discount',
+        actionTitle: `Monthly Discount Updated: Rs. ${target.monthlyDiscount} → Rs. ${updates.monthlyDiscount}`,
+        description: `Monthly fee concession adjusted from Rs. ${target.monthlyDiscount} to Rs. ${updates.monthlyDiscount}.`,
+        previousValue: `Rs. ${target.monthlyDiscount}`,
+        newValue: `Rs. ${updates.monthlyDiscount}`,
+      });
     }
 
     setStudents((prev) =>
@@ -1515,7 +1941,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const saveTransportAssignment = (
     assignment: Omit<TransportAssignment, 'id'> & { id?: string }
   ) => {
+    const stop = stops.find((s) => s.id === assignment.stopId);
+    const bus = buses.find((b) => b.id === assignment.busId);
+    const monthName = formatMonthName(assignment.month);
+    const fare = stop?.monthlyFare ? Math.max(0, stop.monthlyFare - (assignment.discount || 0)) : 0;
+
     if (assignment.id) {
+      const existing = transportAssignments.find((a) => a.id === assignment.id);
+      const isDeactivated = assignment.active === false && existing?.active !== false;
+      addStudentAccountHistory({
+        studentId: assignment.studentId,
+        date: new Date().toISOString().split('T')[0],
+        category: 'transport',
+        actionTitle: isDeactivated ? `Transport Deactivated (${monthName})` : `Transport Updated (${monthName})`,
+        description: isDeactivated
+          ? `Transport route deactivated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}.`
+          : `Transport route updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}). Monthly fare: Rs. ${fare}.`,
+        previousValue: existing ? `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})` : undefined,
+        newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+        month: assignment.month,
+      });
+
       setTransportAssignments((prev) =>
         prev.map((a) => (a.id === assignment.id ? { ...a, ...assignment } : a))
       );
@@ -1528,10 +1974,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     if (existing) {
+      addStudentAccountHistory({
+        studentId: assignment.studentId,
+        date: new Date().toISOString().split('T')[0],
+        category: 'transport',
+        actionTitle: `Transport Updated (${monthName})`,
+        description: `Transport assignment updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}. Monthly fare: Rs. ${fare}.`,
+        previousValue: `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})`,
+        newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+        month: assignment.month,
+      });
       setTransportAssignments((prev) =>
         prev.map((a) => (a.id === existing.id ? { ...a, ...assignment } : a))
       );
     } else {
+      addStudentAccountHistory({
+        studentId: assignment.studentId,
+        date: new Date().toISOString().split('T')[0],
+        category: 'transport',
+        actionTitle: `Transport Added (${monthName})`,
+        description: `Transport route assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Monthly fare: Rs. ${fare}.`,
+        previousValue: 'No Transport',
+        newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+        month: assignment.month,
+      });
       const newAsgn: TransportAssignment = {
         ...assignment,
         id: `asgn-${Date.now()}`,
@@ -1572,6 +2038,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteTransportAssignment = (id: string) => {
+    const targetAsgn = transportAssignments.find((a) => a.id === id);
+    if (targetAsgn) {
+      const stop = stops.find((s) => s.id === targetAsgn.stopId);
+      const bus = buses.find((b) => b.id === targetAsgn.busId);
+      const monthName = formatMonthName(targetAsgn.month);
+      addStudentAccountHistory({
+        studentId: targetAsgn.studentId,
+        date: new Date().toISOString().split('T')[0],
+        category: 'transport',
+        actionTitle: `Transport Removed (${monthName})`,
+        description: `Transport assignment removed for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}. Transport fee will not be billed.`,
+        previousValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+        newValue: 'Removed / None',
+        month: targetAsgn.month,
+      });
+    }
     setTransportAssignments((prev) => prev.filter((a) => a.id !== id));
   };
 
@@ -1674,25 +2156,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Fee Particular Templates
-  const saveGlobalTemplate = (template: Omit<FeeTemplate, 'id'>) => {
-    const existing = templates.find((t) => !t.studentId && !t.classId && t.kind === template.kind);
-    if (existing) {
-      setTemplates((prev) => prev.map((t) => (t.id === existing.id ? { ...t, ...template } : t)));
-    } else {
-      const newTpl: FeeTemplate = {
-        ...template,
-        id: generateUniqueId('tpl'),
-        defaultAmount: template.defaultAmount,
-      };
-      setTemplates((prev) => [...prev, newTpl].sort((a, b) => a.sortOrder - b.sortOrder));
-    }
+  const saveGlobalTemplate = (template: Omit<FeeTemplate, 'id'>, month?: string) => {
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
+    setTemplates((prev) => {
+      const existing = prev.find(
+        (t) =>
+          !t.studentId &&
+          !t.classId &&
+          t.kind === template.kind &&
+          (isAll ? (!t.month || t.month === 'all') : t.month === month)
+      );
+      if (existing) {
+        return prev.map((t) =>
+          t.id === existing.id ? { ...t, ...template, month: targetMonth } : t
+        );
+      } else {
+        const newTpl: FeeTemplate = {
+          ...template,
+          id: generateUniqueId('tpl'),
+          month: targetMonth,
+        };
+        return [...prev, newTpl].sort((a, b) => a.sortOrder - b.sortOrder);
+      }
+    });
   };
 
-  const updateGlobalTemplatesList = (newTemplates: FeeTemplate[]) => {
+  const updateGlobalTemplatesList = (newTemplates: FeeTemplate[], month?: string) => {
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
-      // Keep per-student and per-class overrides, replace global templates
-      const nonGlobalOverrides = prev.filter((t) => !!t.studentId || !!t.classId);
-      return [...newTemplates, ...nonGlobalOverrides];
+      // Keep per-student and per-class overrides, and global templates belonging to the other scope
+      const preserved = prev.filter((t) => {
+        if (t.studentId || t.classId) return true;
+        const tplIsAll = !t.month || t.month === 'all';
+        if (isAll) {
+          // Updating all-months global, so keep specific-month global templates
+          return !tplIsAll;
+        } else {
+          // Updating specific-month global, so keep all-months global and other months' global
+          return tplIsAll || t.month !== month;
+        }
+      });
+      const taggedNewTemplates = newTemplates.map((tpl, idx) => ({
+        ...tpl,
+        month: targetMonth,
+        sortOrder: tpl.sortOrder ?? (idx + 1),
+      }));
+      return [...preserved, ...taggedNewTemplates];
+    });
+  };
+
+  const deleteGlobalTemplates = (month?: string) => {
+    const isAll = !month || month === 'all';
+    setTemplates((prev) => {
+      if (isAll) {
+        // Reset all-months global templates to defaults, keeping specific-month global & overrides
+        const preserved = prev.filter((t) => (t.studentId || t.classId) || (t.month && t.month !== 'all'));
+        return [...INITIAL_GLOBAL_TEMPLATES, ...preserved];
+      } else {
+        // Delete the global override for this specific month
+        return prev.filter((t) => !(!t.studentId && !t.classId && t.month === month));
+      }
     });
   };
 
@@ -1703,29 +2228,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     amount: number,
     month?: string
   ) => {
-    const existing = templates.find(
-      (t) => t.studentId === studentId && t.kind === kind && (!month || !t.month || t.month === month)
-    );
-    if (existing) {
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.id === existing.id
-            ? { ...t, label, defaultAmount: amount, month: month || t.month }
-            : t
-        )
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
+    setTemplates((prev) => {
+      const existing = prev.find(
+        (t) =>
+          t.studentId === studentId &&
+          t.kind === kind &&
+          (isAll ? (!t.month || t.month === 'all') : t.month === month)
       );
-    } else {
-      const newTpl: FeeTemplate = {
-        id: generateUniqueId('tpl-override'),
-        studentId,
-        month,
-        kind,
-        label,
-        defaultAmount: amount,
-        sortOrder: 10,
-      };
-      setTemplates((prev) => [...prev, newTpl]);
-    }
+      if (existing) {
+        return prev.map((t) =>
+          t.id === existing.id
+            ? { ...t, label, defaultAmount: amount, month: targetMonth }
+            : t
+        );
+      } else {
+        const newTpl: FeeTemplate = {
+          id: generateUniqueId('tpl-override'),
+          studentId,
+          month: targetMonth,
+          kind,
+          label,
+          defaultAmount: amount,
+          sortOrder: 10,
+        };
+        return [...prev, newTpl];
+      }
+    });
   };
 
   const saveClassTemplateOverrides = (
@@ -1733,15 +2263,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
-      // Remove any existing overrides for this class for this month (or without month)
-      const filtered = prev.filter(
-        (t) => !(t.classId === classId && !t.studentId && (!t.month || t.month === month))
-      );
+      // Remove existing overrides for this class in this scope
+      const filtered = prev.filter((t) => {
+        if (t.studentId || t.classId !== classId) return true;
+        const tplIsAll = !t.month || t.month === 'all';
+        if (isAll) return !tplIsAll;
+        return t.month !== month;
+      });
       const newOverrides: FeeTemplate[] = items.map((item, idx) => ({
-        id: `tpl-class-override-${classId}-${item.kind}-${month}-${Date.now()}-${idx}`,
+        id: `tpl-class-override-${classId}-${item.kind}-${targetMonth}-${Date.now()}-${idx}`,
         classId,
-        month,
+        month: targetMonth,
         kind: item.kind,
         label: item.label,
         defaultAmount: item.defaultAmount,
@@ -1753,9 +2288,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteClassTemplates = (classId: string, month?: string) => {
     setTemplates((prev) =>
-      prev.filter(
-        (t) => !(t.classId === classId && !t.studentId && (!month || !t.month || t.month === month))
-      )
+      prev.filter((t) => {
+        if (t.studentId || t.classId !== classId) return true;
+        if (!month || month === 'both') return false; // remove all overrides for this class
+        const tplIsAll = !t.month || t.month === 'all';
+        if (month === 'all') return !tplIsAll;
+        return t.month !== month;
+      })
     );
   };
 
@@ -1764,15 +2303,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
-      // Remove any existing overrides for this student for this month (or without month)
-      const filtered = prev.filter(
-        (t) => !(t.studentId === studentId && (!t.month || t.month === month))
-      );
+      // Remove existing overrides for this student in this scope
+      const filtered = prev.filter((t) => {
+        if (t.studentId !== studentId) return true;
+        const tplIsAll = !t.month || t.month === 'all';
+        if (isAll) return !tplIsAll;
+        return t.month !== month;
+      });
       const newOverrides: FeeTemplate[] = items.map((item, idx) => ({
-        id: `tpl-override-${studentId}-${item.kind}-${month}-${Date.now()}-${idx}`,
+        id: `tpl-override-${studentId}-${item.kind}-${targetMonth}-${Date.now()}-${idx}`,
         studentId,
-        month,
+        month: targetMonth,
         kind: item.kind,
         label: item.label,
         defaultAmount: item.defaultAmount,
@@ -1789,20 +2333,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }>,
     month: string
   ) => {
+    const isAll = !month || month === 'all';
+    const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
       const studentIdsSet = new Set(entries.map((e) => e.studentId));
-      // Remove existing overrides for these students for this month (or without month)
-      const filtered = prev.filter(
-        (t) => !(t.studentId && studentIdsSet.has(t.studentId) && (!t.month || t.month === month))
-      );
+      const filtered = prev.filter((t) => {
+        if (!t.studentId || !studentIdsSet.has(t.studentId)) return true;
+        const tplIsAll = !t.month || t.month === 'all';
+        if (isAll) return !tplIsAll;
+        return t.month !== month;
+      });
       const newOverrides: FeeTemplate[] = [];
       const timestamp = Date.now();
       entries.forEach(({ studentId, items }, sIdx) => {
         items.forEach((item, idx) => {
           newOverrides.push({
-            id: `tpl-override-${studentId}-${item.kind}-${month}-${timestamp}-${sIdx}-${idx}`,
+            id: `tpl-override-${studentId}-${item.kind}-${targetMonth}-${timestamp}-${sIdx}-${idx}`,
             studentId,
-            month,
+            month: targetMonth,
             kind: item.kind,
             label: item.label,
             defaultAmount: item.defaultAmount,
@@ -1816,22 +2364,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteStudentTemplates = (studentId: string, month?: string) => {
     setTemplates((prev) =>
-      prev.filter(
-        (t) => !(t.studentId === studentId && (!month || !t.month || t.month === month))
-      )
+      prev.filter((t) => {
+        if (t.studentId !== studentId) return true;
+        if (!month || month === 'both') return false;
+        const tplIsAll = !t.month || t.month === 'all';
+        if (month === 'all') return !tplIsAll;
+        return t.month !== month;
+      })
     );
   };
 
   const resetAllTemplates = (month?: string) => {
     setTemplates((prev) => {
-      if (month) {
-        // Keep student overrides that are specifically for other months
-        const remainingOtherMonthStudentOverrides = prev.filter(
-          (t) => !!t.studentId && t.month && t.month !== month
-        );
-        return [...INITIAL_GLOBAL_TEMPLATES, ...remainingOtherMonthStudentOverrides];
+      if (!month || month === 'all') {
+        return [...INITIAL_GLOBAL_TEMPLATES];
       }
-      return [...INITIAL_GLOBAL_TEMPLATES];
+      return prev.filter((t) => t.month !== month);
     });
   };
 
@@ -1855,18 +2403,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const carriedCount = monthVouchers.filter((v) => v.status === 'Carried').length;
     const reversedCount = vouchers.filter((v) => v.month === month && v.status === 'Reversed').length;
 
-    // A month is closed if there are vouchers generated and NO uncarried unpaid vouchers
-    const isClosed = totalVouchers > 0 && uncarriedUnpaid.length === 0;
+    const isLocked = lockedMonths.includes(month);
+    // A month is closed if explicitly locked OR if there are vouchers generated and NO uncarried unpaid vouchers
+    const isClosed = isLocked || (totalVouchers > 0 && uncarriedUnpaid.length === 0);
 
     return {
       month,
       isClosed,
+      isLocked,
       totalVouchers,
       uncarriedUnpaidCount: uncarriedUnpaid.length,
       paidCount,
       carriedCount,
       reversedCount,
     };
+  };
+
+  const isMonthLocked = (month: string): boolean => {
+    return lockedMonths.includes(month);
+  };
+
+  const lockMonth = (month: string, notes?: string): { success: boolean; error?: string } => {
+    if (!month) return { success: false, error: 'Month parameter is required' };
+    if (!hasPermission('settings.manage') && currentUser.role !== 'Admin' && !hasPermission('fees.generate')) {
+      return { success: false, error: 'Unauthorized: insufficient permissions to lock fee books.' };
+    }
+
+    if (!lockedMonths.includes(month)) {
+      setLockedMonths((prev) => [...prev, month]);
+    }
+
+    logAuditEvent({
+      actionType: 'month_closure',
+      actionTitle: `Fee Books Locked for ${formatMonthName(month)}`,
+      description: notes || `Fee books for ${formatMonthName(month)} (${month}) were reconciled and locked.`,
+      module: 'Settings',
+      month,
+      metadata: {
+        month,
+        lockedAt: new Date().toISOString(),
+        lockedBy: currentUser.username,
+        notes: notes || '',
+      },
+    });
+
+    showToast(`Fee books for ${formatMonthName(month)} (${month}) locked successfully.`, 'success');
+    return { success: true };
+  };
+
+  const unlockMonth = (month: string): { success: boolean; error?: string } => {
+    if (!month) return { success: false, error: 'Month parameter is required' };
+    if (!hasPermission('settings.manage') && currentUser.role !== 'Admin') {
+      return { success: false, error: 'Unauthorized: only Administrators can unlock historical fee books.' };
+    }
+
+    setLockedMonths((prev) => prev.filter((m) => m !== month));
+
+    logAuditEvent({
+      actionType: 'month_closure',
+      actionTitle: `Fee Books Unlocked for ${formatMonthName(month)}`,
+      description: `Administrator unlocked historical fee books for ${formatMonthName(month)} (${month}).`,
+      module: 'Settings',
+      month,
+      metadata: {
+        month,
+        unlockedAt: new Date().toISOString(),
+        unlockedBy: currentUser.username,
+      },
+    });
+
+    showToast(`Fee books for ${formatMonthName(month)} unlocked.`, 'info');
+    return { success: true };
   };
 
   // Preview Voucher Generation
@@ -2274,6 +2881,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else {
       setVouchers((prev) => applyCarryMarks([...prev, ...newVouchers]));
     }
+
+    if (newVouchers.length > 0) {
+      const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
+      logAuditEvent({
+        actionType: 'voucher_generation',
+        actionTitle: 'Monthly Fee Vouchers Generated',
+        description: `Generated ${newVouchers.length} fee vouchers for billing month ${month} (Scope: ${scope}${classObj ? ` • ${classObj.name}` : ''}).`,
+        module: 'Vouchers',
+        targetId: `GEN-${month}`,
+        targetLabel: `${newVouchers.length} Vouchers • ${month}`,
+        month,
+        metadata: {
+          generatedCount: newVouchers.length,
+          month,
+          scope,
+          classId,
+          dueDate,
+          lateFeeRate,
+        },
+      });
+    }
+
     return { success: true, generatedCount: newVouchers.length };
   };
 
@@ -2335,6 +2964,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setVouchers((prev) => prev.map((v) => (v.id === voucherId ? updatedVoucher : v)));
+
+    // Audit Logging: Fine modifications and voucher line item adjustments
+    const student = students.find((s) => s.id === voucher.studentId);
+    const oldFine = voucher.particulars.find((p) => p.kind === 'Fine')?.amount || 0;
+    const newFine = cleanParticulars.find((p) => p.kind === 'Fine')?.amount || 0;
+    const fineDiff = newFine - oldFine;
+
+    if (fineDiff !== 0) {
+      logAuditEvent({
+        actionType: 'fine_modification',
+        actionTitle: fineDiff > 0 ? 'Manual Late Fine Added/Increased' : 'Manual Fine Reduced/Waived',
+        description: `Manual fine adjustment of ${fineDiff > 0 ? '+' : ''}Rs ${fineDiff.toLocaleString()} (from Rs ${oldFine.toLocaleString()} to Rs ${newFine.toLocaleString()}) on voucher ${voucher.voucherNo} for ${student?.name || 'Unknown'}.`,
+        module: 'Vouchers',
+        targetId: voucher.voucherNo,
+        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+        month: voucher.month,
+        amount: Math.abs(fineDiff),
+        previousValue: oldFine,
+        newValue: newFine,
+        metadata: {
+          voucherId: voucher.id,
+          voucherNo: voucher.voucherNo,
+          studentId: voucher.studentId,
+          oldFine,
+          newFine,
+          difference: fineDiff,
+          netDue,
+        },
+      });
+    } else {
+      logAuditEvent({
+        actionType: 'voucher_edit',
+        actionTitle: 'Voucher Particulars Updated',
+        description: `Fee particulars revised for voucher ${voucher.voucherNo} (${cleanParticulars.length} items, Net Due: Rs ${netDue.toLocaleString()}) for ${student?.name || 'Unknown'}.`,
+        module: 'Vouchers',
+        targetId: voucher.voucherNo,
+        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+        month: voucher.month,
+        amount: netDue,
+        metadata: {
+          voucherId: voucher.id,
+          voucherNo: voucher.voucherNo,
+          studentId: voucher.studentId,
+          itemsCount: cleanParticulars.length,
+          netDue,
+        },
+      });
+    }
 
     return { success: true, voucher: updatedVoucher };
   };
@@ -2449,6 +3126,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : v
       )
     );
+
+    // Audit Logging: Fine adjustment at payment collection and collection receipt event
+    const student = students.find((s) => s.id === voucher.studentId);
+    if (fineDiff !== 0) {
+      logAuditEvent({
+        actionType: 'fine_modification',
+        actionTitle: fineDiff > 0 ? 'Late Fine Added at Collection' : 'Fine Waived/Reduced at Collection',
+        description: `Fine adjusted by ${fineDiff > 0 ? '+' : ''}Rs ${fineDiff.toLocaleString()} (from Rs ${originalFine.toLocaleString()} to Rs ${newFine.toLocaleString()}) during payment collection for voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}).`,
+        module: 'Collections',
+        targetId: voucher.voucherNo,
+        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+        month: voucher.month,
+        amount: Math.abs(fineDiff),
+        previousValue: originalFine,
+        newValue: newFine,
+        metadata: {
+          voucherId,
+          voucherNo: voucher.voucherNo,
+          studentId: voucher.studentId,
+          fineDiff,
+          paymentAmount: amount,
+          txnNo,
+        },
+      });
+    }
+
+    logAuditEvent({
+      actionType: 'collection_payment',
+      actionTitle: 'Fee Payment Received',
+      description: `Collected fee payment of Rs ${amount.toLocaleString()} via ${paymentMode} for student ${student?.name || 'Unknown'} (Voucher ${voucher.voucherNo}, Txn #${txnNo}).`,
+      module: 'Collections',
+      targetId: txnNo,
+      targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+      month: voucher.month,
+      amount,
+      metadata: {
+        collectionId,
+        collectionNo,
+        txnNo,
+        voucherNo: voucher.voucherNo,
+        studentId: voucher.studentId,
+        paymentMode,
+        referenceNo,
+        amountPaid: amount,
+      },
+    });
 
     return { success: true, transaction: newTxn };
   };
@@ -2679,6 +3402,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         })
       );
+
+      // Audit Logging: Bulk CSV Collection
+      logAuditEvent({
+        actionType: 'bulk_collection',
+        actionTitle: 'Bulk CSV Fee Collection Batch Imported',
+        description: `Imported bulk fee payments for ${successCount} vouchers totaling Rs ${batchTotal.toLocaleString()} for billing month ${month}.`,
+        module: 'Collections',
+        targetId: collectionNo,
+        targetLabel: `${successCount} payments • Rs ${batchTotal.toLocaleString()}`,
+        month,
+        amount: batchTotal,
+        metadata: {
+          collectionId,
+          collectionNo,
+          successCount,
+          totalAmount: batchTotal,
+          month,
+          importedTxnNos: newTxns.map((t) => t.txnNo),
+        },
+      });
+
+      // Audit Logging: Record fine additions if any were in CSV
+      const fineTxns = newTxns.filter((t) => t.fineAdded && t.fineAdded > 0);
+      if (fineTxns.length > 0) {
+        const totalFineAdded = fineTxns.reduce((s, t) => s + (t.fineAdded || 0), 0);
+        logAuditEvent({
+          actionType: 'fine_modification',
+          actionTitle: 'Bulk Collection Late Fines Applied',
+          description: `Applied Rs ${totalFineAdded.toLocaleString()} in manual/custom late fines across ${fineTxns.length} records during CSV bulk collection import.`,
+          module: 'Collections',
+          targetId: collectionNo,
+          targetLabel: `${fineTxns.length} fine modifications`,
+          month,
+          amount: totalFineAdded,
+          metadata: {
+            collectionNo,
+            fineRecordsCount: fineTxns.length,
+            totalFineAmount: totalFineAdded,
+          },
+        });
+      }
     }
 
     return { success: successCount > 0, successCount, errors };
@@ -2877,6 +3641,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
 
+    // Audit Logging: Carry forward operation
+    const student = students.find((s) => s.id === voucher.studentId);
+    logAuditEvent({
+      actionType: 'carry_forward',
+      actionTitle: 'Defaulter Voucher Carried Forward',
+      description: `Carried forward outstanding arrears of Rs ${outstandingBalance.toLocaleString()} on voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}) from ${voucher.month} to ${targetMonth}${fineAmountToApply > 0 ? ` with Rs ${fineAmountToApply.toLocaleString()} late fine` : ''}.`,
+      module: 'Defaulters',
+      targetId: voucher.voucherNo,
+      targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+      month: voucher.month,
+      amount: outstandingBalance,
+      newValue: `Carried to ${targetMonth}`,
+      metadata: {
+        voucherId: voucher.id,
+        voucherNo: voucher.voucherNo,
+        studentId: voucher.studentId,
+        fromMonth: voucher.month,
+        targetMonth,
+        outstandingBalance,
+        fineApplied: fineAmountToApply,
+      },
+    });
+
+    if (fineAmountToApply > 0) {
+      logAuditEvent({
+        actionType: 'fine_modification',
+        actionTitle: 'Late Carry Fine Imposed',
+        description: `Imposed Rs ${fineAmountToApply.toLocaleString()} late payment fine during carry-forward of voucher ${voucher.voucherNo} into ${targetMonth}.`,
+        module: 'Defaulters',
+        targetId: voucher.voucherNo,
+        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+        month: targetMonth,
+        amount: fineAmountToApply,
+        newValue: fineAmountToApply,
+        metadata: {
+          voucherId: voucher.id,
+          targetMonth,
+          fineAmount: fineAmountToApply,
+        },
+      });
+    }
+
     return { success: true };
   };
 
@@ -2886,14 +3692,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ) => {
+  ): { success: boolean; successCount: number; errors: string[] } => {
     let successCount = 0;
+    const errors: string[] = [];
     voucherIds.forEach((vId) => {
       const fineToUse = perVoucherFines?.[vId] ?? customFineAmount;
       const res = carryForwardDefaulter(vId, targetMonth, addLateFine, fineToUse);
-      if (res.success) successCount++;
+      if (res.success) {
+        successCount++;
+      } else if (res.error) {
+        errors.push(res.error);
+      }
     });
-    return { successCount };
+    return {
+      success: successCount > 0,
+      successCount,
+      errors,
+    };
   };
 
   const undoCarryForwardVoucher = (
@@ -2944,6 +3759,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
+
+    const student = students.find((s) => s.id === voucher.studentId);
+    logAuditEvent({
+      actionType: 'carry_forward',
+      actionTitle: 'Carry Forward Operation Reverted',
+      description: `Reverted carry-forward status for voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}). Restored to active status in month ${voucher.month}.`,
+      module: 'Defaulters',
+      targetId: voucher.voucherNo,
+      targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
+      month: voucher.month,
+      previousValue: `Carried to ${voucher.carryForwardMonth || 'next month'}`,
+      newValue: 'Active (Restored)',
+      metadata: {
+        voucherId: voucher.id,
+        voucherNo: voucher.voucherNo,
+        studentId: voucher.studentId,
+        month: voucher.month,
+      },
+    });
 
     return { success: true };
   };
@@ -3180,6 +4014,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return remaining;
     });
 
+    const student = students.find((s) => s.id === target.studentId);
+    logAuditEvent({
+      actionType: 'voucher_deletion',
+      actionTitle: 'Fee Voucher Deleted',
+      description: `Permanently deleted voucher ${target.voucherNo} for ${student?.name || 'Unknown'} (Billing Month: ${target.month}, Net Due: Rs ${target.netDue.toLocaleString()}). Resolution mode: ${effectiveMode}.`,
+      module: 'Vouchers',
+      targetId: target.voucherNo,
+      targetLabel: student ? `${student.name} (${student.regNo})` : target.voucherNo,
+      month: target.month,
+      amount: target.netDue,
+      metadata: {
+        voucherId: target.id,
+        voucherNo: target.voucherNo,
+        studentId: target.studentId,
+        month: target.month,
+        netDue: target.netDue,
+        resolutionMode: effectiveMode,
+        cascadeCount: idsToDelete.length,
+      },
+    });
+
     return { success: true, deletedCount: idsToDelete.length };
   };
 
@@ -3274,11 +4129,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return remaining;
     });
 
+    logAuditEvent({
+      actionType: 'voucher_deletion',
+      actionTitle: 'Bulk Fee Vouchers Deleted',
+      description: `Bulk deleted ${idsToDelete.length} fee vouchers (Requested: ${ids.length}, Mode: ${effectiveMode}).`,
+      module: 'Vouchers',
+      targetId: `BULK-DEL-${Date.now()}`,
+      targetLabel: `${idsToDelete.length} vouchers removed`,
+      metadata: {
+        deletedIds: idsToDelete,
+        requestedIdsCount: ids.length,
+        resolutionMode: effectiveMode,
+      },
+    });
+
     return { success: true, deletedCount: idsToDelete.length };
   };
 
   // Collections Ledger Delete
   const deleteCollection = (id: string) => {
+    const colToDelete = collections.find((c) => c.id === id);
     const colTxns = transactions.filter((t) => t.collectionId === id);
     if (colTxns.length === 0) {
       setCollections((prev) => prev.filter((c) => c.id !== id));
@@ -3374,6 +4244,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return updatedVouchers;
     });
+
+    // Audit Logging: Collection deletion and reversals
+    const totalReverted = colToDelete?.totalAmount || colTxns.reduce((s, t) => s + t.amount, 0);
+    const totalFinesReverted = Array.from(fineReversals.values()).reduce((a, b) => a + b, 0);
+
+    logAuditEvent({
+      actionType: 'collection_reversal',
+      actionTitle: 'Fee Collection Record Deleted & Reversed',
+      description: `Reversed collection ${colToDelete?.collectionNo || id} totaling Rs ${totalReverted.toLocaleString()} (${colTxns.length} transactions deducted from student vouchers).`,
+      module: 'Collections',
+      targetId: colToDelete?.collectionNo || id,
+      targetLabel: `${colTxns.length} txns • Rs ${totalReverted.toLocaleString()}`,
+      amount: totalReverted,
+      metadata: {
+        collectionId: id,
+        collectionNo: colToDelete?.collectionNo,
+        reversedAmount: totalReverted,
+        transactionCount: colTxns.length,
+        affectedVoucherIds: Array.from(deductions.keys()),
+        finesReverted: totalFinesReverted,
+      },
+    });
+
+    if (totalFinesReverted > 0) {
+      logAuditEvent({
+        actionType: 'fine_modification',
+        actionTitle: 'Collection Late Fines Reverted',
+        description: `Reverted Rs ${totalFinesReverted.toLocaleString()} in late fines across ${fineReversals.size} vouchers upon deleting collection ${colToDelete?.collectionNo || id}.`,
+        module: 'Collections',
+        targetId: colToDelete?.collectionNo || id,
+        targetLabel: `${fineReversals.size} voucher fine reversals`,
+        amount: totalFinesReverted,
+        metadata: {
+          collectionId: id,
+          collectionNo: colToDelete?.collectionNo,
+          finesReverted: totalFinesReverted,
+        },
+      });
+    }
   };
 
   // Settings
@@ -3423,6 +4332,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions(INITIAL_TRANSACTIONS);
     setInstitute(INITIAL_INSTITUTE);
     setBankAccounts(INITIAL_BANK_ACCOUNTS);
+    setAuditLogs(INITIAL_AUDIT_LOGS);
+    setStudentAccountHistory(INITIAL_STUDENT_ACCOUNT_HISTORY);
+    setLockedMonths([]);
     setActiveMonth(getCurrentMonthString());
   };
 
@@ -3436,6 +4348,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recordsClearedCount += students.length;
       setStudents([]);
       localStorage.setItem(`${STORAGE_KEY}_students`, JSON.stringify([]));
+      setStudentAccountHistory([]);
+      localStorage.setItem(`${STORAGE_KEY}_student_account_history`, JSON.stringify([]));
       // Remove student members from families
       setFamilies((prev) => prev.map((f) => ({ ...f, memberStudentIds: [] })));
       // Clear transport assignments for students
@@ -3450,7 +4364,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.vouchers) {
       recordsClearedCount += vouchers.length;
       setVouchers([]);
+      setLockedMonths([]);
       localStorage.setItem(`${STORAGE_KEY}_vouchers`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_locked_months`, JSON.stringify([]));
       clearedTables.push(`Fee Vouchers (${vouchers.length} records)`);
     }
 
@@ -3552,6 +4468,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       clearedTables.push(`Secondary Users (${secondaryUsers.length} users removed, current session preserved)`);
     }
 
+    logAuditEvent({
+      actionType: 'system_cleanup',
+      actionTitle: 'Granular Database Cleanup Executed',
+      description: `Performed database cleanup across ${clearedTables.length} tables (${recordsClearedCount} total entities removed). Tables purged: ${clearedTables.join(', ')}.`,
+      module: 'System',
+      targetId: 'DB-CLEANUP',
+      targetLabel: `${clearedTables.length} tables purged`,
+      metadata: {
+        tablesPurged: clearedTables,
+        recordsCount: recordsClearedCount,
+      },
+    });
+
     return {
       success: true,
       clearedTables,
@@ -3634,6 +4563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         templates,
         saveGlobalTemplate,
         updateGlobalTemplatesList,
+        deleteGlobalTemplates,
         saveClassTemplateOverrides,
         deleteClassTemplates,
         saveStudentTemplateOverride,
@@ -3679,6 +4609,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         defaultDueDay,
         setDefaultDueDateSettings,
         getComputedDefaultDueDate,
+        voucherCopyOrder,
+        setVoucherCopyOrder,
+        voucherDefaultCopies,
+        setVoucherDefaultCopies,
         institute,
         updateInstitute,
         bankAccounts,
@@ -3687,8 +4621,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteBankAccount,
         setDefaultBankAccount,
         getMonthClosureStatus,
+        lockedMonths,
+        lockMonth,
+        unlockMonth,
+        isMonthLocked,
         resetToDemoData,
         cleanupDatabaseTables,
+        auditLogs,
+        logAuditEvent,
+        clearAuditLogs,
+        studentAccountHistory,
+        addStudentAccountHistory,
+        getStudentAccountHistory,
+        updateStudentStatus,
         showToast,
       }}
     >

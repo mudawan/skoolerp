@@ -1376,26 +1376,26 @@ export const CollectionsView: React.FC = () => {
         </div>
       )}
 
-      {/* Direct Payment / Single Collection Modal */}
+      {/* Direct Quick Payment / Collection Modal */}
       {showDirectModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[92vh] flex flex-col">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[96vh] sm:max-h-[92vh] flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200">
-                  <Coins className="w-4.5 h-4.5" />
+              <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+                <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">
+                  <Coins className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm sm:text-base font-bold text-slate-900">Record Fee Collection</h3>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">Record Fee Collection</h3>
                     {selectedVoucher && (
                       <>
-                        <span className="font-mono font-bold text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                        <span className="font-mono font-bold text-[11px] sm:text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
                           {selectedVoucher.voucherNo}
                         </span>
                         <span
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                          className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                             selectedVoucher.status === 'Paid'
                               ? 'bg-emerald-100 text-emerald-800'
                               : selectedVoucher.status === 'Partial'
@@ -1408,7 +1408,7 @@ export const CollectionsView: React.FC = () => {
                       </>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden xs:block">
                     Collect full, remaining, or partial fee payments directly
                   </p>
                 </div>
@@ -1416,7 +1416,7 @@ export const CollectionsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowDirectModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
                 aria-label="Close modal"
               >
                 <X className="w-5 h-5" />
@@ -1427,13 +1427,13 @@ export const CollectionsView: React.FC = () => {
             {!selectedVoucher || isChangingVoucher ? (
               <div
                 ref={voucherPickerContainerRef}
-                className="bg-slate-50/95 rounded-xl p-3 border border-slate-200 space-y-2 shrink-0 relative"
+                className="bg-slate-50/95 rounded-xl p-2.5 sm:p-3 border border-slate-200 space-y-2 shrink-0 relative"
               >
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-[11px] text-slate-700 flex items-center gap-1.5">
                     <Search className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Search & Select Fee Voucher *</span>
-                    <span className="text-[10px] font-normal text-slate-400">
+                    <span className="text-[10px] font-normal text-slate-400 hidden sm:inline">
                       ({searchedVouchers.length} latest student vouchers)
                     </span>
                   </label>
@@ -1618,7 +1618,7 @@ export const CollectionsView: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="bg-slate-50/90 rounded-xl px-3 py-2 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shrink-0">
+              <div className="bg-slate-50/90 rounded-xl p-2.5 sm:px-3 sm:py-2 border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shrink-0">
                 {/* Student Info */}
                 <div className="flex items-center gap-2.5 min-w-0">
                   <StudentAvatar
@@ -1626,7 +1626,7 @@ export const CollectionsView: React.FC = () => {
                     name={selectedStudent?.name || 'Student'}
                     size="sm"
                   />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate">
                         {selectedStudent?.name || 'Unknown Student'}
@@ -1640,15 +1640,15 @@ export const CollectionsView: React.FC = () => {
                             voucherInputRef.current?.focus();
                           }, 50);
                         }}
-                        className="text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 px-1.5 py-0.5 rounded cursor-pointer transition flex items-center gap-1"
+                        className="text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 px-1.5 py-0.5 rounded cursor-pointer transition flex items-center gap-1 shrink-0"
                         title="Choose a different voucher"
                       >
                         <Search className="w-2.5 h-2.5" />
                         Change Voucher
                       </button>
                     </div>
-                    <p className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
-                      <span>{selectedVoucher.voucherNo}</span>
+                    <p className="text-[10px] sm:text-[11px] text-slate-500 font-mono flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                      <span className="font-semibold">{selectedVoucher.voucherNo}</span>
                       {selectedStudent?.regNo && (
                         <>
                           <span>&bull;</span>
@@ -1668,31 +1668,29 @@ export const CollectionsView: React.FC = () => {
                 </div>
 
                 {/* 3 Metric Pills */}
-                <div className="flex items-center gap-1.5 shrink-0 self-stretch sm:self-auto justify-between sm:justify-end">
-                  <div className="grid grid-cols-3 gap-1.5 font-mono text-center">
-                    <div className="bg-white px-2 py-0.5 rounded-md border border-slate-200 min-w-[70px]">
-                      <div className="text-[9px] text-slate-500 font-sans font-medium">Original Due</div>
-                      <div className="font-bold text-slate-800 text-[11px] sm:text-xs">
-                        {formatCurrency(selectedVoucher.netDue)}
-                      </div>
+                <div className="grid grid-cols-3 gap-1 sm:gap-1.5 font-mono text-center shrink-0">
+                  <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
+                    <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Original Due</div>
+                    <div className="font-bold text-slate-800 text-[10px] sm:text-xs truncate">
+                      {formatCurrency(selectedVoucher.netDue)}
                     </div>
-                    <div className="bg-white px-2 py-0.5 rounded-md border border-slate-200 min-w-[70px]">
-                      <div className="text-[9px] text-slate-500 font-sans font-medium">Already Paid</div>
-                      <div className="font-bold text-emerald-700 text-[11px] sm:text-xs">
-                        {formatCurrency(selectedVoucher.amountPaid)}
-                      </div>
+                  </div>
+                  <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
+                    <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Already Paid</div>
+                    <div className="font-bold text-emerald-700 text-[10px] sm:text-xs truncate">
+                      {formatCurrency(selectedVoucher.amountPaid)}
                     </div>
-                    <div className="bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 min-w-[76px]">
-                      <div className="text-[9px] text-emerald-800 font-sans font-bold">
-                        {selectedVoucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Remaining'}
-                      </div>
-                      <div className="font-black text-emerald-800 text-[11px] sm:text-xs">
-                        {selectedVoucher.amountPaid >= dynamicNetDue
-                          ? selectedVoucher.amountPaid > dynamicNetDue
-                            ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Adv`
-                            : 'Settled'
-                          : formatCurrency(dynamicRemaining)}
-                      </div>
+                  </div>
+                  <div className="bg-emerald-50 px-1.5 sm:px-2 py-1 rounded-md border border-emerald-200 min-w-0">
+                    <div className="text-[8px] sm:text-[9px] text-emerald-800 font-sans font-bold">
+                      {selectedVoucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Remaining'}
+                    </div>
+                    <div className="font-black text-emerald-800 text-[10px] sm:text-xs truncate">
+                      {selectedVoucher.amountPaid >= dynamicNetDue
+                        ? selectedVoucher.amountPaid > dynamicNetDue
+                          ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Adv`
+                          : 'Settled'
+                        : formatCurrency(dynamicRemaining)}
                     </div>
                   </div>
                 </div>
@@ -1700,9 +1698,9 @@ export const CollectionsView: React.FC = () => {
             )}
 
             {/* Main Content Grid: Left & Right Panes */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch overflow-y-auto flex-1 min-h-0 pr-0.5">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5 items-stretch overflow-y-auto flex-1 min-h-0 pr-0.5">
               {/* Left Pane: Particulars Editor */}
-              <div className="lg:col-span-6 flex flex-col h-full min-h-0">
+              <div className="lg:col-span-6 flex flex-col min-h-[220px] lg:h-full lg:min-h-0">
                 {selectedVoucher ? (
                   <VoucherParticularsEditor
                     compact={true}
@@ -1737,7 +1735,7 @@ export const CollectionsView: React.FC = () => {
                     studentId={selectedVoucher.studentId}
                   />
                 ) : (
-                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-6 text-center flex flex-col items-center justify-center h-full min-h-[260px] text-slate-400">
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-6 text-center flex flex-col items-center justify-center h-full min-h-[220px] text-slate-400">
                     <div className="p-2.5 bg-white text-slate-400 rounded-full mb-2 border border-slate-200 shadow-2xs">
                       <Receipt className="w-4 h-4 text-teal-600" />
                     </div>
@@ -1752,13 +1750,27 @@ export const CollectionsView: React.FC = () => {
               </div>
 
               {/* Right Pane: Collection Form */}
-              <div className="lg:col-span-6 flex flex-col h-full min-h-0">
-                <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200 flex flex-col justify-between h-full space-y-2.5">
-                  <form onSubmit={handleSaveDirectPayment} className="flex flex-col justify-between h-full space-y-2.5 text-xs">
-                    <div className="space-y-2.5">
+              <div className="lg:col-span-6 flex flex-col min-h-[260px] lg:h-full lg:min-h-0 w-full">
+                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs flex flex-col w-full h-full">
+                  {/* Header Bar */}
+                  <div className="bg-slate-50 border-b border-slate-200 px-2.5 py-1.5 sm:px-3 sm:py-2 flex items-center justify-between shrink-0">
+                    <div className="flex items-center gap-2">
+                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="font-bold text-xs text-slate-800">Collection & Payment Details</span>
+                    </div>
+                    {selectedVoucher && (
+                      <span className="text-[10px] font-medium text-slate-500 font-mono">
+                        {formatMonthName(selectedVoucher.month)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Form Content */}
+                  <form onSubmit={handleSaveDirectPayment} className="flex flex-col justify-between flex-1 min-h-0 text-xs">
+                    <div className="p-3 sm:p-3.5 overflow-y-auto flex-1 space-y-2.5 bg-slate-50/40">
                       {/* Amount Section */}
                       <div>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                           <label className="block font-bold text-slate-700 text-[11px]">
                             Collection Amount (Rs.) *
                           </label>
@@ -1766,7 +1778,7 @@ export const CollectionsView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setDirectAmount(dynamicRemaining)}
-                              className="text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
+                              className="text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
                             >
                               Auto-fill Remaining ({formatCurrency(dynamicRemaining)})
                             </button>
@@ -1774,7 +1786,7 @@ export const CollectionsView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setDirectAmount(dynamicNetDue)}
-                              className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
+                              className="text-[10px] sm:text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
                             >
                               Fill Voucher Fee ({formatCurrency(dynamicNetDue)})
                             </button>
@@ -1803,12 +1815,12 @@ export const CollectionsView: React.FC = () => {
 
                         {/* Quick suggestion chips */}
                         {selectedVoucher && (
-                          <div className="flex flex-wrap gap-1 mt-1">
+                          <div className="flex flex-wrap gap-1 mt-1.5">
                             {dynamicRemaining > 0 ? (
                               <button
                                 type="button"
                                 onClick={() => setDirectAmount(dynamicRemaining)}
-                                className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
+                                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
                               >
                                 Full Balance: {formatCurrency(dynamicRemaining)}
                               </button>
@@ -1816,7 +1828,7 @@ export const CollectionsView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setDirectAmount(dynamicNetDue)}
-                                className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded text-[10px] font-bold transition cursor-pointer"
+                                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
                               >
                                 Fill Fee: {formatCurrency(dynamicNetDue)}
                               </button>
@@ -1824,7 +1836,7 @@ export const CollectionsView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setDirectAmount(dynamicNetDue)}
-                              className="px-2 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded text-[10px] font-semibold transition cursor-pointer"
+                              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-semibold transition cursor-pointer"
                             >
                               Net Due: {formatCurrency(dynamicNetDue)}
                             </button>
@@ -1843,8 +1855,8 @@ export const CollectionsView: React.FC = () => {
                           )}
                       </div>
 
-                      {/* Payment Mode & Date - Exactly 38px matching heights */}
-                      <div className="grid grid-cols-2 gap-2">
+                      {/* Payment Mode & Date */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="block font-bold text-slate-700 mb-1 text-[11px]">
                             Payment Mode *
@@ -1853,7 +1865,7 @@ export const CollectionsView: React.FC = () => {
                             value={directMode}
                             disabled={!selectedVoucher}
                             onChange={(e) => setDirectMode(e.target.value as any)}
-                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
+                            className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
                           >
                             <option value="Cash">Cash Desk</option>
                             <option value="BankTransfer">Bank Transfer / Online</option>
@@ -1879,8 +1891,8 @@ export const CollectionsView: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Compacted Bank Ref & Notes - 2 columns */}
-                      <div className="grid grid-cols-2 gap-2">
+                      {/* Compacted Bank Ref & Notes */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="block font-bold text-slate-700 mb-1 text-[11px]">
                             Bank Ref / Slip #
@@ -1891,7 +1903,7 @@ export const CollectionsView: React.FC = () => {
                             placeholder="e.g. PK-MZB-981120"
                             value={directRef}
                             onChange={(e) => setDirectRef(e.target.value)}
-                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
+                            className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
                           />
                         </div>
 
@@ -1905,25 +1917,25 @@ export const CollectionsView: React.FC = () => {
                             placeholder="Optional receipt notes"
                             value={directNotes}
                             onChange={(e) => setDirectNotes(e.target.value)}
-                            className="w-full h-[38px] px-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
+                            className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"
                           />
                         </div>
                       </div>
                     </div>
 
                     {/* Modal Footer Controls */}
-                    <div className="flex items-center justify-end gap-2 pt-2.5 border-t border-slate-200 mt-auto">
+                    <div className="bg-slate-50 border-t border-slate-200 p-2.5 sm:px-3 sm:py-2.5 flex items-center justify-end gap-2 shrink-0">
                       <button
                         type="button"
                         onClick={() => setShowDirectModal(false)}
-                        className="px-3.5 py-1.5 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer text-xs font-semibold transition"
+                        className="px-3.5 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer text-xs font-semibold transition"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
                         disabled={!selectedVoucher || Number(directAmount) <= 0}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                       >
                         <Receipt className="w-3.5 h-3.5" />
                         <span>Record Collection ({directAmount ? formatCurrency(Number(directAmount)) : 'Rs. 0'})</span>

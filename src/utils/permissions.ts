@@ -278,12 +278,30 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
     riskLevel: 'high',
   },
 
-  // 9. Financial Reports
+  // 9. Financial Reports & Audit
   {
     id: 'fees.report',
     code: 'fees.report',
     name: 'View & Export Financial Reports',
     description: 'Generate Class Matrices, Defaulters summaries, and detailed Student Fee Ledgers.',
+    category: 'reports',
+    categoryLabel: 'Financial Reports',
+    riskLevel: 'low',
+  },
+  {
+    id: 'audit.view',
+    code: 'audit.view',
+    name: 'View Operator Audit Trail',
+    description: 'Inspect comprehensive operator activity logs, fine adjustments, and bulk collection audits.',
+    category: 'reports',
+    categoryLabel: 'Financial Reports',
+    riskLevel: 'low',
+  },
+  {
+    id: 'audit.export',
+    code: 'audit.export',
+    name: 'Export & Print Audit Trail',
+    description: 'Download CSV audit logs and generate certified PDF audit activity transcripts.',
     category: 'reports',
     categoryLabel: 'Financial Reports',
     riskLevel: 'low',
@@ -355,6 +373,8 @@ export const ROLE_PRESET_PERMISSIONS: Record<UserRole, string[]> = {
     'transport.view',
     'transport.manage',
     'fees.report',
+    'audit.view',
+    'audit.export',
     'settings.view',
   ],
   Viewer: [
@@ -366,6 +386,8 @@ export const ROLE_PRESET_PERMISSIONS: Record<UserRole, string[]> = {
     'defaulters.view',
     'transport.view',
     'fees.report',
+    'audit.view',
+    'audit.export',
     'settings.view',
   ],
   Custom: [],
@@ -509,6 +531,10 @@ export function isPermissionAllowed(
   }
 
   if (permission === 'users.manage' && userPerms.includes('settings.manage')) {
+    return true;
+  }
+
+  if ((permission === 'audit.view' || permission === 'audit.export') && (userPerms.includes('fees.report') || userPerms.includes('settings.view'))) {
     return true;
   }
 

@@ -10,6 +10,7 @@ import {
   Student,
   User,
   UserRole,
+  VoucherCopyType,
   VoucherDeletionResolution,
 } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
@@ -22,9 +23,13 @@ import { ProfilePanel } from './settings/ProfilePanel';
 import { PoliciesPanel } from './settings/PoliciesPanel';
 import { BankAccountsPanel } from './settings/BankAccountsPanel';
 import { UsersPanel } from './settings/UsersPanel';
+import { MonthEndWizardPanel } from './settings/MonthEndWizardPanel';
+import { MonthPicker } from './MonthPicker';
 import {
   ALL_PERMISSIONS,
   ROLE_PRESET_PERMISSIONS,
+  SPECIALTY_PRESETS,
+  getEffectiveRole,
 } from '../utils/permissions';
 import {
   AlertCircle,
@@ -32,6 +37,7 @@ import {
   BookOpen,
   Building2,
   Calendar,
+  CalendarCheck,
   Check,
   CheckCircle,
   ChevronDown,
@@ -59,7 +65,17 @@ import {
   X,
 } from 'lucide-react';
 
-export const SettingsView: React.FC = () => {
+export interface SettingsViewProps {
+  initialSubTab?: 'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd';
+  targetMonth?: string;
+  onNavigateToTab?: (tab: 'dashboard' | 'vouchers' | 'collections' | 'defaulters') => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  initialSubTab = 'profile',
+  targetMonth,
+  onNavigateToTab,
+}) => {
   const {
     institute,
     updateInstitute,
@@ -69,6 +85,7 @@ export const SettingsView: React.FC = () => {
     deleteBankAccount,
     templates,
     updateGlobalTemplatesList,
+    deleteGlobalTemplates,
     saveClassTemplateOverrides,
     deleteClassTemplates,
     saveStudentTemplateOverrides,
@@ -91,6 +108,10 @@ export const SettingsView: React.FC = () => {
     defaultDueDateEnabled,
     defaultDueDay,
     setDefaultDueDateSettings,
+    voucherCopyOrder,
+    setVoucherCopyOrder,
+    voucherDefaultCopies,
+    setVoucherDefaultCopies,
     users,
     addUser,
     updateUser,
@@ -105,8 +126,14 @@ export const SettingsView: React.FC = () => {
     showToast,
   } = useApp();
 
-  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup'>('profile');
-  const [policyCategoryTab, setPolicyCategoryTab] = useState<'prior' | 'skipped' | 'deletion'>('prior');
+  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd'>(initialSubTab);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+  const [policyCategoryTab, setPolicyCategoryTab] = useState<'copies' | 'prior' | 'skipped' | 'deletion'>('copies');
   const [selectedPriorRule, setSelectedPriorRule] = useState<PriorMonthVoucherRule>(priorMonthRule);
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
   const [selectedDeletionResolution, setSelectedDeletionResolution] = useState<VoucherDeletionResolution>(voucherDeletionResolution);
@@ -115,6 +142,8 @@ export const SettingsView: React.FC = () => {
   const [selectedRoundingEnabled, setSelectedRoundingEnabled] = useState<boolean>(roundingEnabled);
   const [selectedDefaultDueDateEnabled, setSelectedDefaultDueDateEnabled] = useState<boolean>(defaultDueDateEnabled);
   const [selectedDefaultDueDay, setSelectedDefaultDueDay] = useState<number>(defaultDueDay);
+  const [selectedVoucherCopyOrder, setSelectedVoucherCopyOrder] = useState<VoucherCopyType[]>(voucherCopyOrder);
+  const [selectedVoucherDefaultCopies, setSelectedVoucherDefaultCopies] = useState<VoucherCopyType[]>(voucherDefaultCopies);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -153,6 +182,14 @@ export const SettingsView: React.FC = () => {
     setSelectedDefaultDueDay(defaultDueDay);
   }, [defaultDueDay]);
 
+  useEffect(() => {
+    setSelectedVoucherCopyOrder(voucherCopyOrder);
+  }, [voucherCopyOrder]);
+
+  useEffect(() => {
+    setSelectedVoucherDefaultCopies(voucherDefaultCopies);
+  }, [voucherDefaultCopies]);
+
   // Check if default due date policy has unsaved modifications
   const isDefaultDueDateModified =
     selectedDefaultDueDateEnabled !== defaultDueDateEnabled ||
@@ -166,7 +203,9 @@ export const SettingsView: React.FC = () => {
     selectedLateFeeRate !== defaultLateFeeRate ||
     selectedRoundingMultiple !== roundingMultiple ||
     selectedRoundingEnabled !== roundingEnabled ||
-    isDefaultDueDateModified;
+    isDefaultDueDateModified ||
+    JSON.stringify(selectedVoucherCopyOrder) !== JSON.stringify(voucherCopyOrder) ||
+    JSON.stringify(selectedVoucherDefaultCopies) !== JSON.stringify(voucherDefaultCopies);
 
   const handleSavePolicyClick = () => {
     if (!hasPolicyChanges) {
@@ -187,8 +226,10 @@ export const SettingsView: React.FC = () => {
       enabled: selectedDefaultDueDateEnabled,
       day: selectedDefaultDueDay,
     });
+    setVoucherCopyOrder(selectedVoucherCopyOrder);
+    setVoucherDefaultCopies(selectedVoucherDefaultCopies);
     setShowPolicyConfirmModal(false);
-    setToastMessage('Fee Voucher Policies updated and activated successfully!');
+    setToastMessage('Fee Voucher Policies & Print Layout updated and activated successfully!');
     showToast('Fee Voucher Policies updated successfully!', 'success');
   };
 
@@ -201,6 +242,8 @@ export const SettingsView: React.FC = () => {
     setSelectedRoundingEnabled(roundingEnabled);
     setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
     setSelectedDefaultDueDay(defaultDueDay);
+    setSelectedVoucherCopyOrder(voucherCopyOrder);
+    setSelectedVoucherDefaultCopies(voucherDefaultCopies);
     showToast('Policy selections reset to current saved configuration.', 'info');
   };
 
@@ -380,11 +423,25 @@ export const SettingsView: React.FC = () => {
     },
   ];
 
+  // Fee Template Month Mode: 'all' (Recurring across all months) vs 'specific' (single month override)
+  const [templateMonthMode, setTemplateMonthMode] = useState<'all' | 'specific'>('all');
+  const [templateSpecificMonth, setTemplateSpecificMonth] = useState<string>(activeMonth);
+  const effectiveTemplateMonth = templateMonthMode === 'all' ? 'all' : templateSpecificMonth;
+
   // Helper to initialize local roster values from global templates state
-  const initializeRosterState = () => {
-    const globalTpls = templates.filter((t) => !t.studentId && !t.classId);
+  const initializeRosterState = (targetMonth: string = effectiveTemplateMonth) => {
+    const isAll = targetMonth === 'all';
+    const monthGlobalTpls = !isAll
+      ? templates.filter((t) => !t.studentId && !t.classId && t.month === targetMonth)
+      : [];
+    const hasMonthOverride = monthGlobalTpls.length > 0;
+    const allMonthsGlobalTpls = templates.filter(
+      (t) => !t.studentId && !t.classId && (!t.month || t.month === 'all')
+    );
+    const sourceTpls = hasMonthOverride ? monthGlobalTpls : allMonthsGlobalTpls;
+
     const items = STANDARD_ROSTER.map((item) => {
-      const match = globalTpls.find((t) => t.kind === item.kind);
+      const match = sourceTpls.find((t) => t.kind === item.kind);
       let label = match?.label || item.defaultLabel;
       // Sanitize corrupted labels like FFFFFF2 or empty strings or legacy Transport names
       if (!label || label.toUpperCase().includes('FFFFFF') || label.trim() === '') {
@@ -403,22 +460,37 @@ export const SettingsView: React.FC = () => {
     return items.sort((a, b) => a.sortOrder - b.sortOrder);
   };
 
-  const [rosterState, setRosterState] = useState(initializeRosterState);
+  const [rosterState, setRosterState] = useState(() => initializeRosterState('all'));
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   // Sync roster state only when the GLOBAL template slice changes; class and
   // student override saves must never clobber unsaved global edits.
   const globalTemplatesKey = useMemo(
-    () => JSON.stringify(templates.filter((t) => !t.studentId && !t.classId)),
-    [templates]
+    () =>
+      JSON.stringify(
+        templates.filter(
+          (t) =>
+            !t.studentId &&
+            !t.classId &&
+            (effectiveTemplateMonth === 'all'
+              ? !t.month || t.month === 'all'
+              : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
+        )
+      ),
+    [templates, effectiveTemplateMonth]
   );
   const [globalBaselineKey, setGlobalBaselineKey] = useState('[]');
   React.useEffect(() => {
-    const fresh = initializeRosterState();
+    const fresh = initializeRosterState(effectiveTemplateMonth);
     setRosterState(fresh);
     setGlobalBaselineKey(draftKeyOf(fresh));
-  }, [globalTemplatesKey]);
+  }, [globalTemplatesKey, effectiveTemplateMonth]);
+
+  const hasGlobalMonthOverride = useMemo(() => {
+    if (effectiveTemplateMonth === 'all') return false;
+    return templates.some((t) => !t.studentId && !t.classId && t.month === effectiveTemplateMonth);
+  }, [templates, effectiveTemplateMonth]);
 
   const handleRosterLabelChange = (kind: ParticularKind, label: string) => {
     setRosterState((prev) =>
@@ -451,15 +523,29 @@ export const SettingsView: React.FC = () => {
 
   const saveGlobalRoster = () => {
     const updatedGlobalTemplates: FeeTemplate[] = rosterState.map((r, idx) => ({
-      id: `tpl-${r.kind.toLowerCase()}-${idx + 1}`,
+      id: `tpl-${r.kind.toLowerCase()}-${effectiveTemplateMonth}-${idx + 1}`,
       kind: r.kind,
       label: r.label.trim() || STANDARD_ROSTER.find((sr) => sr.kind === r.kind)?.defaultLabel || r.kind,
       defaultAmount: allowNegativeAmount(r.kind) ? Number(r.defaultAmount) || 0 : Math.max(0, Number(r.defaultAmount) || 0),
       sortOrder: idx + 1,
+      month: effectiveTemplateMonth,
     }));
 
-    updateGlobalTemplatesList(updatedGlobalTemplates);
-    setToastMessage('Fee Particulars roster order & labels saved successfully! All vouchers and PDF exports will follow this order.');
+    updateGlobalTemplatesList(updatedGlobalTemplates, effectiveTemplateMonth);
+    if (effectiveTemplateMonth === 'all') {
+      setToastMessage('Global fee particulars roster order & rates saved for All Months! All vouchers and PDF exports will follow this baseline.');
+    } else {
+      setToastMessage(`Global fee particulars override saved for ${formatMonthName(effectiveTemplateMonth)}! Vouchers generated for this month will use this global override.`);
+    }
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleClearGlobalMonthOverride = () => {
+    if (effectiveTemplateMonth === 'all') return;
+    deleteGlobalTemplates(effectiveTemplateMonth);
+    setToastMessage(
+      `Global month override cleared for ${formatMonthName(effectiveTemplateMonth)}. Reverted to All-Months Global defaults.`
+    );
     setTimeout(() => setToastMessage(null), 3500);
   };
 
@@ -551,31 +637,44 @@ export const SettingsView: React.FC = () => {
     () =>
       JSON.stringify(
         templates.filter(
-          (t) => !t.studentId && t.classId === selectedClassId && (!t.month || t.month === activeMonth)
+          (t) =>
+            !t.studentId &&
+            t.classId === selectedClassId &&
+            (effectiveTemplateMonth === 'all'
+              ? !t.month || t.month === 'all'
+              : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
         )
       ),
-    [templates, selectedClassId, activeMonth]
+    [templates, selectedClassId, effectiveTemplateMonth]
   );
   const studentTemplatesKey = useMemo(
     () =>
       JSON.stringify([
-        templates.filter((t) => t.studentId === selectedStudentId && (!t.month || t.month === activeMonth)),
+        templates.filter(
+          (t) =>
+            t.studentId === selectedStudentId &&
+            (effectiveTemplateMonth === 'all'
+              ? !t.month || t.month === 'all'
+              : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
+        ),
         selectedStudent
           ? templates.filter(
               (t) =>
                 !t.studentId &&
                 t.classId === selectedStudent.classId &&
-                (!t.month || t.month === activeMonth)
+                (effectiveTemplateMonth === 'all'
+                  ? !t.month || t.month === 'all'
+                  : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
             )
           : [],
       ]),
-    [templates, selectedStudentId, selectedStudent, activeMonth]
+    [templates, selectedStudentId, selectedStudent, effectiveTemplateMonth]
   );
   const [classBaselineKey, setClassBaselineKey] = useState('[]');
   const [studentBaselineKey, setStudentBaselineKey] = useState('[]');
   const [rebuildNonce, setRebuildNonce] = useState(0);
 
-  // Sync class roster state when selected class, templates, rosterState, or activeMonth changes
+  // Sync class roster state when selected class, templates, rosterState, or effectiveTemplateMonth changes
   useEffect(() => {
     if (!selectedClass) {
       setClassRosterState([]);
@@ -583,12 +682,18 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    const existingClassOverrides = templates.filter(
-      (t) => !t.studentId && t.classId === selectedClass.id && (!t.month || t.month === activeMonth)
+    const isAll = effectiveTemplateMonth === 'all';
+    const specificClassOverrides = !isAll
+      ? templates.filter((t) => !t.studentId && t.classId === selectedClass.id && t.month === effectiveTemplateMonth)
+      : [];
+    const hasSpecificClassOverride = specificClassOverrides.length > 0;
+    const allMonthsClassOverrides = templates.filter(
+      (t) => !t.studentId && t.classId === selectedClass.id && (!t.month || t.month === 'all')
     );
+    const classOverridesToUse = hasSpecificClassOverride ? specificClassOverrides : allMonthsClassOverrides;
 
     const items = rosterState.map((r) => {
-      const override = existingClassOverrides.find((o) => o.kind === r.kind);
+      const override = classOverridesToUse.find((o) => o.kind === r.kind);
       const isOverridden = !!override;
       let defaultAmount = 0;
 
@@ -610,9 +715,9 @@ export const SettingsView: React.FC = () => {
 
     setClassRosterState(items);
     setClassBaselineKey(draftKeyOf(items));
-  }, [selectedClassId, selectedClass, classTemplatesKey, rosterState, activeMonth, rebuildNonce]);
+  }, [selectedClassId, selectedClass, classTemplatesKey, rosterState, effectiveTemplateMonth, rebuildNonce]);
 
-  // Sync student roster state when selected student, templates, rosterState, or activeMonth changes
+  // Sync student roster state when selected student, templates, rosterState, or effectiveTemplateMonth changes
   useEffect(() => {
     if (!selectedStudent) {
       setStudentRosterState([]);
@@ -620,17 +725,32 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    const existingStudentOverrides = templates.filter(
-      (t) => t.studentId === selectedStudent.id && (!t.month || t.month === activeMonth)
+    const isAll = effectiveTemplateMonth === 'all';
+    const specificStudentOverrides = !isAll
+      ? templates.filter((t) => t.studentId === selectedStudent.id && t.month === effectiveTemplateMonth)
+      : [];
+    const hasSpecificStudentOverride = specificStudentOverrides.length > 0;
+    const allMonthsStudentOverrides = templates.filter(
+      (t) => t.studentId === selectedStudent.id && (!t.month || t.month === 'all')
     );
-    const existingClassOverrides = templates.filter(
-      (t) => !t.studentId && t.classId === selectedStudent.classId && (!t.month || t.month === activeMonth)
+    const studentOverridesToUse = hasSpecificStudentOverride ? specificStudentOverrides : allMonthsStudentOverrides;
+
+    const specificClassOverrides = !isAll
+      ? templates.filter(
+          (t) => !t.studentId && t.classId === selectedStudent.classId && t.month === effectiveTemplateMonth
+        )
+      : [];
+    const hasSpecificClassOverride = specificClassOverrides.length > 0;
+    const allMonthsClassOverrides = templates.filter(
+      (t) => !t.studentId && t.classId === selectedStudent.classId && (!t.month || t.month === 'all')
     );
+    const classOverridesToUse = hasSpecificClassOverride ? specificClassOverrides : allMonthsClassOverrides;
+
     const sClass = classes.find((c) => c.id === selectedStudent.classId);
 
     const items = rosterState.map((r) => {
-      const studentOverride = existingStudentOverrides.find((o) => o.kind === r.kind);
-      const classOverride = existingClassOverrides.find((o) => o.kind === r.kind);
+      const studentOverride = studentOverridesToUse.find((o) => o.kind === r.kind);
+      const classOverride = classOverridesToUse.find((o) => o.kind === r.kind);
       const isOverridden = !!studentOverride;
       let defaultAmount = 0;
 
@@ -656,7 +776,7 @@ export const SettingsView: React.FC = () => {
 
     setStudentRosterState(items);
     setStudentBaselineKey(draftKeyOf(items));
-  }, [selectedStudentId, studentTemplatesKey, rosterState, activeMonth, classes, selectedStudent, rebuildNonce]);
+  }, [selectedStudentId, studentTemplatesKey, rosterState, effectiveTemplateMonth, classes, selectedStudent, rebuildNonce]);
 
   const handleStudentRosterLabelChange = (kind: ParticularKind, label: string) => {
     setStudentRosterState((prev) =>
@@ -694,15 +814,24 @@ export const SettingsView: React.FC = () => {
       return {
         kind: item.kind,
         label: item.label.trim() || globalItem?.label || item.kind,
-        defaultAmount: allowNegativeAmount(item.kind) ? Number(item.defaultAmount) || 0 : Math.max(0, Number(item.defaultAmount) || 0),
+        defaultAmount: allowNegativeAmount(item.kind)
+          ? Number(item.defaultAmount) || 0
+          : Math.max(0, Number(item.defaultAmount) || 0),
         sortOrder: globalItem?.sortOrder || idx + 1,
       };
     });
 
-    saveClassTemplateOverrides(selectedClassId, activeMonth, itemsToSave);
-    setToastMessage(
-      `Class-level fee template for ${selectedClass.name} saved for ${formatMonthName(activeMonth)}! This overrides global template for all students in ${selectedClass.name}.`
-    );
+    saveClassTemplateOverrides(selectedClassId, effectiveTemplateMonth, itemsToSave);
+    if (effectiveTemplateMonth === 'all') {
+      setToastMessage(
+        `Class-level fee template for ${selectedClass.name} saved for All Months! This permanently overrides global defaults for all students in ${selectedClass.name}.`
+      );
+    } else {
+      setToastMessage(
+        `Class-level fee template for ${selectedClass.name} saved for ${formatMonthName(effectiveTemplateMonth)}! Overrides global defaults for this billing month.`
+      );
+    }
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleSaveClassOverrides = (e: React.FormEvent) => {
@@ -710,12 +839,19 @@ export const SettingsView: React.FC = () => {
     saveClassRoster();
   };
 
-  const handleClearClassOverrides = (classIdToClear: string) => {
+  const handleClearClassOverrides = (classIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
     const classObj = classes.find((c) => c.id === classIdToClear);
-    deleteClassTemplates(classIdToClear, activeMonth);
-    setToastMessage(
-      `Class-level template overrides cleared for ${classObj?.name || 'Class'}. Reverted to Global Default template for ${formatMonthName(activeMonth)}.`
-    );
+    deleteClassTemplates(classIdToClear, monthToClear);
+    if (monthToClear === 'all') {
+      setToastMessage(
+        `All-months class template overrides cleared for ${classObj?.name || 'Class'}. Reverted to Global Default templates.`
+      );
+    } else {
+      setToastMessage(
+        `Class-level template overrides cleared for ${classObj?.name || 'Class'} for ${formatMonthName(monthToClear)}.`
+      );
+    }
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const saveStudentRoster = () => {
@@ -726,15 +862,24 @@ export const SettingsView: React.FC = () => {
       return {
         kind: item.kind,
         label: item.label.trim() || globalItem?.label || item.kind,
-        defaultAmount: allowNegativeAmount(item.kind) ? Number(item.defaultAmount) || 0 : Math.max(0, Number(item.defaultAmount) || 0),
+        defaultAmount: allowNegativeAmount(item.kind)
+          ? Number(item.defaultAmount) || 0
+          : Math.max(0, Number(item.defaultAmount) || 0),
         sortOrder: globalItem?.sortOrder || idx + 1,
       };
     });
 
-    saveStudentTemplateOverrides(selectedStudentId, activeMonth, itemsToSave);
-    setToastMessage(
-      `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for ${formatMonthName(activeMonth)}! All vouchers & PDF printouts for this month will reflect these individual overrides.`
-    );
+    saveStudentTemplateOverrides(selectedStudentId, effectiveTemplateMonth, itemsToSave);
+    if (effectiveTemplateMonth === 'all') {
+      setToastMessage(
+        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for All Months! Recurring across all billing months.`
+      );
+    } else {
+      setToastMessage(
+        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for ${formatMonthName(effectiveTemplateMonth)}! All vouchers & PDF printouts for this month will reflect these individual overrides.`
+      );
+    }
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleSaveStudentOverrides = (e: React.FormEvent) => {
@@ -742,12 +887,19 @@ export const SettingsView: React.FC = () => {
     saveStudentRoster();
   };
 
-  const handleClearStudentOverrides = (studentIdToClear: string) => {
+  const handleClearStudentOverrides = (studentIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
     const studentObj = students.find((s) => s.id === studentIdToClear);
-    deleteStudentTemplates(studentIdToClear, activeMonth);
-    setToastMessage(
-      `Custom individual overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee template for ${formatMonthName(activeMonth)}.`
-    );
+    deleteStudentTemplates(studentIdToClear, monthToClear);
+    if (monthToClear === 'all') {
+      setToastMessage(
+        `All-months custom overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee templates.`
+      );
+    } else {
+      setToastMessage(
+        `Custom individual overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''} for ${formatMonthName(monthToClear)}.`
+      );
+    }
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   // ---- Unsaved-edit guard: tier switches & month changes must never silently
@@ -772,7 +924,7 @@ export const SettingsView: React.FC = () => {
 
   const discardDirtyDrafts = () => {
     if (templateScopeMode === 'global') {
-      const fresh = initializeRosterState();
+      const fresh = initializeRosterState(effectiveTemplateMonth);
       setRosterState(fresh);
       setGlobalBaselineKey(draftKeyOf(fresh));
     } else {
@@ -878,100 +1030,131 @@ export const SettingsView: React.FC = () => {
       .slice(0, 30);
   }, [students, classes, studentSearchQuery]);
 
-  // List of all classes with active custom overrides for activeMonth (Flex 1-4 and Fine)
+  // Overrides list scope filter: 'all' (all overrides in system) | 'active' (active/effective month + all-months) | 'all_months' (recurring only)
+  const [overridesFilter, setOverridesFilter] = useState<'all' | 'active' | 'all_months'>('all');
+
+  // List of all classes with active custom overrides (Flex 1-4 and Fine)
   const activeClassOverridesList = useMemo(() => {
-    const classIds = Array.from(
-      new Set(
-        templates
-          .filter((t) => !t.studentId && !!t.classId && (!t.month || t.month === activeMonth))
-          .map((t) => t.classId!)
-      )
+    const classOverrides = templates.filter(
+      (t) => !t.studentId && !!t.classId && ['Flex1', 'Flex2', 'Flex3', 'Flex4', 'Fine'].includes(t.kind)
     );
-    return classIds
-      .map((cId) => {
-        const cls = classes.find((c) => c.id === cId);
-        const cOverrides = templates.filter(
-          (t) =>
-            !t.studentId &&
-            t.classId === cId &&
-            (!t.month || t.month === activeMonth) &&
-            ['Flex1', 'Flex2', 'Flex3', 'Flex4', 'Fine'].includes(t.kind)
-        );
+
+    const map = new Map<
+      string,
+      { classId: string; month: string; isAllMonths: boolean; overrides: FeeTemplate[] }
+    >();
+
+    for (const t of classOverrides) {
+      const m = !t.month || t.month === 'all' ? 'all' : t.month;
+      if (overridesFilter === 'all_months' && m !== 'all') continue;
+      if (overridesFilter === 'active' && m !== activeMonth && m !== 'all') continue;
+
+      const key = `${t.classId}:::${m}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          classId: t.classId!,
+          month: m,
+          isAllMonths: m === 'all',
+          overrides: [],
+        });
+      }
+      map.get(key)!.overrides.push(t);
+    }
+
+    return Array.from(map.values())
+      .map((item) => {
+        const cls = classes.find((c) => c.id === item.classId);
         return {
+          ...item,
           classObj: cls,
-          classId: cId,
           className: cls?.name || 'Unknown Class',
-          overrides: cOverrides,
+          uniqueKey: `${item.classId}:::${item.month}`,
         };
       })
       .filter((item) => !!item.classObj && item.overrides.length > 0);
-  }, [templates, activeMonth, classes]);
+  }, [templates, classes, overridesFilter, activeMonth]);
 
-  // List of all students with active custom overrides for activeMonth (Flex 1-4 and Fine)
+  // List of all students with active custom overrides (Flex 1-4 and Fine)
   const activeStudentOverridesList = useMemo(() => {
-    const studentIds = Array.from(
-      new Set(
-        templates
-          .filter((t) => !!t.studentId && (!t.month || t.month === activeMonth))
-          .map((t) => t.studentId!)
-      )
+    const studentOverrides = templates.filter(
+      (t) => !!t.studentId && ['Flex1', 'Flex2', 'Flex3', 'Flex4', 'Fine'].includes(t.kind)
     );
-    return studentIds
-      .map((sId) => {
-        const std = students.find((s) => s.id === sId);
-        const sOverrides = templates.filter(
-          (t) =>
-            t.studentId === sId &&
-            (!t.month || t.month === activeMonth) &&
-            ['Flex1', 'Flex2', 'Flex3', 'Flex4', 'Fine'].includes(t.kind)
-        );
+
+    const map = new Map<
+      string,
+      { studentId: string; month: string; isAllMonths: boolean; overrides: FeeTemplate[] }
+    >();
+
+    for (const t of studentOverrides) {
+      const m = !t.month || t.month === 'all' ? 'all' : t.month;
+      if (overridesFilter === 'all_months' && m !== 'all') continue;
+      if (overridesFilter === 'active' && m !== activeMonth && m !== 'all') continue;
+
+      const key = `${t.studentId}:::${m}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          studentId: t.studentId!,
+          month: m,
+          isAllMonths: m === 'all',
+          overrides: [],
+        });
+      }
+      map.get(key)!.overrides.push(t);
+    }
+
+    return Array.from(map.values())
+      .map((item) => {
+        const std = students.find((s) => s.id === item.studentId);
         const sClass = std ? classes.find((c) => c.id === std.classId) : null;
         return {
+          ...item,
           student: std,
-          studentId: sId,
           className: sClass?.name || 'Unassigned',
-          overrides: sOverrides,
+          uniqueKey: `${item.studentId}:::${item.month}`,
         };
       })
       .filter((item) => !!item.student && item.overrides.length > 0);
-  }, [templates, activeMonth, students, classes]);
+  }, [templates, students, classes, overridesFilter, activeMonth]);
 
-  // Bulk selection state for active student overrides list
-  const [selectedOverrideIds, setSelectedOverrideIds] = useState<string[]>([]);
+  // Bulk selection state for active student overrides list (keyed by uniqueKey: studentId:::month)
+  const [selectedOverrideKeys, setSelectedOverrideKeys] = useState<string[]>([]);
 
-  // Clear bulk selection when activeMonth changes
+  // Clear bulk selection when activeMonth or filter changes
   useEffect(() => {
-    setSelectedOverrideIds([]);
-  }, [activeMonth]);
+    setSelectedOverrideKeys([]);
+  }, [activeMonth, overridesFilter]);
 
   const handleToggleSelectAllOverrides = () => {
     if (
-      selectedOverrideIds.length === activeStudentOverridesList.length &&
+      selectedOverrideKeys.length === activeStudentOverridesList.length &&
       activeStudentOverridesList.length > 0
     ) {
-      setSelectedOverrideIds([]);
+      setSelectedOverrideKeys([]);
     } else {
-      setSelectedOverrideIds(activeStudentOverridesList.map((item) => item.studentId));
+      setSelectedOverrideKeys(activeStudentOverridesList.map((item) => item.uniqueKey));
     }
   };
 
-  const handleToggleSelectOverride = (studentId: string) => {
-    setSelectedOverrideIds((prev) =>
-      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId]
+  const handleToggleSelectOverride = (uniqueKey: string) => {
+    setSelectedOverrideKeys((prev) =>
+      prev.includes(uniqueKey) ? prev.filter((k) => k !== uniqueKey) : [...prev, uniqueKey]
     );
   };
 
   const handleBulkDeleteOverrides = () => {
-    if (selectedOverrideIds.length === 0) return;
-    selectedOverrideIds.forEach((sId) => {
-      deleteStudentTemplates(sId, activeMonth);
+    if (selectedOverrideKeys.length === 0) return;
+    selectedOverrideKeys.forEach((key) => {
+      const [sId, m] = key.split(':::');
+      if (sId) {
+        deleteStudentTemplates(sId, m || 'all');
+      }
     });
     setToastMessage(
-      `Custom fee template overrides deleted for ${selectedOverrideIds.length} student${
-        selectedOverrideIds.length === 1 ? '' : 's'
-      } for ${formatMonthName(activeMonth)}.`
+      `Custom fee template overrides deleted for ${selectedOverrideKeys.length} student override${
+        selectedOverrideKeys.length === 1 ? '' : 's'
+      }.`
     );
-    setSelectedOverrideIds([]);
+    setSelectedOverrideKeys([]);
   };
 
   // CSV Bulk Upload for Fee Templates Overrides
@@ -1279,9 +1462,13 @@ export const SettingsView: React.FC = () => {
     const sampleList = activeStudents.length > 0 ? activeStudents : students;
 
     const sampleRows = sampleList.map((s) => {
-      const sTemplates = templates.filter(
-        (t) => t.studentId === s.id && (!t.month || t.month === activeMonth)
-      );
+      const sTemplates = templates.filter((t) => {
+        if (t.studentId !== s.id) return false;
+        if (effectiveTemplateMonth === 'all') {
+          return !t.month || t.month === 'all';
+        }
+        return t.month === effectiveTemplateMonth;
+      });
       const fineTpl = sTemplates.find((t) => t.kind === 'Fine');
       const f1Tpl = sTemplates.find((t) => t.kind === 'Flex1');
       const f2Tpl = sTemplates.find((t) => t.kind === 'Flex2');
@@ -1307,7 +1494,7 @@ export const SettingsView: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `fee_template_overrides_${activeMonth}.csv`);
+    link.setAttribute('download', `fee_template_overrides_${effectiveTemplateMonth}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1334,12 +1521,14 @@ export const SettingsView: React.FC = () => {
     const entriesToSave = validRows.map((row) => {
       const student = row.student!;
       // Preserve any existing non-flex non-fine overrides (e.g. tuition)
-      const existingOtherOverrides = templates.filter(
-        (t) =>
-          t.studentId === student.id &&
-          (!t.month || t.month === activeMonth) &&
-          !['Fine', 'Flex1', 'Flex2', 'Flex3', 'Flex4'].includes(t.kind)
-      );
+      const existingOtherOverrides = templates.filter((t) => {
+        if (t.studentId !== student.id) return false;
+        const matchMonth =
+          effectiveTemplateMonth === 'all'
+            ? !t.month || t.month === 'all'
+            : t.month === effectiveTemplateMonth;
+        return matchMonth && !['Fine', 'Flex1', 'Flex2', 'Flex3', 'Flex4'].includes(t.kind);
+      });
 
       const items: Array<{
         kind: ParticularKind;
@@ -1406,12 +1595,12 @@ export const SettingsView: React.FC = () => {
       };
     });
 
-    bulkSaveMultipleStudentTemplateOverrides(entriesToSave, activeMonth);
+    bulkSaveMultipleStudentTemplateOverrides(entriesToSave, effectiveTemplateMonth);
 
     setToastMessage(
       `Successfully imported custom fee template overrides for ${validRows.length} student${
         validRows.length === 1 ? '' : 's'
-      } for ${formatMonthName(activeMonth)}!`
+      } for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}!`
     );
 
     setShowCsvModal(false);
@@ -1478,15 +1667,46 @@ export const SettingsView: React.FC = () => {
     permissions: [...ROLE_PRESET_PERMISSIONS.Accountant],
   });
 
-  const [permissionsUser, setPermissionsUser] = useState<User | null>(null);
+  const [permissionsUser, setPermissionsUser] = useState<
+    User | { id: string; name: string; username: string; role: UserRole; permissions: string[]; email?: string } | null
+  >(null);
+  const [permissionsModalTarget, setPermissionsModalTarget] = useState<'direct_user' | 'form_user'>('direct_user');
   const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
 
   const handleOpenPermissionsModal = (user: User) => {
     setPermissionsUser(user);
+    setPermissionsModalTarget('direct_user');
+    setShowPermissionsModal(true);
+  };
+
+  const handleOpenFormPermissionsModal = () => {
+    const tempUser = {
+      id: editingUser?.id || 'temp-form-user',
+      username: userFormData.username.trim() || (editingUser ? editingUser.username : 'new_operator'),
+      name: userFormData.name.trim() || (editingUser ? editingUser.name : 'New Operator'),
+      role: userFormData.role,
+      email: userFormData.email,
+      permissions: [...userFormData.permissions],
+    };
+    setPermissionsUser(tempUser);
+    setPermissionsModalTarget('form_user');
     setShowPermissionsModal(true);
   };
 
   const handleSavePermissions = async (userId: string, permissions: string[], role: UserRole) => {
+    if (permissionsModalTarget === 'form_user') {
+      const calculatedRole = getEffectiveRole(permissions);
+      setUserFormData((prev) => ({
+        ...prev,
+        role: calculatedRole,
+        permissions: [...permissions],
+      }));
+      setShowPermissionsModal(false);
+      setPermissionsUser(null);
+      showToast(`Configured ${permissions.length} granular permission${permissions.length === 1 ? '' : 's'} for operator.`, 'info');
+      return;
+    }
+
     const res = await updateUserPermissions(userId, permissions, role);
     if (!res.success) {
       showToast(res.error || 'Failed to update user permissions.', 'error');
@@ -1713,6 +1933,18 @@ export const SettingsView: React.FC = () => {
             <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
             <span>Fee Templates</span>
           </button>
+          <button
+            id="settings-tab-month-end"
+            onClick={() => setActiveSubTab('monthEnd')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              activeSubTab === 'monthEnd'
+                ? 'bg-white text-indigo-900 shadow-2xs ring-1 ring-indigo-200'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <CalendarCheck className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Month End Wizard</span>
+          </button>
           {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
             <button
               id="settings-tab-users"
@@ -1792,6 +2024,10 @@ export const SettingsView: React.FC = () => {
           setSelectedSkippedRule={setSelectedSkippedRule}
           selectedDeletionResolution={selectedDeletionResolution}
           setSelectedDeletionResolution={setSelectedDeletionResolution}
+          selectedVoucherCopyOrder={selectedVoucherCopyOrder}
+          setSelectedVoucherCopyOrder={setSelectedVoucherCopyOrder}
+          selectedVoucherDefaultCopies={selectedVoucherDefaultCopies}
+          setSelectedVoucherDefaultCopies={setSelectedVoucherDefaultCopies}
           hasPolicyChanges={hasPolicyChanges}
           handleResetPolicyDrafts={handleResetPolicyDrafts}
           handleSavePolicyClick={handleSavePolicyClick}
@@ -1816,14 +2052,14 @@ export const SettingsView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
                   <h3 className="font-bold text-slate-900 text-sm">
-                    3-Tier Fee Template Hierarchy
+                    Fee Template Hierarchy & Schedule
                   </h3>
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
-                    Billing Month: {formatMonthName(activeMonth)}
+                    Target: {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Lookup precedence: <strong className="text-teal-700">1. Student Individual Override</strong> &gt; <strong className="text-indigo-700">2. Class-Level Override</strong> &gt; <strong className="text-slate-700">3. Global Default</strong>.
+                  6-Tier Lookup: <strong className="text-teal-700">1. Student (Month)</strong> &gt; <strong className="text-teal-600">2. Student (All)</strong> &gt; <strong className="text-indigo-700">3. Class (Month)</strong> &gt; <strong className="text-indigo-600">4. Class (All)</strong> &gt; <strong className="text-slate-700">5. Global (Month)</strong> &gt; <strong className="text-slate-600">6. Global (All)</strong>.
                 </p>
               </div>
 
@@ -1912,6 +2148,119 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
 
+            {/* Schedule / Application Period Selector */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-slate-50/80 border border-slate-200/80 rounded-xl">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
+                <div className="text-xs">
+                  <span className="font-bold text-slate-800">Application Schedule:</span>{' '}
+                  <span className="text-slate-600">
+                    {templateMonthMode === 'all'
+                      ? 'Applies recurringly to All Months across vouchers unless overridden'
+                      : `Applies as a dedicated override exclusively to ${formatMonthName(templateSpecificMonth)}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="inline-flex p-1 bg-white border border-slate-200 rounded-xl shadow-2xs">
+                  <button
+                    type="button"
+                    id="btn-template-mode-all"
+                    onClick={() => {
+                      if (templateMonthMode !== 'all') {
+                        requestTransition({
+                          kind: 'month',
+                          label: 'All Months (Recurring)',
+                          apply: () => setTemplateMonthMode('all'),
+                        });
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      templateMonthMode === 'all'
+                        ? 'bg-teal-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    All Months (Recurring)
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-template-mode-specific"
+                    onClick={() => {
+                      if (templateMonthMode !== 'specific') {
+                        requestTransition({
+                          kind: 'month',
+                          label: formatMonthName(templateSpecificMonth),
+                          apply: () => setTemplateMonthMode('specific'),
+                        });
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      templateMonthMode === 'specific'
+                        ? 'bg-teal-600 text-white shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    Specific Month Override
+                  </button>
+                </div>
+
+                {templateMonthMode === 'specific' && (
+                  <div className="relative">
+                    <input
+                      type="month"
+                      id="input-template-specific-month"
+                      value={templateSpecificMonth}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        requestTransition({
+                          kind: 'month',
+                          label: formatMonthName(val),
+                          apply: () => setTemplateSpecificMonth(val),
+                        });
+                      }}
+                      className="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 shadow-2xs cursor-pointer"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Global Override Status Banner */}
+            {templateScopeMode === 'global' && effectiveTemplateMonth !== 'all' && (
+              hasGlobalMonthOverride ? (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-teal-50 border border-teal-200 rounded-xl text-xs text-teal-900">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-teal-600 shrink-0" />
+                    <span>
+                      <strong>Custom Global Override for {formatMonthName(effectiveTemplateMonth)}:</strong> This month has customized global fee particulars that override the All-Months baseline.
+                    </span>
+                  </div>
+                  {hasPermission('settings.manage') && (
+                    <button
+                      type="button"
+                      id="btn-revert-global-override"
+                      onClick={handleClearGlobalMonthOverride}
+                      className="px-2.5 py-1 text-xs font-bold text-rose-700 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg transition shrink-0 cursor-pointer"
+                    >
+                      Revert to All-Months Baseline
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600">
+                  <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>
+                    Currently inheriting the <strong>All Months (Recurring)</strong> global template. Saving changes here will create a dedicated global override for <strong>{formatMonthName(effectiveTemplateMonth)}</strong> without altering other months.
+                  </span>
+                </div>
+              )
+            )}
+
             {/* Scope Specific Selector & Quick Tools Bar */}
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-1">
               <div className="flex-1 min-w-0">
@@ -1921,7 +2270,7 @@ export const SettingsView: React.FC = () => {
                       Student Individual Fee Template • {selectedStudent.name}
                     </h4>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Configure custom fee particulars and rates for {selectedStudent.name} ({selectedStudent.regNo} - {selectedStudentClass?.name || 'Class'}) in {formatMonthName(activeMonth)}. Overrides both Class and Global templates.
+                      Configure custom fee particulars and rates for {selectedStudent.name} ({selectedStudent.regNo} - {selectedStudentClass?.name || 'Class'}) for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. Overrides both Class and Global templates.
                     </p>
                   </div>
                 ) : selectedClass ? (
@@ -1931,7 +2280,7 @@ export const SettingsView: React.FC = () => {
                       Class Fee Template Override • {selectedClass.name}
                     </h4>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Configure default fee particulars for all students enrolled in <strong>{selectedClass.name}</strong> for {formatMonthName(activeMonth)}. Overrides Global defaults for this class unless a student has an individual override.
+                      Configure default fee particulars for all students enrolled in <strong>{selectedClass.name}</strong> for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. Overrides Global defaults for this class unless a student has an individual override.
                     </p>
                   </div>
                 ) : (
@@ -1940,7 +2289,7 @@ export const SettingsView: React.FC = () => {
                       Global Fee Particulars & Base Line Items
                     </h4>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Standardized fee roster applied to all students across vouchers and exports whenever class or student overrides are not specified. Drag ⠿ to reorder.
+                      Standardized fee roster applied to all students across vouchers and exports whenever class or student overrides are not specified ({effectiveTemplateMonth === 'all' ? 'Recurring Baseline' : `Override for ${formatMonthName(effectiveTemplateMonth)}`}). Drag ⠿ to reorder.
                     </p>
                   </div>
                 )}
@@ -2469,11 +2818,11 @@ export const SettingsView: React.FC = () => {
                       <button
                         type="button"
                         id="btn-revert-student-overrides"
-                        onClick={() => handleClearStudentOverrides(selectedStudent.id)}
+                        onClick={() => handleClearStudentOverrides(selectedStudent.id, effectiveTemplateMonth)}
                         className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" />
-                        Revert to Class / Global Template
+                        Revert ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
                       </button>
 
                       <button
@@ -2482,7 +2831,7 @@ export const SettingsView: React.FC = () => {
                         className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
                       >
                         <Save className="w-4 h-4" />
-                        Save Overrides for {selectedStudent.name} ({selectedStudent.regNo})
+                        Save Overrides for {selectedStudent.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
                       </button>
                     </>
                   ) : selectedClass ? (
@@ -2490,11 +2839,11 @@ export const SettingsView: React.FC = () => {
                       <button
                         type="button"
                         id="btn-revert-class-overrides"
-                        onClick={() => handleClearClassOverrides(selectedClass.id)}
+                        onClick={() => handleClearClassOverrides(selectedClass.id, effectiveTemplateMonth)}
                         className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
                       >
                         <RefreshCw className="w-3.5 h-3.5" />
-                        Revert Class to Global Template
+                        Revert Class ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
                       </button>
 
                       <button
@@ -2503,13 +2852,15 @@ export const SettingsView: React.FC = () => {
                         className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
                       >
                         <Save className="w-4 h-4" />
-                        Save Overrides for Class {selectedClass.name}
+                        Save Overrides for Class {selectedClass.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
                       </button>
                     </>
                   ) : (
                     <>
                       <span className="text-xs text-slate-500">
-                        Changes here update the standard global template for all students across classes.
+                        {effectiveTemplateMonth === 'all'
+                          ? 'Changes here update the recurring global baseline applied to all months.'
+                          : `Changes here create a dedicated global override exclusively for ${formatMonthName(effectiveTemplateMonth)}.`}
                       </span>
                       <button
                         type="submit"
@@ -2517,7 +2868,7 @@ export const SettingsView: React.FC = () => {
                         className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
                       >
                         <Save className="w-4 h-4" />
-                        Save Global Fee Particulars Configuration
+                        Save Global Fee Particulars ({effectiveTemplateMonth === 'all' ? 'All Months Baseline' : formatMonthName(effectiveTemplateMonth)})
                       </button>
                     </>
                   )}
@@ -2526,20 +2877,72 @@ export const SettingsView: React.FC = () => {
             </div>
           </form>
 
+          {/* Overrides Management Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-slate-800">Overrides List View:</span>{' '}
+                <span className="text-xs text-slate-500">
+                  Filter class and student custom overrides by application period
+                </span>
+              </div>
+            </div>
+
+            <div className="inline-flex p-1 bg-slate-100 rounded-xl gap-1 shrink-0 self-start sm:self-auto border border-slate-200/70">
+              <button
+                type="button"
+                id="btn-filter-overrides-all"
+                onClick={() => setOverridesFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  overridesFilter === 'all'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Overrides
+              </button>
+              <button
+                type="button"
+                id="btn-filter-overrides-all-months"
+                onClick={() => setOverridesFilter('all_months')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  overridesFilter === 'all_months'
+                    ? 'bg-white text-teal-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Months (Recurring)
+              </button>
+              <button
+                type="button"
+                id="btn-filter-overrides-active"
+                onClick={() => setOverridesFilter('active')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  overridesFilter === 'active'
+                    ? 'bg-white text-indigo-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Active Billing Month ({formatMonthName(activeMonth)})
+              </button>
+            </div>
+          </div>
+
           {/* Active Class Overrides Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div>
                 <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-indigo-600" />
-                  Active Class-Level Overrides in {formatMonthName(activeMonth)}
+                  Class-Level Fee Overrides
                 </h4>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Classes configured with custom particulars (Fine & Flex 1–4) for this billing month.
+                  Classes configured with custom particulars (Fine & Flex 1–4) for recurring or month-specific periods.
                 </p>
               </div>
               <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-auto">
-                {activeClassOverridesList.length} class{activeClassOverridesList.length === 1 ? '' : 'es'} configured
+                {activeClassOverridesList.length} class override{activeClassOverridesList.length === 1 ? '' : 's'}
               </span>
             </div>
 
@@ -2550,6 +2953,7 @@ export const SettingsView: React.FC = () => {
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                       <tr>
                         <th className="p-3">Class Name</th>
+                        <th className="p-3">Schedule</th>
                         <th className="p-3">Base Fee</th>
                         <th className="p-3">Overridden Particulars (Fine & Flex 1–4)</th>
                         <th className="p-3 text-right">Actions</th>
@@ -2557,10 +2961,23 @@ export const SettingsView: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {activeClassOverridesList.map((item) => (
-                        <tr key={item.classId} className="hover:bg-indigo-50/40 transition">
+                        <tr key={item.uniqueKey} className="hover:bg-indigo-50/40 transition">
                           <td className="p-3 font-bold text-slate-900 flex items-center gap-2">
                             <BookOpen className="w-4 h-4 text-indigo-600 shrink-0" />
                             {item.className}
+                          </td>
+                          <td className="p-3">
+                            {item.isAllMonths ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                                <Sparkles className="w-3 h-3 text-teal-600" />
+                                All Months (Recurring)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                <Calendar className="w-3 h-3 text-slate-500" />
+                                {formatMonthName(item.month)}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3 font-medium text-slate-700">
                             Rs. {item.classObj?.monthlyFee || 0}
@@ -2589,6 +3006,12 @@ export const SettingsView: React.FC = () => {
                                       setSelectedClassId(item.classId);
                                       setSelectedStudentId('');
                                       setTemplateScopeMode('class');
+                                      if (item.isAllMonths) {
+                                        setTemplateMonthMode('all');
+                                      } else {
+                                        setTemplateMonthMode('specific');
+                                        setTemplateSpecificMonth(item.month);
+                                      }
                                       window.scrollTo({ top: 100, behavior: 'smooth' });
                                     },
                                   });
@@ -2600,7 +3023,7 @@ export const SettingsView: React.FC = () => {
                               {hasPermission('settings.manage') && (
                                 <button
                                   type="button"
-                                  onClick={() => handleClearClassOverrides(item.classId)}
+                                  onClick={() => handleClearClassOverrides(item.classId, item.month)}
                                   className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                                   title="Delete Class Overrides"
                                 >
@@ -2617,32 +3040,32 @@ export const SettingsView: React.FC = () => {
               </div>
             ) : (
               <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
-                No class-specific fee particulars overrides configured for {formatMonthName(activeMonth)}. All classes inherit global defaults.
+                No class-specific fee particulars overrides match the selected view.
               </div>
             )}
           </div>
 
-          {/* Active Student Overrides Table in Working Month */}
+          {/* Active Student Overrides Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div>
                 <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-teal-600" />
-                  Active Student Overrides in {formatMonthName(activeMonth)}
+                  Student Individual Fee Overrides
                 </h4>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Students configured with custom fine and Flex 1–4 particulars overrides for this billing month.
+                  Students configured with custom fine and Flex 1–4 particulars overrides for recurring or month-specific periods.
                 </p>
               </div>
               <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                {selectedOverrideIds.length > 0 && hasPermission('settings.manage') && (
+                {selectedOverrideKeys.length > 0 && hasPermission('settings.manage') && (
                   <button
                     type="button"
                     onClick={handleBulkDeleteOverrides}
                     className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    Delete Selected ({selectedOverrideIds.length})
+                    Delete Selected ({selectedOverrideKeys.length})
                   </button>
                 )}
                 {hasPermission('settings.manage') && (
@@ -2673,7 +3096,7 @@ export const SettingsView: React.FC = () => {
                   </>
                 )}
                 <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
-                  {activeStudentOverridesList.length} student{activeStudentOverridesList.length === 1 ? '' : 's'} configured
+                  {activeStudentOverridesList.length} override{activeStudentOverridesList.length === 1 ? '' : 's'}
                 </span>
               </div>
             </div>
@@ -2690,7 +3113,7 @@ export const SettingsView: React.FC = () => {
                               type="checkbox"
                               checked={
                                 activeStudentOverridesList.length > 0 &&
-                                selectedOverrideIds.length === activeStudentOverridesList.length
+                                selectedOverrideKeys.length === activeStudentOverridesList.length
                               }
                               onChange={handleToggleSelectAllOverrides}
                               title="Select all"
@@ -2701,16 +3124,17 @@ export const SettingsView: React.FC = () => {
                         <th className="p-3">Student Name</th>
                         <th className="p-3">Reg #</th>
                         <th className="p-3">Class</th>
+                        <th className="p-3">Schedule</th>
                         <th className="p-3">Overridden Particulars (Fine & Flex 1–4)</th>
                         <th className="p-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {activeStudentOverridesList.map((item) => {
-                        const isSelected = selectedOverrideIds.includes(item.studentId);
+                        const isSelected = selectedOverrideKeys.includes(item.uniqueKey);
                         return (
                           <tr
-                            key={item.studentId}
+                            key={item.uniqueKey}
                             className={`transition ${isSelected ? 'bg-teal-50/60' : 'hover:bg-slate-50/70'}`}
                           >
                             {hasPermission('settings.manage') && (
@@ -2718,7 +3142,7 @@ export const SettingsView: React.FC = () => {
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
-                                  onChange={() => handleToggleSelectOverride(item.studentId)}
+                                  onChange={() => handleToggleSelectOverride(item.uniqueKey)}
                                   className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
                                 />
                               </td>
@@ -2733,6 +3157,19 @@ export const SettingsView: React.FC = () => {
                             </td>
                             <td className="p-3">
                               <span className="font-medium text-slate-700">{item.className}</span>
+                            </td>
+                            <td className="p-3">
+                              {item.isAllMonths ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                                  <Sparkles className="w-3 h-3 text-teal-600" />
+                                  All Months (Recurring)
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  <Calendar className="w-3 h-3 text-slate-500" />
+                                  {formatMonthName(item.month)}
+                                </span>
+                              )}
                             </td>
                             <td className="p-3">
                               <div className="flex flex-wrap gap-1.5 max-w-md">
@@ -2756,6 +3193,14 @@ export const SettingsView: React.FC = () => {
                                       label: scopeLabel,
                                       apply: () => {
                                         setSelectedStudentId(item.studentId);
+                                        setSelectedClassId('');
+                                        setTemplateScopeMode('student');
+                                        if (item.isAllMonths) {
+                                          setTemplateMonthMode('all');
+                                        } else {
+                                          setTemplateMonthMode('specific');
+                                          setTemplateSpecificMonth(item.month);
+                                        }
                                         window.scrollTo({ top: 100, behavior: 'smooth' });
                                       },
                                     });
@@ -2767,7 +3212,7 @@ export const SettingsView: React.FC = () => {
                                 {hasPermission('settings.manage') && (
                                   <button
                                     type="button"
-                                    onClick={() => handleClearStudentOverrides(item.studentId)}
+                                    onClick={() => handleClearStudentOverrides(item.studentId, item.month)}
                                     className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                                     title="Delete Student Overrides"
                                   >
@@ -2785,7 +3230,7 @@ export const SettingsView: React.FC = () => {
               </div>
             ) : (
               <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
-                No student-specific Flex 1–4 template overrides configured for {formatMonthName(activeMonth)}. All students are currently using global fee particulars.
+                No student-specific Flex 1–4 template overrides match the selected view.
               </div>
             )}
           </div>
@@ -2803,6 +3248,14 @@ export const SettingsView: React.FC = () => {
 
       {/* Subtab 6: Selection-Based Database Cleanup & Table Reset */}
       {activeSubTab === 'cleanup' && <DataCleanupView />}
+
+      {/* Subtab 7: Month End Reconciliation & Defaulter Wizard */}
+      {activeSubTab === 'monthEnd' && (
+        <MonthEndWizardPanel
+          initialMonth={targetMonth}
+          onNavigateToTab={onNavigateToTab}
+        />
+      )}
 
       {/* User Modal */}
       {showUserModal && (
@@ -2877,60 +3330,152 @@ export const SettingsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Assigned Role Preset *</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-bold text-slate-700">Assigned Role Preset *</label>
+                  <span className="text-[11px] font-mono text-teal-700 font-bold">
+                    {userFormData.permissions.length} of {ALL_PERMISSIONS.length} Privileges
+                  </span>
+                </div>
                 <select
-                  value={userFormData.role}
+                  value={
+                    userFormData.role === 'Admin'
+                      ? 'Admin'
+                      : userFormData.role === 'Accountant'
+                      ? 'Accountant'
+                      : userFormData.role === 'Viewer'
+                      ? 'Viewer'
+                      : 'Custom'
+                  }
                   onChange={(e) => {
-                    const nextRole = e.target.value as UserRole;
-                    const presetPerms =
-                      ROLE_PRESET_PERMISSIONS[nextRole] || userFormData.permissions;
-                    setUserFormData({
-                      ...userFormData,
-                      role: nextRole,
-                      permissions: nextRole === 'Custom' ? userFormData.permissions : [...presetPerms],
-                    });
+                    const val = e.target.value;
+                    if (val === 'Admin') {
+                      setUserFormData({
+                        ...userFormData,
+                        role: 'Admin',
+                        permissions: [...ROLE_PRESET_PERMISSIONS.Admin],
+                      });
+                    } else if (val === 'Accountant') {
+                      setUserFormData({
+                        ...userFormData,
+                        role: 'Accountant',
+                        permissions: [...ROLE_PRESET_PERMISSIONS.Accountant],
+                      });
+                    } else if (val === 'Viewer') {
+                      setUserFormData({
+                        ...userFormData,
+                        role: 'Viewer',
+                        permissions: [...ROLE_PRESET_PERMISSIONS.Viewer],
+                      });
+                    } else if (val === 'Custom') {
+                      setUserFormData({
+                        ...userFormData,
+                        role: 'Custom',
+                      });
+                    }
                   }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
                 >
-                  <option value="Admin">Admin (Full System & Policy Access)</option>
-                  <option value="Accountant">Accountant (Fee Invoicing & Collections)</option>
-                  <option value="Viewer">Viewer (Read-Only Financial Auditing)</option>
-                  <option value="Custom">Custom (Granular Permissions)</option>
+                  <option value="Admin">Super Administrator (Full System & Policy Access)</option>
+                  <option value="Accountant">Fee Accountant (Billing, Collections & Defaulters)</option>
+                  <option value="Viewer">Internal Auditor (Read-Only Financial Auditing)</option>
+                  <option value="Custom">Custom Role (Granular Module Privileges)</option>
                 </select>
               </div>
 
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-teal-600" />
-                    <span>Granular Permissions:</span>
-                    <span className="font-mono text-teal-700 font-bold">
-                      {userFormData.permissions.length} of {ALL_PERMISSIONS.length} active
-                    </span>
+              {/* Granular Permissions & Role Templates Card */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                      <span>Security Scope:</span>
+                      <span className="font-semibold text-teal-700">
+                        {userFormData.role === 'Custom'
+                          ? `Custom (${userFormData.permissions.length} active)`
+                          : `${userFormData.role} Role`}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {userFormData.role === 'Admin'
+                        ? 'Full unrestricted privileges across all financial modules and system policies.'
+                        : userFormData.role === 'Accountant'
+                        ? 'Standard day-to-day operations, billing, voucher generation, and collection receipts.'
+                        : userFormData.role === 'Viewer'
+                        ? 'Read-only financial audits and reports without edit rights.'
+                        : 'Granular permissions customized for specific departmental responsibilities.'}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                    {userFormData.role === 'Admin'
-                      ? 'Full system privileges across all modules'
-                      : userFormData.role === 'Accountant'
-                      ? 'Standard operations, billing, and collections'
-                      : userFormData.role === 'Viewer'
-                      ? 'Read-only financial audits and reports'
-                      : 'Customized module security access'}
-                  </p>
-                </div>
 
-                {editingUser && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowUserModal(false);
-                      handleOpenPermissionsModal(editingUser);
-                    }}
-                    className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-teal-700 font-bold text-xs rounded-lg shadow-2xs transition shrink-0 cursor-pointer"
+                    onClick={handleOpenFormPermissionsModal}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-teal-700 font-bold text-xs rounded-lg shadow-2xs transition shrink-0 flex items-center gap-1.5 cursor-pointer"
+                    title="Open granular matrix to pick and choose individual module permissions"
                   >
-                    Open Matrix
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Configure Matrix</span>
                   </button>
-                )}
+                </div>
+
+                {/* Quick Starting Templates Chips */}
+                <div className="pt-2 border-t border-slate-200/80">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium mb-1.5">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-teal-600" />
+                      <span>Quick Base Templates:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setUserFormData({
+                          ...userFormData,
+                          role: 'Custom',
+                          permissions: [],
+                        })
+                      }
+                      className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                    >
+                      Clear All (0)
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {SPECIALTY_PRESETS.map((preset) => {
+                      const isMatch =
+                        preset.permissions.length === userFormData.permissions.length &&
+                        preset.permissions.every((p) => userFormData.permissions.includes(p));
+
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            setUserFormData({
+                              ...userFormData,
+                              role: preset.role,
+                              permissions: [...preset.permissions],
+                            });
+                          }}
+                          className={`text-[11px] px-2 py-1 rounded-lg font-semibold border transition flex items-center gap-1 cursor-pointer ${
+                            isMatch
+                              ? 'bg-teal-900 text-teal-100 border-teal-800'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-100/80'
+                          }`}
+                          title={preset.description}
+                        >
+                          <span>{preset.name.split('/')[0].trim()}</span>
+                          <span
+                            className={`text-[9px] px-1 py-0.2 rounded font-mono font-bold ${
+                              isMatch ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {preset.permissions.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
@@ -3112,7 +3657,7 @@ export const SettingsView: React.FC = () => {
                 <Upload className="w-5 h-5 text-teal-600" />
                 {parsedCsvRows.length > 0
                   ? 'Preview & Verify Fee Template Overrides'
-                  : `Import Fee Template Overrides (${formatMonthName(activeMonth)})`}
+                  : `Import Fee Template Overrides (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})`}
               </h3>
               <button
                 type="button"
@@ -3133,7 +3678,7 @@ export const SettingsView: React.FC = () => {
             {parsedCsvRows.length === 0 ? (
               <div className="space-y-3 text-xs text-slate-600">
                 <p>
-                  Upload a CSV file with student fee template overrides for <strong>{formatMonthName(activeMonth)} ({activeMonth})</strong>. First row must contain column headers.
+                  Upload a CSV file with student fee template overrides for <strong>{effectiveTemplateMonth === 'all' ? 'All Months (Recurring Baseline)' : `${formatMonthName(effectiveTemplateMonth)} (${effectiveTemplateMonth})`}</strong>. First row must contain column headers.
                 </p>
 
                 <button
@@ -3235,7 +3780,9 @@ export const SettingsView: React.FC = () => {
                     )}
                     <div>
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">Target Month</span>
-                      <span className="font-bold text-teal-800 text-sm">{formatMonthName(activeMonth)}</span>
+                      <span className="font-bold text-teal-800 text-sm">
+                        {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
+                      </span>
                     </div>
                   </div>
 

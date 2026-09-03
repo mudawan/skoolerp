@@ -740,6 +740,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-semibold"
                 >
                   <option value="Active">Active</option>
+                  <option value="Withdrawn">Withdrawn</option>
                   <option value="Inactive">Inactive</option>
                   <option value="AutoDeactivated">Auto-Deactivated</option>
                 </select>

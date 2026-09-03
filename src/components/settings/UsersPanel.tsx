@@ -2,7 +2,7 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { User } from '../../types';
 import { ALL_PERMISSIONS } from '../../utils/permissions';
-import { KeyRound, Plus, Shield, Users } from 'lucide-react';
+import { Edit2, KeyRound, Plus, Shield, Trash2, Users } from 'lucide-react';
 
 export interface UsersPanelProps {
   handleOpenUserModal: (user?: User) => void;
@@ -16,6 +16,10 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
   handleDeleteUser,
 }) => {
   const { users, currentUser, hasPermission } = useApp();
+  const canManageUsers =
+    currentUser?.role === 'Admin' ||
+    hasPermission('users.manage') ||
+    hasPermission('settings.manage');
 
   return (
     <div className="space-y-4">
@@ -29,7 +33,7 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
             Manage accounts, assign roles (Admin, Accountant, Viewer, Custom), and configure granular module permissions.
           </p>
         </div>
-        {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
+        {canManageUsers && (
           <button
             type="button"
             id="btn-add-system-user"
@@ -52,12 +56,13 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
                 <th className="p-3">Email Address</th>
                 <th className="p-3">Permissions Scope</th>
                 <th className="p-3">Active Status</th>
-                <th className="p-3 text-right">Actions</th>
+                <th className="p-3 text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {users.map((u) => {
                 const isSelf = currentUser.id === u.id;
+                const isOnlyUser = users.length <= 1;
                 const roleBadgeClass =
                   u.role === 'Admin'
                     ? 'bg-amber-100 text-amber-800 border-amber-200'
@@ -84,6 +89,17 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
                 if (userPerms.some((p) => p.startsWith('fees.report'))) activeModules.push('Reports');
                 if (userPerms.some((p) => p.startsWith('settings.'))) activeModules.push('Settings');
                 if (userPerms.some((p) => p.startsWith('users.'))) activeModules.push('User Admin');
+
+                // Delete availability & tooltip
+                const canDeleteThisUser = canManageUsers && !isSelf && !isOnlyUser;
+                let deleteTooltip = `Delete Operator Account (${u.name})`;
+                if (!canManageUsers) {
+                  deleteTooltip = 'Delete Operator (Permission Required)';
+                } else if (isSelf) {
+                  deleteTooltip = 'Cannot delete your own active session account';
+                } else if (isOnlyUser) {
+                  deleteTooltip = 'Cannot delete the only system operator account';
+                }
 
                 return (
                   <tr key={u.id} className="hover:bg-slate-50/80 transition">
@@ -162,39 +178,64 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
                         Active
                       </div>
                     </td>
-                    <td className="p-3 text-right">
-                      {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) ? (
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            id={`btn-perms-user-${u.id}`}
-                            onClick={() => handleOpenPermissionsModal(u)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-700 font-bold text-xs rounded-lg border border-teal-200 transition cursor-pointer"
-                            title="Configure Granular Permissions"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>Permissions</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenUserModal(u)}
-                            className="px-2 py-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold text-xs rounded-lg transition cursor-pointer"
-                          >
-                            Edit
-                          </button>
-                          {!isSelf && users.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteUser(u.id, u.name)}
-                              className="px-2 py-1 text-rose-600 hover:text-rose-800 hover:bg-rose-50 font-bold text-xs rounded-lg transition cursor-pointer"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 italic text-[11px]">View only</span>
-                      )}
+                    <td className="p-3 text-center whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1">
+                        {/* Permissions Icon Button */}
+                        <button
+                          type="button"
+                          id={`btn-perms-user-${u.id}`}
+                          disabled={!canManageUsers}
+                          onClick={() => canManageUsers && handleOpenPermissionsModal(u)}
+                          title={
+                            canManageUsers
+                              ? `Configure Granular Permissions for ${u.name}`
+                              : 'Configure Granular Permissions (Permission Required)'
+                          }
+                          className={`p-1.5 rounded-lg transition ${
+                            canManageUsers
+                              ? 'text-slate-500 hover:text-teal-700 hover:bg-teal-50 cursor-pointer'
+                              : 'text-slate-300 cursor-not-allowed'
+                          }`}
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Edit Operator & Password Icon Button */}
+                        <button
+                          type="button"
+                          id={`btn-edit-user-${u.id}`}
+                          disabled={!canManageUsers}
+                          onClick={() => canManageUsers && handleOpenUserModal(u)}
+                          title={
+                            canManageUsers
+                              ? `Edit Operator Account & Password for ${u.name}`
+                              : 'Edit Operator Account & Password (Permission Required)'
+                          }
+                          className={`p-1.5 rounded-lg transition ${
+                            canManageUsers
+                              ? 'text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer'
+                              : 'text-slate-300 cursor-not-allowed'
+                          }`}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Delete Operator Icon Button */}
+                        <button
+                          type="button"
+                          id={`btn-delete-user-${u.id}`}
+                          disabled={!canDeleteThisUser}
+                          onClick={() => canDeleteThisUser && handleDeleteUser(u.id, u.name)}
+                          title={deleteTooltip}
+                          className={`p-1.5 rounded-lg transition ${
+                            canDeleteThisUser
+                              ? 'text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer'
+                              : 'text-slate-300 cursor-not-allowed'
+                          }`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -206,3 +247,4 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
     </div>
   );
 };
+

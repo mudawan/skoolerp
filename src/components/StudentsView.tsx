@@ -859,6 +859,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
           >
             <option value="all">All Statuses</option>
             <option value="Active">Active Only</option>
+            <option value="Withdrawn">Withdrawn</option>
             <option value="Inactive">Inactive</option>
             <option value="AutoDeactivated">Auto-Deactivated</option>
           </select>
@@ -1095,6 +1096,8 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                           className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
                             s.status === 'Active'
                               ? 'bg-emerald-100 text-emerald-800'
+                              : s.status === 'Withdrawn'
+                              ? 'bg-rose-100 text-rose-800'
                               : s.status === 'AutoDeactivated'
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-slate-100 text-slate-600'

@@ -11,6 +11,7 @@ import {
   VoucherItem,
   PaymentTransaction,
   PaymentReceiptData,
+  VoucherCopyType,
 } from '../types';
 import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords } from './feeMath';
 
@@ -22,6 +23,8 @@ export interface PdfExportContext {
   templates?: FeeTemplate[];
   roundingMultiple?: number;
   themeColor?: string;
+  copyOrder?: VoucherCopyType[];
+  copiesToInclude?: VoucherCopyType[];
 }
 
 export interface PdfExportOptions {
@@ -197,18 +200,38 @@ function renderVoucherToPdfPage(
     context.bankAccounts.find((b) => b.active && b.isDefault) ||
     context.bankAccounts.find((b) => b.active);
 
-  const copies = [
-    { title: 'BANK COPY', tagR: 30, tagG: 58, tagB: 138 },      // Dark blue
-    { title: 'INSTITUTE COPY', tagR: 15, tagG: 118, tagB: 110 }, // Dark teal
-    { title: 'STUDENT COPY', tagR: 30, tagG: 41, tagB: 59 },     // Dark slate
-  ];
+  const copyDefinitions: Record<
+    VoucherCopyType,
+    { title: string; tagR: number; tagG: number; tagB: number }
+  > = {
+    bank: { title: 'BANK COPY', tagR: 30, tagG: 58, tagB: 138 }, // Dark blue
+    institute: { title: 'INSTITUTE COPY', tagR: 15, tagG: 118, tagB: 110 }, // Dark teal
+    student: { title: 'STUDENT COPY', tagR: 30, tagG: 41, tagB: 59 }, // Dark slate
+  };
+
+  const defaultOrder: VoucherCopyType[] = ['bank', 'institute', 'student'];
+  const userOrder =
+    context.copyOrder && context.copyOrder.length > 0
+      ? context.copyOrder
+      : defaultOrder;
+
+  const selectedCopies =
+    context.copiesToInclude && context.copiesToInclude.length > 0
+      ? context.copiesToInclude
+      : defaultOrder;
+
+  // Filter in the order defined by userOrder
+  const activeCopies = userOrder.filter((c) => selectedCopies.includes(c));
+  const finalCopies = (activeCopies.length > 0 ? activeCopies : defaultOrder).map(
+    (c) => copyDefinitions[c] || copyDefinitions.bank
+  );
 
   const colWidth = 88;
   const colGap = 8;
   const leftMargin = 8;
   const topY = 8;
 
-  copies.forEach((copy, colIdx) => {
+  finalCopies.forEach((copy, colIdx) => {
     const colX = leftMargin + colIdx * (colWidth + colGap);
 
     // Outer card border
@@ -292,10 +315,10 @@ function renderVoucherToPdfPage(
     doc.setLineWidth(0.3);
     doc.line(colX + 3, topY + 24, colX + colWidth - 3, topY + 24);
 
-    // Student Details Grid (Moved up directly under institute header)
+    // Student Details Grid
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
-    doc.rect(colX + 3, topY + 26, 82, 17, 'FD');
+    doc.rect(colX + 3, topY + 26, colWidth - 6, 17, 'FD');
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
@@ -306,7 +329,7 @@ function renderVoucherToPdfPage(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    const stuName = (student?.name || 'Unknown').length > 20 ? (student?.name || 'Unknown').substring(0, 18) + '..' : (student?.name || 'Unknown');
+    const stuName = (student?.name || 'Unknown').length > 22 ? (student?.name || 'Unknown').substring(0, 20) + '..' : (student?.name || 'Unknown');
     doc.text(stuName, colX + 5, topY + 34);
 
     doc.setFont('helvetica', 'normal');
@@ -319,29 +342,30 @@ function renderVoucherToPdfPage(
     doc.text(schoolClass?.name || 'N/A', colX + 5, topY + 42);
 
     // Col 2 of Student Grid
+    const midX = colX + colWidth / 2;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text('Registration No.:', colX + 44, topY + 30);
+    doc.text('Registration No.:', midX, topY + 30);
     doc.setFont('courier', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    doc.text(student?.regNo || 'N/A', colX + 44, topY + 34);
+    doc.text(student?.regNo || 'N/A', midX, topY + 34);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text('Father Name:', colX + 44, topY + 38);
+    doc.text('Father Name:', midX, topY + 38);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(15, 23, 42);
-    const fatherName = (student?.fatherName || 'N/A').length > 20 ? (student?.fatherName || 'N/A').substring(0, 18) + '..' : (student?.fatherName || 'N/A');
-    doc.text(fatherName, colX + 44, topY + 42);
+    const fatherName = (student?.fatherName || 'N/A').length > 22 ? (student?.fatherName || 'N/A').substring(0, 20) + '..' : (student?.fatherName || 'N/A');
+    doc.text(fatherName, midX, topY + 42);
 
     // Date Bar: Issue Date on Left, Due Date on Right
     doc.setFillColor(254, 243, 199); // amber-100
     doc.setDrawColor(251, 191, 36);  // amber-400
-    doc.rect(colX + 3, topY + 45, 82, 6, 'FD');
+    doc.rect(colX + 3, topY + 45, colWidth - 6, 6, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
@@ -352,7 +376,7 @@ function renderVoucherToPdfPage(
     // Particulars Table Header ("Particulars" on left, "Amount (Rs.)" on right)
     doc.setFillColor(241, 245, 249); // slate-100
     doc.setDrawColor(203, 213, 225);
-    doc.rect(colX + 3, topY + 53, 82, 5.5, 'FD');
+    doc.rect(colX + 3, topY + 53, colWidth - 6, 5.5, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
@@ -426,7 +450,7 @@ function renderVoucherToPdfPage(
 
     itemsToRender.forEach((item) => {
       doc.setTextColor(30, 41, 59);
-      const labelStr = item.label.length > 28 ? item.label.substring(0, 26) + '..' : item.label;
+      const labelStr = item.label.length > 30 ? item.label.substring(0, 28) + '..' : item.label;
       doc.text(labelStr, colX + 5, itemY);
 
       if (item.amount < 0) {
@@ -449,7 +473,7 @@ function renderVoucherToPdfPage(
     const netDueY = itemY + 1.5;
     doc.setFillColor(241, 245, 249); // slate-100
     doc.setDrawColor(203, 213, 225); // slate-300
-    doc.rect(colX + 3, netDueY, 82, 6.5, 'FD');
+    doc.rect(colX + 3, netDueY, colWidth - 6, 6.5, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
@@ -473,7 +497,7 @@ function renderVoucherToPdfPage(
     const afterDueY = netDueY + 7.2;
     doc.setFillColor(254, 242, 242); // rose-50
     doc.setDrawColor(254, 205, 211); // rose-200
-    doc.rect(colX + 3, afterDueY, 82, 6, 'FD');
+    doc.rect(colX + 3, afterDueY, colWidth - 6, 6, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.8);
@@ -489,16 +513,17 @@ function renderVoucherToPdfPage(
     const bankY = afterDueY + 7.8;
     const ltrInst = activeBank ? (activeBank.instructionsLtr || activeBank.instructionsLine1 || '').trim() : '';
     const rtlInst = activeBank ? (activeBank.instructionsRtl || activeBank.instructionsLine2 || '').trim() : '';
+    const innerBankWidth = colWidth - 10;
 
     // Calculate wrapped English lines (prevent clipping)
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(5.8);
-    const ltrLines: string[] = ltrInst ? doc.splitTextToSize(ltrInst, 78) : [];
+    const ltrLines: string[] = ltrInst ? doc.splitTextToSize(ltrInst, innerBankWidth) : [];
     const ltrHeightMm = ltrLines.length * 3.2;
 
     // Render Urdu (RTL) via high-DPI canvas to properly connect Arabic/Urdu ligatures and avoid corrupted glyphs
     const renderedUrdu = rtlInst
-      ? renderRtlTextToImage(rtlInst, 78, { fontSizePt: 6.8, textColor: '#334155' })
+      ? renderRtlTextToImage(rtlInst, innerBankWidth, { fontSizePt: 6.8, textColor: '#334155' })
       : null;
     const rtlHeightMm = renderedUrdu ? renderedUrdu.heightMm : 0;
 
@@ -517,7 +542,7 @@ function renderVoucherToPdfPage(
 
     doc.setFillColor(248, 250, 252); // slate-50
     doc.setDrawColor(226, 232, 240);
-    doc.rect(colX + 3, bankY, 82, boxHeight, 'FD');
+    doc.rect(colX + 3, bankY, colWidth - 6, boxHeight, 'FD');
 
     if (activeBank) {
       doc.setTextColor(15, 23, 42);
@@ -532,7 +557,7 @@ function renderVoucherToPdfPage(
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(100, 116, 139);
-      const titleStr = activeBank.title.length > 38 ? activeBank.title.substring(0, 36) + '...' : activeBank.title;
+      const titleStr = activeBank.title.length > 40 ? activeBank.title.substring(0, 38) + '...' : activeBank.title;
       doc.text(`Title: ${titleStr}`, colX + 5, bankY + 8.8);
 
       if (activeBank.branchCode) {
@@ -564,7 +589,7 @@ function renderVoucherToPdfPage(
             'PNG',
             colX + 5,
             currentInstY - 1.2,
-            78,
+            innerBankWidth,
             renderedUrdu.heightMm
           );
         }
@@ -584,11 +609,12 @@ function renderVoucherToPdfPage(
     doc.setTextColor(148, 163, 184); // slate-400
     doc.setDrawColor(203, 213, 225);
 
-    doc.line(colX + 5, topY + 186, colX + 32, topY + 186);
-    doc.text('Bank Stamp', colX + 18, topY + 189.5, { align: 'center' });
+    const sigHalf = colWidth / 2;
+    doc.line(colX + 5, topY + 186, colX + sigHalf - 8, topY + 186);
+    doc.text('Bank Stamp', colX + (sigHalf - 3) / 2 + 2, topY + 189.5, { align: 'center' });
 
-    doc.line(colX + 53, topY + 186, colX + 80, topY + 186);
-    doc.text('Accounts Office', colX + 66, topY + 189.5, { align: 'center' });
+    doc.line(colX + sigHalf + 8, topY + 186, colX + colWidth - 5, topY + 186);
+    doc.text('Accounts Office', colX + sigHalf + (sigHalf - 3) / 2, topY + 189.5, { align: 'center' });
   });
 }
 

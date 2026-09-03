@@ -5,6 +5,7 @@ import { FeeVoucher, PaymentTransaction, VoucherItem, ParticularKind } from '../
 import { StudentAvatar } from './StudentAvatar';
 import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
+import { CollectPaymentModal } from './vouchers/CollectPaymentModal';
 import { RecordsPerPageSelector } from './RecordsPerPageSelector';
 import {
   formatCurrency,
@@ -480,7 +481,7 @@ export const DefaultersView: React.FC = () => {
           <div className="flex items-center bg-teal-50 border border-teal-200 text-teal-900 rounded-xl px-3.5 py-2 text-xs font-bold shadow-2xs">
             <Calendar className="w-4 h-4 text-teal-600 mr-2 shrink-0" />
             <span className="text-teal-700 font-medium mr-1.5">Working Month:</span>
-            <span>{formatMonthName(activeMonth)} ({activeMonth})</span>
+            <span>{formatMonthName(activeMonth)}</span>
           </div>
         </div>
       </div>
@@ -1170,187 +1171,30 @@ export const DefaultersView: React.FC = () => {
 
       {/* Collect Payment Modal */}
       {collectingVoucher && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start justify-center p-3 sm:p-6 z-50 overflow-y-auto animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200/80 space-y-4 my-auto sm:my-8">
-            <div className="flex items-start justify-between border-b border-slate-200 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
-                  <Coins className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Collect Payment &bull; {collectingVoucher.voucherNo}
-                  </h3>
-                  <p className="text-xs text-slate-500 font-mono">
-                    Student: {collectingStudent?.name} &bull; {formatMonthName(collectingVoucher.month)}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setCollectingVoucher(null)}
-                className="text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* Left Pane: Particulars Editor */}
-              <div className="lg:col-span-6 space-y-2">
-                <VoucherParticularsEditor
-                  items={collectItems}
-                  onChange={(updated) => {
-                    setCollectItems(updated);
-                    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, collectingVoucher?.roundingMultiple);
-                    const newNet = Math.max(0, roundUpToMultiple(updated.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), mult));
-                    const newRem = Math.max(0, newNet - (collectingVoucher.amountPaid || 0));
-                    if (Number(collectAmount) === collectDynamicRemaining && newRem >= 0) {
-                      setCollectAmount(newRem);
-                    }
-                  }}
-                  originalItems={collectingVoucher.particulars}
-                  onResetToOriginal={() => {
-                    setCollectItems(collectingVoucher.particulars.map((p) => ({ ...p })));
-                    const remaining = Math.max(0, collectingVoucher.netDue - collectingVoucher.amountPaid);
-                    setCollectAmount(remaining);
-                  }}
-                  onSaveLineItems={handleSaveLineItemsOnly}
-                  amountPaid={collectingVoucher.amountPaid}
-                  studentId={collectingVoucher.studentId}
-                />
-              </div>
-
-              {/* Right Pane: Summary Card & Collection Form */}
-              <div className="lg:col-span-6 space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
-                {/* Live Breakdown */}
-                <div className="bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-1.5">
-                  <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Student</span>
-                    <span className="font-bold text-slate-900">{collectingStudent?.name}</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 pt-1 text-center font-mono">
-                    <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
-                      <div className="text-[9px] text-slate-500 font-sans">Net Due</div>
-                      <div className="font-bold text-slate-800 text-xs">{formatCurrency(collectDynamicNetDue)}</div>
-                    </div>
-                    <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
-                      <div className="text-[9px] text-slate-500 font-sans">Paid</div>
-                      <div className="font-bold text-emerald-700 text-xs">{formatCurrency(collectingVoucher.amountPaid)}</div>
-                    </div>
-                    <div className="bg-emerald-50/80 p-1.5 rounded border border-emerald-200">
-                      <div className="text-[9px] text-emerald-800 font-sans font-bold">Remaining</div>
-                      <div className="font-black text-emerald-800 text-xs">{formatCurrency(collectDynamicRemaining)}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <form onSubmit={handleSavePayment} className="space-y-3 text-xs">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block font-bold text-slate-700">Amount to Collect (Rs.) *</label>
-                      {collectDynamicRemaining > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => setCollectAmount(collectDynamicRemaining)}
-                          className="text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
-                        >
-                          Full Balance ({formatCurrency(collectDynamicRemaining)})
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setCollectAmount(collectDynamicNetDue)}
-                          className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
-                        >
-                          Fill Total Fee ({formatCurrency(collectDynamicNetDue)})
-                        </button>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">Rs.</span>
-                      <input
-                        type="number"
-                        min="1"
-                        step="1"
-                        required
-                        value={collectAmount}
-                        onChange={(e) => setCollectAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full pl-10 pr-3 py-2 bg-white border border-slate-200 rounded-lg font-bold text-emerald-700 text-base focus:ring-2 focus:ring-emerald-500/20"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Payment Mode *</label>
-                      <select
-                        value={collectMode}
-                        onChange={(e) => setCollectMode(e.target.value as any)}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-semibold text-xs"
-                      >
-                        <option value="Cash">Cash</option>
-                        <option value="BankTransfer">Bank Transfer</option>
-                        <option value="Cheque">Cheque</option>
-                        <option value="Online">Online / Card</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block font-bold text-slate-700 mb-1">Date *</label>
-                      <DatePicker
-                        value={collectDate}
-                        required
-                        themeColor={themeConfig?.color || 'teal'}
-                        onChange={(newDate) => setCollectDate(newDate)}
-                        idPrefix="defaulter-collect-date"
-                        placeholder="Select Payment Date"
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Reference / Cheque / Txn #</label>
-                    <input
-                      type="text"
-                      value={collectRef}
-                      onChange={(e) => setCollectRef(e.target.value)}
-                      placeholder="e.g. TRX-98213 / Bank Slip No"
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Notes / Remarks</label>
-                    <textarea
-                      rows={2}
-                      value={collectNotes}
-                      onChange={(e) => setCollectNotes(e.target.value)}
-                      placeholder="Optional notes..."
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => setCollectingVoucher(null)}
-                      className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold rounded-xl text-xs cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Coins className="w-4 h-4" />
-                      <span>Confirm & Record Payment</span>
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CollectPaymentModal
+          voucher={collectingVoucher}
+          students={students}
+          items={collectItems}
+          setItems={setCollectItems}
+          amount={collectAmount}
+          setAmount={setCollectAmount}
+          mode={collectMode}
+          setMode={setCollectMode}
+          refNo={collectRef}
+          setRefNo={setCollectRef}
+          notes={collectNotes}
+          setNotes={setCollectNotes}
+          date={collectDate}
+          setDate={setCollectDate}
+          themeColor={themeConfig?.color}
+          dynamicNetDue={collectDynamicNetDue}
+          dynamicRemaining={collectDynamicRemaining}
+          roundingEnabled={roundingEnabled}
+          roundingMultiple={roundingMultiple}
+          onSaveLineItems={handleSaveLineItemsOnly}
+          onSubmit={handleSavePayment}
+          onClose={() => setCollectingVoucher(null)}
+        />
       )}
 
       {/* Carry Forward Confirmation Modal */}

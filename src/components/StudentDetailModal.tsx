@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { ParticularKind, Student } from '../types';
-import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString } from '../utils/feeMath';
+import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString, resolveTemplateParticular } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
+import { StudentAccountHistoryView } from './StudentAccountHistoryView';
 import {
   AlertCircle,
   AlertTriangle,
@@ -41,7 +42,35 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   onEdit,
   onViewLedger,
 }) => {
-  const { classes, families, hasPermission, generateAdmissionVoucher, showToast, vouchers, activeMonth, templates, saveStudentTemplateOverrides, getComputedDefaultDueDate, themeConfig } = useApp();
+  const {
+    students,
+    classes,
+    families,
+    hasPermission,
+    generateAdmissionVoucher,
+    showToast,
+    vouchers,
+    activeMonth,
+    templates,
+    saveStudentTemplateOverrides,
+    getComputedDefaultDueDate,
+    themeConfig,
+    getStudentAccountHistory,
+  } = useApp();
+
+  // Tab state: 'profile' (Information & Particulars) or 'history' (Account History Log)
+  const [activeTab, setActiveTab] = useState<'profile' | 'history'>('profile');
+
+  // Reactively track the student record in case status changes while modal is open
+  const currentStudent = useMemo(() => {
+    return students.find((s) => s.id === student.id) || student;
+  }, [students, student]);
+
+  // Total history entries count for the tab badge
+  const historyEntriesCount = useMemo(() => {
+    return getStudentAccountHistory(student.id).length;
+  }, [getStudentAccountHistory, student.id, currentStudent.status]);
+
   const [previewDoc, setPreviewDoc] = useState<{
     title: string;
     fileData?: string;
@@ -72,17 +101,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const [admDueDateTouched, setAdmDueDateTouched] = useState(false);
 
   // Resolve the admission head label for this student in a given month using
-  // student -> class -> global precedence (matches admission voucher generation).
+  // 6-tier waterfall precedence (matches fee template resolution).
   const resolveAdmLabel = (kind: ParticularKind, defaultLabel: string, month: string) => {
-    const studentTpl = templates.find(
-      (t) => t.studentId === student.id && t.kind === kind && (!t.month || t.month === month)
-    );
-    const classTpl = templates.find(
-      (t) => !t.studentId && t.classId === student.classId && t.kind === kind && (!t.month || t.month === month)
-    );
-    const globalTpl = templates.find((t) => !t.studentId && !t.classId && t.kind === kind);
-    const tpl = studentTpl ?? classTpl ?? globalTpl;
-    return tpl?.label || defaultLabel;
+    return resolveTemplateParticular(templates, kind, month, student.id, student.classId, defaultLabel).label;
   };
 
   // Seed the editable heads: label from student -> class -> global template
@@ -91,13 +112,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const seedAdmItems = (month: string) => {
     setAdmItems(
       ADM_FLEX_KINDS.map(({ kind, defaultLabel }) => {
-        const studentTpl = templates.find(
-          (t) => t.studentId === student.id && t.kind === kind && (!t.month || t.month === month)
-        );
+        const resolved = resolveTemplateParticular(templates, kind, month, student.id, student.classId, defaultLabel);
         return {
           kind,
-          label: resolveAdmLabel(kind, defaultLabel, month),
-          amount: studentTpl && studentTpl.defaultAmount > 0 ? String(studentTpl.defaultAmount) : '',
+          label: resolved.label,
+          amount: resolved.isStudentOverride && resolved.amount > 0 ? String(resolved.amount) : '',
         };
       })
     );
@@ -195,26 +214,29 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
         <div className="flex items-start justify-between border-b border-slate-200 pb-4 shrink-0">
           <div className="flex items-center gap-3.5">
             <StudentAvatar
-              photoUrl={student.photoUrl}
-              name={student.name}
+              photoUrl={currentStudent.photoUrl}
+              name={currentStudent.name}
               size="lg"
             />
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-lg font-bold text-slate-900">{student.name}</h3>
+                <h3 className="text-lg font-bold text-slate-900">{currentStudent.name}</h3>
                 <span className="font-mono bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded text-xs border border-slate-200">
-                  {student.regNo}
+                  {currentStudent.regNo}
                 </span>
                 <span
+                  id="student-detail-header-status-badge"
                   className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                    student.status === 'Active'
+                    currentStudent.status === 'Active'
                       ? 'bg-emerald-100 text-emerald-800'
-                      : student.status === 'AutoDeactivated'
+                      : currentStudent.status === 'Withdrawn'
+                      ? 'bg-rose-100 text-rose-800'
+                      : currentStudent.status === 'AutoDeactivated'
                       ? 'bg-amber-100 text-amber-800'
                       : 'bg-slate-100 text-slate-600'
                   }`}
                 >
-                  {student.status}
+                  {currentStudent.status}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
@@ -222,12 +244,12 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   Class: {studentClass?.name || 'Unassigned'}
                 </span>
                 <span>&bull;</span>
-                <span>Enrolled: {student.admissionDate || 'N/A'}</span>
-                {student.firstBillingMonth && (
+                <span>Enrolled: {currentStudent.admissionDate || 'N/A'}</span>
+                {currentStudent.firstBillingMonth && (
                   <>
                     <span>&bull;</span>
                     <span className="text-teal-700 font-medium">
-                      Billing from: {formatMonthName(student.firstBillingMonth)}
+                      Billing from: {formatMonthName(currentStudent.firstBillingMonth)}
                     </span>
                   </>
                 )}
@@ -243,10 +265,53 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
           </button>
         </div>
 
-        {/* Scrollable Content - 5 Boxed Sections */}
-        <div className="space-y-4 overflow-y-auto flex-1 pr-1 text-xs">
-          
-          {/* 1. Basic Information */}
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1 border-b border-slate-200 shrink-0">
+          <button
+            type="button"
+            id="tab-btn-student-details"
+            onClick={() => setActiveTab('profile')}
+            className={`flex items-center gap-2 py-2 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'profile'
+                ? 'border-teal-600 text-teal-700 bg-teal-50/40 rounded-t-lg'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>Profile & Particulars</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-btn-student-account-history"
+            onClick={() => setActiveTab('history')}
+            className={`flex items-center gap-2 py-2 px-3.5 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'history'
+                ? 'border-teal-600 text-teal-700 bg-teal-50/40 rounded-t-lg'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
+            }`}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>Account History</span>
+            {historyEntriesCount > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  activeTab === 'history'
+                    ? 'bg-teal-100 text-teal-800'
+                    : 'bg-slate-100 text-slate-600 border border-slate-200'
+                }`}
+              >
+                {historyEntriesCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="overflow-y-auto flex-1 pr-1 text-xs">
+          {activeTab === 'profile' ? (
+            <div className="space-y-4">
+              {/* 1. Basic Information */}
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
             <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2 border-b border-slate-200/80 pb-2">
               <span className="w-5 h-5 rounded-full bg-teal-600 text-white flex items-center justify-center text-xs font-bold">1</span>
@@ -549,8 +614,12 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
             </div>
           </div>
         </div>
+      ) : (
+        <StudentAccountHistoryView student={currentStudent} />
+      )}
+    </div>
 
-        {/* Footer Actions */}
+    {/* Footer Actions */}
         <div className="flex items-center justify-between border-t border-slate-200 pt-3 shrink-0">
           <div className="flex items-center gap-2 flex-wrap">
             <button
@@ -576,7 +645,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               <button
                 onClick={() => {
                   onClose();
-                  onEdit(student);
+                  onEdit(currentStudent);
                 }}
                 className="px-3.5 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-indigo-200"
               >

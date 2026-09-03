@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { VoucherItem, ParticularKind } from '../types';
 import { RotateCcw, Tag, Save } from 'lucide-react';
-import { formatCurrency, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
+import { formatCurrency, getEffectiveMultiple, roundUpToMultiple, resolveTemplateParticular } from '../utils/feeMath';
 import { useApp } from '../context/AppContext';
 
 interface VoucherParticularsEditorProps {
@@ -142,34 +142,26 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
       hasPermission('settings.manage') ||
       hasPermission('fees.generate'));
 
-  // Get active templates (sorted) with 3-tier overrides (Student > Class > Global)
+  // Get active templates (sorted) with 6-tier waterfall overrides
   const resolvedRoster = useMemo(() => {
     const student = studentId ? students.find((s) => s.id === studentId) : null;
-    const globalTemplates = templates
-      .filter((t) => !t.studentId && !t.classId)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
-
-    const classTemplates = student?.classId
-      ? templates.filter(
-          (t) => !t.studentId && t.classId === student.classId && (!t.month || t.month === activeMonth)
-        )
-      : [];
-
-    const studentTemplates = studentId
-      ? templates.filter((t) => t.studentId === studentId && (!t.month || t.month === activeMonth))
-      : [];
 
     return STANDARD_ROSTER_DEFS.map((stdDef) => {
-      const gTpl = globalTemplates.find((t) => t.kind === stdDef.kind);
-      const cTpl = classTemplates.find((t) => t.kind === stdDef.kind);
-      const sTpl = studentTemplates.find((t) => t.kind === stdDef.kind);
-
-      const resolvedLabel = sanitizeLabel(
-        sTpl?.label || cTpl?.label || gTpl?.label || stdDef.defaultLabel,
+      const resolved = resolveTemplateParticular(
+        templates,
+        stdDef.kind,
+        activeMonth,
+        studentId,
+        student?.classId,
         stdDef.defaultLabel
       );
 
-      const sortOrder = sTpl?.sortOrder ?? cTpl?.sortOrder ?? gTpl?.sortOrder ?? stdDef.sortOrder;
+      const resolvedLabel = sanitizeLabel(
+        resolved.label || stdDef.defaultLabel,
+        stdDef.defaultLabel
+      );
+
+      const sortOrder = resolved.activeTpl?.sortOrder ?? stdDef.sortOrder;
 
       return {
         ...stdDef,

@@ -10,9 +10,11 @@ import { CollectionsView } from './components/CollectionsView';
 import { DefaultersView } from './components/DefaultersView';
 import { TransportView } from './components/TransportView';
 import { ReportsView } from './components/ReportsView';
+import { AuditTrailView } from './components/AuditTrailView';
 import { SettingsView } from './components/SettingsView';
 import { LoginView } from './components/LoginView';
 import { MonthPicker } from './components/MonthPicker';
+import { GlobalStudentSearch } from './components/GlobalStudentSearch';
 import { ActiveTab } from './types';
 import { THEME_COLOR_PRESETS } from './utils/themeConfig';
 import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
@@ -36,6 +38,16 @@ function MainApp() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [reportStudentId, setReportStudentId] = useState<string | undefined>(undefined);
   const [reportType, setReportType] = useState<'feeCollection' | 'studentLedger' | 'outstanding'>('feeCollection');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd'
+  >('profile');
+  const [settingsTargetMonth, setSettingsTargetMonth] = useState<string | undefined>(undefined);
+
+  const handleOpenMonthEndWizard = (month?: string) => {
+    setSettingsInitialTab('monthEnd');
+    setSettingsTargetMonth(month || activeMonth);
+    setActiveTab('settings');
+  };
 
   const handleNavigateToLedger = (studentId: string) => {
     setReportStudentId(studentId);
@@ -63,6 +75,8 @@ function MainApp() {
         return hasPermission('transport.view');
       case 'reports':
         return hasPermission('fees.report');
+      case 'audit':
+        return hasPermission('audit.view');
       case 'settings':
         return (
           hasPermission('settings.view') ||
@@ -85,6 +99,7 @@ function MainApp() {
     'defaulters',
     'transport',
     'reports',
+    'audit',
     'settings',
   ];
 
@@ -198,6 +213,36 @@ function MainApp() {
           />
         </div>
 
+        {/* Mobile Search Bar Wrapper */}
+        <div className="md:hidden px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
+          <GlobalStudentSearch
+            onNavigateToLedger={handleNavigateToLedger}
+            onNavigateToStudents={() => setActiveTab('students')}
+          />
+        </div>
+
+        {/* Desktop Top Header Bar (Global Search + Quick Actions) */}
+        <header className="hidden md:flex sticky top-0 z-20 bg-slate-100/90 backdrop-blur-md px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
+          {/* Global Search Bar */}
+          <div className="flex-1 max-w-xl">
+            <GlobalStudentSearch
+              onNavigateToLedger={handleNavigateToLedger}
+              onNavigateToStudents={() => setActiveTab('students')}
+            />
+          </div>
+
+          {/* Right Header Status / Indicators */}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Operator info pill */}
+            <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs text-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span className="font-bold text-slate-700">@{currentUser.username}</span>
+              <span className="text-slate-400">&bull;</span>
+              <span className="text-slate-500 font-medium capitalize">{currentUser.role}</span>
+            </div>
+          </div>
+        </header>
+
         {/* Main Viewport Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-16 max-w-7xl w-full mx-auto">
           {!isTabAllowed(activeTab) ? (
@@ -220,7 +265,12 @@ function MainApp() {
             </div>
           ) : (
             <>
-              {activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
+              {activeTab === 'dashboard' && (
+                <DashboardView
+                  setActiveTab={setActiveTab}
+                  onOpenMonthEndWizard={handleOpenMonthEndWizard}
+                />
+              )}
               {activeTab === 'students' && <StudentsView onNavigateToLedger={handleNavigateToLedger} />}
               {activeTab === 'families' && <FamiliesView />}
               {activeTab === 'classes' && <ClassesView />}
@@ -236,7 +286,16 @@ function MainApp() {
                   onStudentIdChange={setReportStudentId}
                 />
               )}
-              {activeTab === 'settings' && <SettingsView />}
+              {activeTab === 'audit' && <AuditTrailView />}
+              {activeTab === 'settings' && (
+                <SettingsView
+                  initialSubTab={settingsInitialTab}
+                  targetMonth={settingsTargetMonth}
+                  onNavigateToTab={(tab) => {
+                    setActiveTab(tab);
+                  }}
+                />
+              )}
             </>
           )}
         </main>

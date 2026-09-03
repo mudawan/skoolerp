@@ -16,6 +16,7 @@ import {
   CreditCard,
   FileText,
   FolderKanban,
+  History,
   LayoutDashboard,
   LogOut,
   PanelLeftClose,
@@ -119,6 +120,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     },
     { id: 'transport', label: 'Transport', icon: Bus },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'audit', label: 'Audit Trail', icon: History },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -142,6 +144,8 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         return hasPermission('transport.view');
       case 'reports':
         return hasPermission('fees.report');
+      case 'audit':
+        return hasPermission('audit.view');
       case 'settings':
         return (
           hasPermission('settings.view') ||
@@ -182,11 +186,27 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         }`}
       >
         {/* Sidebar Header: School Logo & Title */}
-        <div className={`flex items-center justify-between p-4 border-b ${isLight ? 'border-slate-200' : 'border-slate-800/80'} shrink-0 min-h-[68px]`}>
-          <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+        <div
+          className={`relative flex items-center ${
+            isSidebarCollapsed && !mobileOpen ? 'justify-center px-2 py-3.5' : 'justify-between p-4'
+          } border-b ${isLight ? 'border-slate-200' : 'border-slate-800/80'} shrink-0 min-h-[68px]`}
+        >
+          <div
+            onClick={() => {
+              if (isSidebarCollapsed && !mobileOpen) {
+                setIsSidebarCollapsed(false);
+              }
+            }}
+            className={`flex items-center gap-3 min-w-0 ${
+              isSidebarCollapsed && !mobileOpen ? 'cursor-pointer' : ''
+            }`}
+            title={isSidebarCollapsed && !mobileOpen ? 'Click to expand sidebar' : undefined}
+          >
             <div
               style={{ backgroundColor: preset.primaryColor }}
-              className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md overflow-hidden shrink-0"
+              className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md overflow-hidden shrink-0 transition-transform ${
+                isSidebarCollapsed && !mobileOpen ? 'hover:scale-105 ring-1 ring-white/20' : ''
+              }`}
             >
               {institute.logoUrl ? (
                 <img
@@ -216,6 +236,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
           {/* Mobile Close Button */}
           <button
+            type="button"
             onClick={() => setMobileOpen(false)}
             className={`md:hidden p-1.5 rounded-lg cursor-pointer ${
               isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -224,20 +245,37 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             <X className="w-5 h-5" />
           </button>
 
-          {/* Desktop Collapse / Expand Toggle */}
-          <button
-            onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-            title={isSidebarCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-            className={`hidden md:flex items-center justify-center w-7 h-7 rounded-lg transition cursor-pointer shrink-0 ${
-              isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            {isSidebarCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-teal-400" />
-            ) : (
+          {/* Desktop Collapse Button (Shown when sidebar is expanded) */}
+          {(!isSidebarCollapsed || mobileOpen) && (
+            <button
+              type="button"
+              id="btn-collapse-sidebar"
+              onClick={() => setIsSidebarCollapsed(true)}
+              title="Collapse Sidebar"
+              className={`hidden md:flex items-center justify-center w-7 h-7 rounded-lg transition cursor-pointer shrink-0 ${
+                isLight ? 'text-slate-500 hover:text-slate-900 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
               <ChevronLeft className="w-4 h-4 text-slate-400" />
-            )}
-          </button>
+            </button>
+          )}
+
+          {/* Desktop Expand Button (Floating edge toggle when collapsed - clean separation from school icon) */}
+          {isSidebarCollapsed && !mobileOpen && (
+            <button
+              type="button"
+              id="btn-expand-sidebar"
+              onClick={() => setIsSidebarCollapsed(false)}
+              title="Expand Sidebar"
+              className={`hidden md:flex absolute -right-3.5 top-1/2 -translate-y-1/2 z-50 w-7 h-7 rounded-full border shadow-md items-center justify-center transition-all cursor-pointer ${
+                isLight
+                  ? 'bg-white border-slate-300 text-slate-700 hover:text-teal-600 hover:border-teal-500 hover:scale-110 shadow-slate-200'
+                  : 'bg-slate-800 border-slate-600 text-slate-200 hover:text-teal-400 hover:border-teal-400 hover:scale-110 shadow-black/60'
+              }`}
+            >
+              <ChevronRight className="w-4 h-4 text-teal-400" />
+            </button>
+          )}
         </div>
 
         {/* Working Month Selector in Sidebar */}

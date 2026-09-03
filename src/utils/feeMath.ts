@@ -264,6 +264,137 @@ export function getSkippedMonths(
   return skipped;
 }
 
+export interface ResolvedTemplateItem {
+  label: string;
+  amount: number;
+  source: 'student_month' | 'student_all' | 'class_month' | 'class_all' | 'global_month' | 'global_all';
+  tier: 'student' | 'class' | 'global';
+  scope: 'month' | 'all';
+  isStudentOverride: boolean;
+  isClassOverride: boolean;
+  isGlobalMonthOverride: boolean;
+  activeTpl?: FeeTemplate;
+}
+
+/**
+ * Resolves a single fee particular kind through the 6-tier cascade:
+ * 1. Student Override (Specific Month)
+ * 2. Student Override (All Months)
+ * 3. Class Override (Specific Month)
+ * 4. Class Override (All Months)
+ * 5. Global Override (Specific Month)
+ * 6. Global Default (All Months)
+ */
+export function resolveTemplateParticular(
+  templates: FeeTemplate[],
+  kind: ParticularKind,
+  month: string,
+  studentId?: string,
+  classId?: string,
+  defaultLabel: string = ''
+): ResolvedTemplateItem {
+  const isMonthMatch = (tplMonth?: string) => tplMonth && tplMonth !== 'all' && tplMonth === month;
+  const isAllMatch = (tplMonth?: string) => !tplMonth || tplMonth === 'all';
+
+  const sMonth = studentId
+    ? templates.find((t) => t.studentId === studentId && t.kind === kind && isMonthMatch(t.month))
+    : undefined;
+  const sAll = studentId
+    ? templates.find((t) => t.studentId === studentId && t.kind === kind && isAllMatch(t.month))
+    : undefined;
+
+  const cMonth = classId
+    ? templates.find((t) => !t.studentId && t.classId === classId && t.kind === kind && isMonthMatch(t.month))
+    : undefined;
+  const cAll = classId
+    ? templates.find((t) => !t.studentId && t.classId === classId && t.kind === kind && isAllMatch(t.month))
+    : undefined;
+
+  const gMonth = templates.find(
+    (t) => !t.studentId && !t.classId && t.kind === kind && isMonthMatch(t.month)
+  );
+  const gAll = templates.find(
+    (t) => !t.studentId && !t.classId && t.kind === kind && isAllMatch(t.month)
+  );
+
+  if (sMonth) {
+    return {
+      label: sMonth.label || defaultLabel,
+      amount: sMonth.defaultAmount ?? 0,
+      source: 'student_month',
+      tier: 'student',
+      scope: 'month',
+      isStudentOverride: true,
+      isClassOverride: false,
+      isGlobalMonthOverride: false,
+      activeTpl: sMonth,
+    };
+  }
+  if (sAll) {
+    return {
+      label: sAll.label || defaultLabel,
+      amount: sAll.defaultAmount ?? 0,
+      source: 'student_all',
+      tier: 'student',
+      scope: 'all',
+      isStudentOverride: true,
+      isClassOverride: false,
+      isGlobalMonthOverride: false,
+      activeTpl: sAll,
+    };
+  }
+  if (cMonth) {
+    return {
+      label: cMonth.label || defaultLabel,
+      amount: cMonth.defaultAmount ?? 0,
+      source: 'class_month',
+      tier: 'class',
+      scope: 'month',
+      isStudentOverride: false,
+      isClassOverride: true,
+      isGlobalMonthOverride: false,
+      activeTpl: cMonth,
+    };
+  }
+  if (cAll) {
+    return {
+      label: cAll.label || defaultLabel,
+      amount: cAll.defaultAmount ?? 0,
+      source: 'class_all',
+      tier: 'class',
+      scope: 'all',
+      isStudentOverride: false,
+      isClassOverride: true,
+      isGlobalMonthOverride: false,
+      activeTpl: cAll,
+    };
+  }
+  if (gMonth) {
+    return {
+      label: gMonth.label || defaultLabel,
+      amount: gMonth.defaultAmount ?? 0,
+      source: 'global_month',
+      tier: 'global',
+      scope: 'month',
+      isStudentOverride: false,
+      isClassOverride: false,
+      isGlobalMonthOverride: true,
+      activeTpl: gMonth,
+    };
+  }
+  return {
+    label: gAll?.label || defaultLabel,
+    amount: gAll?.defaultAmount ?? 0,
+    source: 'global_all',
+    tier: 'global',
+    scope: 'all',
+    isStudentOverride: false,
+    isClassOverride: false,
+    isGlobalMonthOverride: false,
+    activeTpl: gAll,
+  };
+}
+
 /**
  * Calculates pre-generation preview for a single student for a target month.
  */
@@ -365,52 +496,23 @@ export function calculateStudentVoucherPreview(
 
   const particulars: VoucherItem[] = [];
 
-  // 3-Way Hierarchy Template Partition:
-  // 1. Student-level overrides (highest precedence)
-  const studentTemplates = templates.filter(
-    (t) => t.studentId === student.id && (!t.month || t.month === month)
-  );
-  // 2. Class-level overrides (middle precedence, overrides global)
-  const classTemplates = templates.filter(
-    (t) => !t.studentId && t.classId === student.classId && (!t.month || t.month === month)
-  );
-  // 3. Global default templates (baseline)
-  const globalTemplates = templates.filter((t) => !t.studentId && !t.classId);
+  const isMonthMatch = (tplMonth?: string) => tplMonth && tplMonth !== 'all' && tplMonth === month;
+  const isAllMatch = (tplMonth?: string) => !tplMonth || tplMonth === 'all';
 
-  // Helper to get active label, amount and origin for a template kind in 3-tier cascade:
-  // Student Override > Class Override > Global Default
+  // Helper using the 6-tier waterfall resolver
   const getTemplateInfo = (kind: ParticularKind, defaultLabel: string) => {
-    const studentOverride = studentTemplates.find((t) => t.kind === kind);
-    const classOverride = classTemplates.find((t) => t.kind === kind);
-    const globalTpl = globalTemplates.find((t) => t.kind === kind);
-
-    let activeTpl: FeeTemplate | undefined;
-    let source: 'student' | 'class' | 'global' = 'global';
-
-    if (studentOverride) {
-      activeTpl = studentOverride;
-      source = 'student';
-    } else if (classOverride) {
-      activeTpl = classOverride;
-      source = 'class';
-    } else {
-      activeTpl = globalTpl;
-      source = 'global';
-    }
-
-    return {
-      label: activeTpl?.label || defaultLabel,
-      amount: activeTpl?.defaultAmount ?? 0,
-      source,
-      isStudentOverride: !!studentOverride,
-      isClassOverride: !studentOverride && !!classOverride,
-    };
+    return resolveTemplateParticular(templates, kind, month, student.id, student.classId, defaultLabel);
   };
 
-  // 1. Tuition Fee (Student Override > Class Override / Class Monthly Fee > Global Template)
+  // 1. Tuition Fee (Student Override [Month > All] > Class Override [Month > All] > Class Monthly Fee > Global [Month > All])
   const tuitionInfo = getTemplateInfo('Tuition', 'Tuition Fee');
-  const studentTuitionOverride = studentTemplates.find((t) => t.kind === 'Tuition');
-  const classTuitionOverride = classTemplates.find((t) => t.kind === 'Tuition');
+  const studentTuitionOverride =
+    templates.find((t) => t.studentId === student.id && t.kind === 'Tuition' && isMonthMatch(t.month)) ||
+    templates.find((t) => t.studentId === student.id && t.kind === 'Tuition' && isAllMatch(t.month));
+
+  const classTuitionOverride =
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Tuition' && isMonthMatch(t.month)) ||
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Tuition' && isAllMatch(t.month));
 
   let rawTuitionAmount = 0;
   if (studentTuitionOverride && studentTuitionOverride.defaultAmount > 0) {
@@ -446,13 +548,19 @@ export function calculateStudentVoucherPreview(
     amount: flex2Info.amount ?? 0,
   });
 
-  // 4. Transport Fee (Student Override > Class Override > Stop Calculation)
+  // 4. Transport Fee (Student Override [Month > All] > Class Override [Month > All] > Stop Calculation)
   const assignment = assignments.find(
     (a) => a.studentId === student.id && a.month === month && a.active
   );
   const stop = assignment ? stops.find((s) => s.id === assignment.stopId) : undefined;
-  const transportStudentOverride = studentTemplates.find((t) => t.kind === 'Transport');
-  const transportClassOverride = classTemplates.find((t) => t.kind === 'Transport');
+  const transportStudentOverride =
+    templates.find((t) => t.studentId === student.id && t.kind === 'Transport' && isMonthMatch(t.month)) ||
+    templates.find((t) => t.studentId === student.id && t.kind === 'Transport' && isAllMatch(t.month));
+
+  const transportClassOverride =
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isMonthMatch(t.month)) ||
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isAllMatch(t.month));
+
   const calculatedTransportFee = calculateTransportFee(assignment, stop);
 
   let transportFee = calculatedTransportFee;
@@ -510,8 +618,13 @@ export function calculateStudentVoucherPreview(
 
   // 5. Fine
   const fineInfo = getTemplateInfo('Fine', 'Fine');
-  const fineStudentOverride = studentTemplates.find((t) => t.kind === 'Fine');
-  const fineClassOverride = classTemplates.find((t) => t.kind === 'Fine');
+  const fineStudentOverride =
+    templates.find((t) => t.studentId === student.id && t.kind === 'Fine' && isMonthMatch(t.month)) ||
+    templates.find((t) => t.studentId === student.id && t.kind === 'Fine' && isAllMatch(t.month));
+
+  const fineClassOverride =
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Fine' && isMonthMatch(t.month)) ||
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Fine' && isAllMatch(t.month));
 
   let baseFine = 0;
   if (fineStudentOverride && fineStudentOverride.defaultAmount > 0) {
@@ -551,9 +664,15 @@ export function calculateStudentVoucherPreview(
     amount: prevBalance,
   });
 
-  // 9. Monthly Discount (Student Override > Class Override > Student Profile Discount)
-  const discountStudentOverride = studentTemplates.find((t) => t.kind === 'Discount');
-  const discountClassOverride = classTemplates.find((t) => t.kind === 'Discount');
+  // 9. Monthly Discount (Student Override [Month > All] > Class Override [Month > All] > Student Profile Discount > Global [Month > All])
+  const discountStudentOverride =
+    templates.find((t) => t.studentId === student.id && t.kind === 'Discount' && isMonthMatch(t.month)) ||
+    templates.find((t) => t.studentId === student.id && t.kind === 'Discount' && isAllMatch(t.month));
+
+  const discountClassOverride =
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Discount' && isMonthMatch(t.month)) ||
+    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Discount' && isAllMatch(t.month));
+
   const discountInfo = getTemplateInfo('Discount', 'Discount in Fee');
 
   let rawDiscount = 0;
@@ -561,8 +680,10 @@ export function calculateStudentVoucherPreview(
     rawDiscount = discountStudentOverride.defaultAmount;
   } else if (discountClassOverride && discountClassOverride.defaultAmount > 0) {
     rawDiscount = discountClassOverride.defaultAmount;
+  } else if (student.monthlyDiscount && student.monthlyDiscount > 0) {
+    rawDiscount = student.monthlyDiscount;
   } else {
-    rawDiscount = student.monthlyDiscount || 0;
+    rawDiscount = discountInfo.amount || 0;
   }
   particulars.push({
     kind: 'Discount',
@@ -572,13 +693,7 @@ export function calculateStudentVoucherPreview(
 
   // Sort particulars according to the templates sort order (or standard order)
   const sortMap = new Map<ParticularKind, number>();
-  globalTemplates.forEach((t) => sortMap.set(t.kind, t.sortOrder));
-  classTemplates.forEach((t) => {
-    if (t.sortOrder !== undefined) {
-      sortMap.set(t.kind, t.sortOrder);
-    }
-  });
-  studentTemplates.forEach((t) => {
+  templates.forEach((t) => {
     if (t.sortOrder !== undefined) {
       sortMap.set(t.kind, t.sortOrder);
     }
@@ -653,10 +768,42 @@ export function getNextMonthString(monthStr: string): string {
   return `${year}-${month.toString().padStart(2, '0')}`;
 }
 
+export function normalizeMonthString(monthStr: string | undefined | null): string {
+  if (!monthStr || typeof monthStr !== 'string') return '';
+  const trimmed = monthStr.trim();
+  if (!trimmed || trimmed === 'all') return trimmed;
+
+  const standardMatch = trimmed.match(/^(\d{4})-(\d{1,2})$/);
+  if (standardMatch) {
+    const y = standardMatch[1];
+    const m = standardMatch[2].padStart(2, '0');
+    return `${y}-${m}`;
+  }
+
+  // Attempt parse if date string like "2026-09-01" or "September 2026"
+  const parsed = new Date(trimmed.includes('-') ? trimmed : `${trimmed} 1`);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+
+  return trimmed;
+}
+
 export function formatMonthName(monthStr: string): string {
-  const [yearStr, monthNumStr] = monthStr.split('-');
-  const date = new Date(parseInt(yearStr, 10), parseInt(monthNumStr, 10) - 1, 1);
-  return date.toLocaleString('default', { month: 'long', year: 'numeric' });
+  if (!monthStr || monthStr === 'all') return 'All Months';
+  const normalized = normalizeMonthString(monthStr);
+  const parts = normalized.split('-');
+  if (parts.length >= 2) {
+    const year = parseInt(parts[0], 10);
+    const monthNum = parseInt(parts[1], 10);
+    if (!isNaN(year) && !isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
+      const date = new Date(year, monthNum - 1, 1);
+      return date.toLocaleString('default', { month: 'long', year: 'numeric' });
+    }
+  }
+  return monthStr;
 }
 
 export function getCurrentMonthString(): string {

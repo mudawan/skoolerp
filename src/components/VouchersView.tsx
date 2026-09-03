@@ -48,6 +48,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -1252,49 +1253,48 @@ export const VouchersView: React.FC = () => {
 
       {/* Generator Wizard Modal */}
       {showGeneratorModal && previewsData && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-5xl w-full p-4 sm:p-5 shadow-2xl space-y-3.5 my-auto max-h-[92vh] flex flex-col">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-3 sm:p-5 shadow-2xl space-y-2 sm:space-y-3 my-auto h-[96dvh] sm:h-auto sm:max-h-[92vh] max-h-[96dvh] flex flex-col overflow-hidden">
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-lg bg-teal-50 text-teal-700 border border-teal-200/80">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2 sm:pb-2.5 shrink-0 gap-2">
+              <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
+                <div className="p-1.5 rounded-lg bg-teal-50 text-teal-700 border border-teal-200/80 shrink-0">
                   <FileText className="w-4 h-4" />
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span>Voucher Generation Wizard</span>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
+                      Voucher Generator
+                    </h3>
+                    <span className="text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200 inline-flex items-center whitespace-nowrap shrink-0">
                       {formatMonthName(targetMonth)}
                     </span>
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
+                  </div>
+                  <p className="text-[10px] sm:text-[11px] text-slate-500 hidden sm:block truncate mt-0.5">
                     Review student particulars, set due date & fine rate, and generate vouchers.
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsParamsCollapsed((prev) => !prev)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer"
+                  className="inline-flex items-center gap-1 px-2 sm:px-2.5 py-1 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap shrink-0"
                   title={isParamsCollapsed ? 'Expand generator settings' : 'Collapse generator settings'}
                 >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span className="hidden sm:inline">{isParamsCollapsed ? 'Expand Settings' : 'Hide Settings'}</span>
+                  <span className="sm:hidden">{isParamsCollapsed ? 'Settings' : 'Hide'}</span>
                   {isParamsCollapsed ? (
-                    <>
-                      <ChevronDown className="w-3.5 h-3.5 text-slate-600" />
-                      <span>Expand Settings</span>
-                    </>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                   ) : (
-                    <>
-                      <ChevronUp className="w-3.5 h-3.5 text-slate-600" />
-                      <span>Hide Settings</span>
-                    </>
+                    <ChevronUp className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                   )}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowGeneratorModal(false)}
-                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
                   title="Close modal"
                 >
                   <X className="w-5 h-5" />
@@ -1304,7 +1304,7 @@ export const VouchersView: React.FC = () => {
 
             {/* Month Closure Gate Blocking Alert */}
             {previewsData.monthClosureBlocked && (
-              <div className="px-3.5 py-2.5 bg-rose-50 border-l-4 border-rose-500 rounded-xl text-xs text-rose-900 flex items-start gap-2 shrink-0">
+              <div className="px-3 py-2 bg-rose-50 border-l-4 border-rose-500 rounded-xl text-xs text-rose-900 flex items-start gap-2 shrink-0">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-bold text-rose-800">Month Closure Gate Active: </span>
@@ -1313,19 +1313,63 @@ export const VouchersView: React.FC = () => {
               </div>
             )}
 
+            {/* Parameters Summary Bar (When Collapsed) */}
+            {isParamsCollapsed && (
+              <div className="bg-slate-50 px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl border border-slate-200/80 text-xs shrink-0 flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-x-2.5 sm:gap-x-3.5 gap-y-0.5 text-slate-600 text-[11px] sm:text-xs min-w-0">
+                  <div className="inline-flex items-center gap-1 font-bold text-slate-800">
+                    <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                    <span>{formatMonthName(targetMonth)}</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    <span className="text-slate-300 hidden sm:inline">•</span>
+                    <span className="text-slate-500">Scope:</span>
+                    <span className="font-semibold text-slate-800">
+                      {scope === 'all'
+                        ? 'All Active'
+                        : scope === 'class'
+                        ? (classes.find((c) => c.id === scopeClassId)?.name || 'Class')
+                        : 'Single Student'}
+                    </span>
+                  </div>
+                  {dueDateInput && (
+                    <div className="inline-flex items-center gap-1">
+                      <span className="text-slate-300 hidden sm:inline">•</span>
+                      <span className="text-slate-500">Due:</span>
+                      <span className="font-semibold text-slate-800 font-mono">{dueDateInput}</span>
+                    </div>
+                  )}
+                  <div className="inline-flex items-center gap-1">
+                    <span className="text-slate-300 hidden sm:inline">•</span>
+                    <span className="text-slate-500">Fine:</span>
+                    <span className="font-semibold text-slate-800 font-mono">{formatCurrency(lateFeeInput)}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsParamsCollapsed(false)}
+                  className="px-2 py-0.5 sm:px-2.5 sm:py-1 text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200/80 rounded-lg text-[11px] sm:text-xs font-bold shrink-0 transition cursor-pointer flex items-center gap-1"
+                  title="Modify parameters like Month, Scope, Due Date, or Late Fine"
+                >
+                  <span>Edit</span>
+                  <ChevronDown className="w-3 h-3 text-teal-600" />
+                </button>
+              </div>
+            )}
+
             {/* Parameters & Configuration Toolbar (Collapsible) */}
             {!isParamsCollapsed && (
-              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2">
+              <div className="bg-slate-50 p-2 sm:p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2 max-h-[35vh] sm:max-h-none overflow-y-auto">
                 <div
-                  className={`grid gap-2.5 ${
+                  className={`grid gap-2 sm:gap-2.5 ${
                     scope === 'class' || scope === 'student'
                       ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'
                       : 'grid-cols-2 sm:grid-cols-4'
                   }`}
                 >
                   <div>
-                    <div className="flex items-center justify-between mb-1 h-4">
-                      <label className="block text-[11px] font-bold text-slate-600">Target Month</label>
+                    <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Target Month</label>
                     </div>
                     <MonthPicker
                       value={targetMonth}
@@ -1343,13 +1387,13 @@ export const VouchersView: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1 h-4">
-                      <label className="block text-[11px] font-bold text-slate-600">Scope</label>
+                    <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Scope</label>
                     </div>
                     <select
                       value={scope === 'students' ? 'all' : scope}
                       onChange={(e) => handleUpdatePreview(e.target.value as any, scopeClassId, targetMonth)}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      className="w-full px-2 sm:px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
                     >
                       <option value="all">All Active Students</option>
                       <option value="class">Single Class Only</option>
@@ -1359,13 +1403,13 @@ export const VouchersView: React.FC = () => {
 
                   {scope === 'class' ? (
                     <div>
-                      <div className="flex items-center justify-between mb-1 h-4">
-                        <label className="block text-[11px] font-bold text-slate-600">Select Class</label>
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                        <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Select Class</label>
                       </div>
                       <select
                         value={scopeClassId}
                         onChange={(e) => handleUpdatePreview(scope, e.target.value, targetMonth)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                        className="w-full px-2 sm:px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
                       >
                         {classes.map((c) => (
                           <option key={c.id} value={c.id}>
@@ -1376,8 +1420,8 @@ export const VouchersView: React.FC = () => {
                     </div>
                   ) : scope === 'student' ? (
                     <div>
-                      <div className="flex items-center justify-between mb-1 h-4">
-                        <label className="block text-[11px] font-bold text-slate-600">Select Student</label>
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                        <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Select Student</label>
                       </div>
                       {(() => {
                         const activeStudentsList = students.filter((s) => s.status === 'Active');
@@ -1409,7 +1453,7 @@ export const VouchersView: React.FC = () => {
                               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                               <input
                                 type="text"
-                                placeholder="Search student by name, Reg #, roll #, class..."
+                                placeholder="Search student..."
                                 value={singleStudentSearchQuery}
                                 onChange={(e) => {
                                   setSingleStudentSearchQuery(e.target.value);
@@ -1517,10 +1561,10 @@ export const VouchersView: React.FC = () => {
                   ) : null}
 
                   <div>
-                    <div className="flex items-center justify-between mb-1 h-4">
-                      <label className="block text-[11px] font-bold text-slate-600">Due Date</label>
+                    <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Due Date</label>
                       {defaultDueDateEnabled && dueDateInput && (
-                        <span className="text-[10px] leading-none font-semibold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200/80 flex items-center gap-1">
+                        <span className="text-[9px] leading-none font-semibold text-teal-700 bg-teal-50 px-1 py-0.5 rounded border border-teal-200/80 flex items-center gap-0.5">
                           <Sparkles className="w-2.5 h-2.5" />
                           Default
                         </span>
@@ -1538,14 +1582,14 @@ export const VouchersView: React.FC = () => {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1 h-4">
-                      <label className="block text-[11px] font-bold text-slate-600">Late Fine (Rs.)</label>
+                    <div className="flex items-center justify-between mb-0.5 sm:mb-1">
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Late Fine (Rs.)</label>
                     </div>
                     <input
                       type="number"
                       value={lateFeeInput}
                       onChange={(e) => setLateFeeInput(Number(e.target.value))}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                      className="w-full px-2 sm:px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -1557,12 +1601,12 @@ export const VouchersView: React.FC = () => {
                   (priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers)) ||
                   (skippedMonthRule === 'warning' && previewsData.previews.some((p) => p.hasSkippedMonths && !p.isAlreadyGenerated)) ||
                   (priorMonthRule === 'recalculate' && previewsData.previews.some((p) => p.hasFutureVouchers))) && (
-                  <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-[11px] text-slate-600">
+                  <div className="pt-1.5 sm:pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px] text-slate-600">
                     {previewsData.previews.some((p) => p.isBeforeFirstBillingMonth) && (
                       <div className="inline-flex items-center gap-1.5 text-slate-600">
                         <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span>
-                          <strong className="text-slate-700">First Billing Month:</strong> Students with a start month after {formatMonthName(targetMonth)} are excluded.
+                          <strong className="text-slate-700">First Billing Month:</strong> Students with start after {formatMonthName(targetMonth)} excluded.
                         </span>
                       </div>
                     )}
@@ -1584,7 +1628,7 @@ export const VouchersView: React.FC = () => {
                     {priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
                       <div className="inline-flex items-center gap-1.5 text-amber-800 font-medium">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        <span>Future vouchers exist (confirmation will be prompted).</span>
+                        <span>Future vouchers exist (confirmation will prompt).</span>
                       </div>
                     )}
 
@@ -1625,56 +1669,59 @@ export const VouchersView: React.FC = () => {
               ).length;
 
               return (
-                <div className="flex flex-col flex-1 min-h-0 space-y-2">
+                <div className="flex flex-col flex-1 min-h-0 space-y-1.5 sm:space-y-2">
                   {/* Summary Metrics & Selection Controls */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
-                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                      <div className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] shadow-2xs">
-                        <span className="text-slate-500 font-semibold">Total Students:</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 bg-slate-50 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                    <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 min-w-0">
+                      <div className="inline-flex items-center gap-1 bg-white px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-slate-200 text-[10px] sm:text-[11px] shadow-2xs">
+                        <span className="text-slate-500 font-semibold">Total:</span>
                         <span className="font-bold text-slate-800">{previewsData.previews.length}</span>
                       </div>
-                      <div className="inline-flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80 text-[11px] shadow-2xs">
+                      <div className="inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-emerald-200/80 text-[10px] sm:text-[11px] shadow-2xs">
                         <span className="text-emerald-700 font-semibold">Selected:</span>
                         <span className="font-bold text-emerald-800">{selectedGenStudentIds.length}</span>
                       </div>
-                      <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 text-[11px] shadow-2xs">
+                      <div className="inline-flex items-center gap-1 bg-teal-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-teal-200/80 text-[10px] sm:text-[11px] shadow-2xs">
                         <span className="text-teal-700 font-semibold">
-                          {roundingEnabled
-                            ? `Est. Net Due (Rounded to ${roundingMultiple ?? 10}):`
-                            : 'Est. Net Due:'}
+                          <span className="sm:hidden">Net:</span>
+                          <span className="hidden sm:inline">
+                            {roundingEnabled
+                              ? `Est. Net Due (${roundingMultiple ?? 10}):`
+                              : 'Est. Net Due:'}
+                          </span>
                         </span>
                         <span className="font-bold text-teal-800 font-mono">{formatCurrency(selectedTotalNetDue)}</span>
                       </div>
                       {alreadyGenCount > 0 && (
-                        <div className="inline-flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] shadow-2xs">
-                          <span className="text-slate-500 font-semibold">Already Issued:</span>
+                        <div className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-slate-200 text-[10px] sm:text-[11px] shadow-2xs">
+                          <span className="text-slate-500 font-semibold">Issued:</span>
                           <span className="font-bold text-slate-700">{alreadyGenCount}</span>
                         </div>
                       )}
                       {blockedCount > 0 && (
-                        <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 text-[11px] shadow-2xs">
-                          <span className="text-rose-700 font-semibold">Excluded / Blocked:</span>
+                        <div className="inline-flex items-center gap-1 bg-rose-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-rose-200/80 text-[10px] sm:text-[11px] shadow-2xs">
+                          <span className="text-rose-700 font-semibold">Blocked:</span>
                           <span className="font-bold text-rose-800">{blockedCount}</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-end gap-1.5 shrink-0">
                       <button
                         type="button"
                         onClick={isAllEligibleSelected ? handleSelectNoneGen : handleSelectAllGen}
-                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-semibold text-xs shadow-2xs transition cursor-pointer"
+                        className="inline-flex items-center justify-center gap-1 px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-semibold text-[11px] sm:text-xs shadow-2xs transition cursor-pointer w-full sm:w-auto"
                       >
-                        <Check className="w-3.5 h-3.5 text-teal-600" />
+                        <Check className="w-3.5 h-3.5 text-teal-600 shrink-0" />
                         <span>{isAllEligibleSelected ? 'Deselect All' : `Select All Ready (${eligiblePreviews.length})`}</span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Compact Table */}
+                  {/* Compact Table Wrapper with guaranteed min-height */}
                   <div
-                    className={`w-full overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl bg-white shadow-2xs block flex-1 transition-all ${
-                      isParamsCollapsed ? 'max-h-[66vh] sm:max-h-[70vh]' : 'max-h-[50vh] sm:max-h-[54vh]'
+                    className={`w-full overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl bg-white shadow-2xs block flex-1 min-h-[190px] sm:min-h-[240px] transition-all ${
+                      isParamsCollapsed ? 'max-h-[72vh]' : 'max-h-[48vh] sm:max-h-[56vh]'
                     }`}
                   >
                     <table className="w-full min-w-[750px] border-collapse text-left text-[11px] text-slate-700">
@@ -1825,26 +1872,38 @@ export const VouchersView: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Mobile Table Swipe Hint */}
+                  <div className="sm:hidden flex items-center justify-between text-[10px] text-slate-400 px-1 pt-0.5 shrink-0">
+                    <span className="flex items-center gap-1">
+                      <ArrowUpDown className="w-2.5 h-2.5 rotate-90 text-slate-400" />
+                      <span>Swipe table sideways to view fee heads</span>
+                    </span>
+                    <span className="font-semibold text-slate-500">{previewsData.previews.length} students</span>
+                  </div>
                 </div>
               );
             })()}
 
             {/* Action Footer */}
-            <div className="flex items-center justify-between pt-2.5 border-t border-slate-200 shrink-0">
+            <div className="flex items-center justify-between pt-2 sm:pt-2.5 border-t border-slate-200 shrink-0 gap-2">
               <button
                 type="button"
                 onClick={() => setShowGeneratorModal(false)}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
+                className="px-3 sm:px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
               >
                 Cancel
               </button>
               <button
                 disabled={previewsData.monthClosureBlocked || selectedGenStudentIds.length === 0}
                 onClick={handleCommitGeneration}
-                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
+                className="px-3.5 sm:px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5 shrink-0"
               >
                 <Check className="w-4 h-4" />
-                <span>Commit & Generate ({selectedGenStudentIds.length}) Vouchers</span>
+                <span>
+                  <span className="sm:hidden">Generate ({selectedGenStudentIds.length})</span>
+                  <span className="hidden sm:inline">Commit & Generate ({selectedGenStudentIds.length}) Vouchers</span>
+                </span>
               </button>
             </div>
           </div>

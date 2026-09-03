@@ -19,7 +19,9 @@ import {
   Trash2,
   Users,
   X,
+  GraduationCap,
 } from 'lucide-react';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 
 export const ClassesView: React.FC = () => {
   const {
@@ -32,7 +34,10 @@ export const ClassesView: React.FC = () => {
     reorderClasses,
     hasPermission,
     showToast,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
@@ -172,7 +177,7 @@ export const ClassesView: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <BookOpen className="w-6 h-6 text-teal-600" />
+            <BookOpen className="w-6 h-6" style={{ color: preset.primaryColor }} />
             Class Setup & Fee Grades
           </h2>
           <p className="text-xs text-slate-500 mt-1">
@@ -185,9 +190,10 @@ export const ClassesView: React.FC = () => {
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
             <button
               onClick={() => setViewMode('grid')}
+              style={viewMode === 'grid' ? { color: preset.textColor } : undefined}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                 viewMode === 'grid'
-                  ? 'bg-white text-teal-700 shadow-xs'
+                  ? 'bg-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
               title="Grid View"
@@ -197,9 +203,10 @@ export const ClassesView: React.FC = () => {
             </button>
             <button
               onClick={() => setViewMode('table')}
+              style={viewMode === 'table' ? { color: preset.textColor } : undefined}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                 viewMode === 'table'
-                  ? 'bg-white text-teal-700 shadow-xs'
+                  ? 'bg-white shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
               title="List View"
@@ -212,7 +219,8 @@ export const ClassesView: React.FC = () => {
           {hasPermission('classes.manage') && (
             <button
               onClick={handleOpenAdd}
-              className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
+              style={{ backgroundColor: preset.primaryColor }}
+              className="flex items-center gap-2 hover:opacity-95 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               Add Academic Class
@@ -230,13 +238,20 @@ export const ClassesView: React.FC = () => {
             placeholder="Search classes by name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-slate-400/20"
           />
         </div>
         <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
           {hasPermission('classes.manage') && (
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-teal-700 bg-teal-50/80 border border-teal-200 px-2.5 py-1 rounded-lg font-medium">
-              <GripVertical className="w-3.5 h-3.5 text-teal-600" />
+            <span
+              style={{
+                color: preset.textColor,
+                backgroundColor: preset.lightBg,
+                borderColor: preset.lightBorder,
+              }}
+              className="inline-flex items-center gap-1.5 text-[11px] border px-2.5 py-1 rounded-lg font-medium"
+            >
+              <GripVertical className="w-3.5 h-3.5" style={{ color: preset.primaryColor }} />
               <span>Drag to reorder sort positions</span>
             </span>
           )}
@@ -266,91 +281,164 @@ export const ClassesView: React.FC = () => {
                 onDragOver={(e) => handleDragOver(e, cls)}
                 onDrop={(e) => handleDrop(e, cls)}
                 onDragEnd={handleDragEnd}
-                className={`group relative p-5 rounded-2xl border transition-all space-y-3 select-none ${
+                style={
                   isDragged
-                    ? 'opacity-40 scale-[0.98] border-dashed border-teal-500 bg-teal-50/40 ring-2 ring-teal-400/50 shadow-md'
+                    ? {
+                        borderColor: preset.primaryColor,
+                        backgroundColor: `${preset.lightBg}60`,
+                      }
                     : isDragOver
-                    ? 'border-teal-500 ring-2 ring-teal-500/50 bg-teal-50/30 transform -translate-y-1 shadow-lg'
+                    ? {
+                        borderColor: preset.primaryColor,
+                        boxShadow: `0 10px 25px -5px ${preset.primaryColor}25`,
+                        backgroundColor: `${preset.lightBg}40`,
+                      }
                     : cls.active
-                    ? 'bg-white border-slate-200/80 shadow-xs hover:shadow-md hover:border-slate-300'
-                    : 'bg-slate-50 border-slate-200 opacity-75'
+                    ? {
+                        background: `linear-gradient(160deg, ${preset.lightBg}70 0%, #ffffff 35%, #ffffff 100%)`,
+                        borderColor: '#e2e8f0',
+                      }
+                    : undefined
+                }
+                className={`group relative rounded-2xl border transition-all duration-200 select-none overflow-hidden ${
+                  isDragged
+                    ? 'opacity-40 scale-[0.98] border-dashed ring-2 shadow-md'
+                    : isDragOver
+                    ? 'ring-2 transform -translate-y-1 shadow-lg'
+                    : cls.active
+                    ? 'shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300'
+                    : 'bg-slate-50/90 border-slate-200 opacity-75'
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    {hasPermission('classes.manage') && (
+                {/* Subtle Theme-Matched Prominence Accent Bar */}
+                <div
+                  className="h-1.5 w-full transition-all duration-300"
+                  style={{
+                    background: cls.active
+                      ? `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`
+                      : '#cbd5e1',
+                  }}
+                />
+
+                <div className="p-5 pt-3.5 space-y-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      {hasPermission('classes.manage') && (
+                        <div
+                          title="Drag card to reorder position"
+                          className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition mt-1 shrink-0"
+                        >
+                          <GripVertical className="w-4 h-4" />
+                        </div>
+                      )}
+
+                      {/* Prominence Theme Icon Badge */}
                       <div
-                        title="Drag card to reorder position"
-                        className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition mt-0.5 shrink-0"
+                        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border transition-transform duration-200 group-hover:scale-105 shadow-2xs"
+                        style={
+                          cls.active
+                            ? {
+                                backgroundColor: preset.lightBg,
+                                borderColor: preset.lightBorder,
+                                color: preset.primaryColor,
+                              }
+                            : {
+                                backgroundColor: '#f1f5f9',
+                                borderColor: '#e2e8f0',
+                                color: '#94a3b8',
+                              }
+                        }
                       >
-                        <GripVertical className="w-4 h-4" />
+                        <GraduationCap className="w-5 h-5" />
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-slate-900 text-base truncate">{cls.name}</h3>
+                          {!cls.active && (
+                            <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded shrink-0">
+                              Inactive
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span
+                            className="text-[11px] font-bold px-2 py-0.5 rounded-md font-mono border"
+                            style={
+                              cls.active
+                                ? {
+                                    backgroundColor: preset.lightBg,
+                                    color: preset.textColor,
+                                    borderColor: preset.lightBorder,
+                                  }
+                                : {
+                                    backgroundColor: '#f1f5f9',
+                                    color: '#64748b',
+                                    borderColor: '#e2e8f0',
+                                  }
+                            }
+                          >
+                            #{cls.sortOrder}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-medium">Sort Position</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {hasPermission('classes.manage') && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleClassActive(cls.id)}
+                          title={cls.active ? 'Deactivate Class' : 'Reactivate Class'}
+                          className={`p-1.5 rounded-lg transition cursor-pointer ${
+                            cls.active
+                              ? 'text-emerald-600 hover:bg-emerald-50'
+                              : 'text-slate-400 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Power className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(cls)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                          title="Edit Class"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(cls)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                          title="Delete Class"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     )}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-slate-900 text-base truncate">{cls.name}</h3>
-                        {!cls.active && (
-                          <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded shrink-0">
-                            Inactive
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200/70 px-1.5 py-0.5 rounded font-mono">
-                          #{cls.sortOrder}
-                        </span>
-                        <span className="text-[11px] text-slate-400 font-medium">Sort Position</span>
-                      </div>
-                    </div>
                   </div>
 
-                  {hasPermission('classes.manage') && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => toggleClassActive(cls.id)}
-                        title={cls.active ? 'Deactivate Class' : 'Reactivate Class'}
-                        className={`p-1.5 rounded-lg transition cursor-pointer ${
-                          cls.active
-                            ? 'text-emerald-600 hover:bg-emerald-50'
-                            : 'text-slate-400 hover:bg-slate-200'
-                        }`}
-                      >
-                        <Power className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(cls)}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                        title="Edit Class"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(cls)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                        title="Delete Class"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                  <div className="p-3 bg-slate-50/90 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-slate-400 block font-medium">Standard Monthly Fee:</span>
+                      <span className="font-bold text-slate-900 text-sm">
+                        {formatCurrency(cls.monthlyFee)} / mo
+                      </span>
                     </div>
-                  )}
-                </div>
-
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="text-slate-400 block font-medium">Standard Monthly Fee:</span>
-                    <span className="font-bold text-slate-900 text-sm">
-                      {formatCurrency(cls.monthlyFee)} / mo
-                    </span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-slate-400 block font-medium">Enrolled Students:</span>
-                    <span className="font-bold text-teal-700 text-xs flex items-center justify-end gap-1">
-                      <Users className="w-3.5 h-3.5" />
-                      {enrolledCount} Active
-                    </span>
+                    <div className="text-right">
+                      <span className="text-slate-400 block font-medium">Enrolled Students:</span>
+                      <span
+                        className="font-bold text-xs flex items-center justify-end gap-1"
+                        style={{ color: cls.active ? preset.textColor : '#64748b' }}
+                      >
+                        <Users
+                          className="w-3.5 h-3.5"
+                          style={{ color: cls.active ? preset.primaryColor : '#94a3b8' }}
+                        />
+                        {enrolledCount} Active
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
