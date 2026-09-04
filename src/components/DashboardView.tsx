@@ -259,91 +259,141 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Target */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Total Fee Target ({formatMonthName(activeMonth)})
-            </p>
-            <h3 className="text-2xl font-bold text-slate-900 mt-1">
-              {formatCurrency(totalGrossTarget)}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-              <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5" />
-              {monthVouchers.length} Vouchers Issued
-            </p>
-          </div>
+        <div
+          style={{
+            background: `linear-gradient(160deg, ${preset.lightBg}65 0%, #ffffff 40%, #ffffff 100%)`,
+          }}
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+        >
           <div
+            className="h-1 w-full"
             style={{
-              backgroundColor: preset.lightBg,
-              color: preset.primaryColor,
+              background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
             }}
-            className="w-12 h-12 rounded-xl flex items-center justify-center font-bold"
-          >
-            <Coins className="w-6 h-6" />
+          />
+          <div className="p-5 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Total Fee Target ({formatMonthName(activeMonth)})
+              </p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                {formatCurrency(totalGrossTarget)}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5" />
+                {monthVouchers.length} Vouchers Issued
+              </p>
+            </div>
+            <div
+              style={{
+                backgroundColor: preset.lightBg,
+                color: preset.primaryColor,
+                borderColor: preset.lightBorder,
+              }}
+              className="w-12 h-12 rounded-xl border flex items-center justify-center font-bold shadow-2xs group-hover:scale-105 transition-transform"
+            >
+              <Coins className="w-6 h-6" />
+            </div>
           </div>
         </div>
 
         {/* Total Collected */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Collected Amount
-            </p>
-            <h3 className="text-2xl font-bold text-emerald-600 mt-1">
-              {formatCurrency(totalCollected)}
-            </h3>
-            <div className="flex items-center gap-2 mt-1">
-              <div className="w-16 bg-slate-100 rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-emerald-500 h-2 rounded-full"
-                  style={{ width: `${Math.min(100, collectionPercentage)}%` }}
-                />
+        <div
+          style={{
+            background: 'linear-gradient(160deg, #ecfdf565 0%, #ffffff 40%, #ffffff 100%)',
+          }}
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+        >
+          <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-teal-500" />
+          <div className="p-5 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Collected Amount
+              </p>
+              <h3 className="text-2xl font-bold text-emerald-600 mt-1">
+                {formatCurrency(totalCollected)}
+              </h3>
+              <div className="flex items-center gap-2 mt-1">
+                <div className="w-16 bg-slate-100 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-2 rounded-full"
+                    style={{ width: `${Math.min(100, collectionPercentage)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-bold text-emerald-700">
+                  {collectionPercentage}%
+                </span>
               </div>
-              <span className="text-xs font-bold text-emerald-700">
-                {collectionPercentage}%
-              </span>
             </div>
-          </div>
-          <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 font-bold">
-            <CheckCircle2 className="w-6 h-6" />
+            <div className="w-12 h-12 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 font-bold shadow-2xs group-hover:scale-105 transition-transform">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
           </div>
         </div>
 
         {/* Total Outstanding */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Outstanding Defaulters
-            </p>
-            <h3 className="text-2xl font-bold text-rose-600 mt-1">
-              {formatCurrency(totalOutstanding)}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
-              {defaultersCount} Unpaid Student Vouchers
-            </p>
-          </div>
-          <div className="w-12 h-12 bg-rose-50 rounded-xl flex items-center justify-center text-rose-600 font-bold">
-            <Clock className="w-6 h-6" />
+        <div
+          style={{
+            background: 'linear-gradient(160deg, #fff1f265 0%, #ffffff 40%, #ffffff 100%)',
+          }}
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+        >
+          <div className="h-1 w-full bg-gradient-to-r from-rose-500 to-amber-500" />
+          <div className="p-5 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Outstanding Defaulters
+              </p>
+              <h3 className="text-2xl font-bold text-rose-600 mt-1">
+                {formatCurrency(totalOutstanding)}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+                {defaultersCount} Unpaid Student Vouchers
+              </p>
+            </div>
+            <div className="w-12 h-12 bg-rose-50 border border-rose-100 rounded-xl flex items-center justify-center text-rose-600 font-bold shadow-2xs group-hover:scale-105 transition-transform">
+              <Clock className="w-6 h-6" />
+            </div>
           </div>
         </div>
 
         {/* Active Students & Classes */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-              Active Enrolled Students
-            </p>
-            <h3 className="text-2xl font-bold text-slate-900 mt-1">
-              {activeStudents.length} Students
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-              <BookOpen className="w-3.5 h-3.5 text-slate-600" />
-              {classes.filter((c) => c.active).length} Active Classes
-            </p>
-          </div>
-          <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-bold">
-            <Users className="w-6 h-6" />
+        <div
+          style={{
+            background: `linear-gradient(160deg, ${preset.lightBg}45 0%, #ffffff 40%, #ffffff 100%)`,
+          }}
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+        >
+          <div
+            className="h-1 w-full"
+            style={{
+              background: `linear-gradient(90deg, ${preset.hoverColor} 0%, ${preset.primaryColor} 100%)`,
+            }}
+          />
+          <div className="p-5 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                Active Enrolled Students
+              </p>
+              <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                {activeStudents.length} Students
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5 text-slate-600" />
+                {classes.filter((c) => c.active).length} Active Classes
+              </p>
+            </div>
+            <div
+              style={{
+                backgroundColor: preset.lightBg,
+                color: preset.primaryColor,
+                borderColor: preset.lightBorder,
+              }}
+              className="w-12 h-12 rounded-xl border flex items-center justify-center font-bold shadow-2xs group-hover:scale-105 transition-transform"
+            >
+              <Users className="w-6 h-6" />
+            </div>
           </div>
         </div>
       </div>

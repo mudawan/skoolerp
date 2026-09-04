@@ -7,6 +7,7 @@ import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import { CollectPaymentModal } from './vouchers/CollectPaymentModal';
 import { RecordsPerPageSelector } from './RecordsPerPageSelector';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   formatCurrency,
   formatMonthName,
@@ -437,6 +438,20 @@ export const DefaultersView: React.FC = () => {
     return filteredVouchers.reduce((sum, v) => sum + v.netDue, 0);
   }, [activeTab, filteredVouchers]);
 
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
+
+  const totalUnpaidDefaultersArrears = useMemo(() => {
+    return defaulterVouchers.reduce((sum, v) => sum + Math.max(0, v.netDue - v.amountPaid), 0);
+  }, [defaulterVouchers]);
+
+  const totalZeroDueDiscounts = useMemo(() => {
+    return zeroDueVouchers.reduce((sum, v) => sum + (v.discountTotal || 0), 0);
+  }, [zeroDueVouchers]);
+
+  const totalCarriedArrears = useMemo(() => {
+    return carriedVouchers.reduce((sum, v) => sum + v.netDue, 0);
+  }, [carriedVouchers]);
+
   return (
     <div className="space-y-6 relative" id="defaulters-view-container">
       {/* Toast Notification Banner */}
@@ -486,13 +501,201 @@ export const DefaultersView: React.FC = () => {
         </div>
       </div>
 
+      {/* Defaulter Category Severity & Status Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Card 1: Unpaid Defaulters */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('uncarried')}
+          style={{
+            background:
+              activeTab === 'uncarried'
+                ? `linear-gradient(160deg, #fff1f2 0%, #ffffff 45%, #ffffff 100%)`
+                : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
+            borderColor: activeTab === 'uncarried' ? '#f43f5e' : '#e2e8f0',
+          }}
+          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
+            activeTab === 'uncarried' ? 'ring-2 ring-rose-400/40 shadow-sm' : 'hover:border-slate-300'
+          }`}
+        >
+          <div
+            className="h-1.5 w-full transition-all duration-300"
+            style={{
+              background:
+                activeTab === 'uncarried'
+                  ? 'linear-gradient(90deg, #f43f5e 0%, #fb7185 100%)'
+                  : `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
+            }}
+          />
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                    activeTab === 'uncarried'
+                      ? 'bg-rose-100 text-rose-700'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <AlertTriangle className="w-4 h-4" />
+                </div>
+                <span className="font-bold text-slate-900 text-xs">Unpaid Defaulters</span>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                  activeTab === 'uncarried'
+                    ? 'bg-rose-100 text-rose-800'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {defaulterVouchers.length} Vouchers
+              </span>
+            </div>
+            <div>
+              <p className="text-[11px] text-slate-500 font-medium">Outstanding Arrears</p>
+              <p className="text-lg font-mono font-extrabold text-rose-600">
+                {formatCurrency(totalUnpaidDefaultersArrears)}
+              </p>
+            </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Action:</span>
+              <span className="font-bold text-rose-700">Collect or Carry Forward</span>
+            </div>
+          </div>
+        </button>
+
+        {/* Card 2: Zero-Due & Concessions */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('zeroDue')}
+          style={{
+            background:
+              activeTab === 'zeroDue'
+                ? `linear-gradient(160deg, #ecfdf5 0%, #ffffff 45%, #ffffff 100%)`
+                : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
+            borderColor: activeTab === 'zeroDue' ? '#10b981' : '#e2e8f0',
+          }}
+          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
+            activeTab === 'zeroDue' ? 'ring-2 ring-emerald-400/40 shadow-sm' : 'hover:border-slate-300'
+          }`}
+        >
+          <div
+            className="h-1.5 w-full transition-all duration-300"
+            style={{
+              background:
+                activeTab === 'zeroDue'
+                  ? 'linear-gradient(90deg, #10b981 0%, #34d399 100%)'
+                  : '#cbd5e1',
+            }}
+          />
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                    activeTab === 'zeroDue'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <CheckCircle className="w-4 h-4" />
+                </div>
+                <span className="font-bold text-slate-900 text-xs">Zero-Due / Settled</span>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                  activeTab === 'zeroDue'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {zeroDueVouchers.length} Records
+              </span>
+            </div>
+            <div>
+              <p className="text-[11px] text-slate-500 font-medium">Concessions / Waivers</p>
+              <p className="text-lg font-mono font-extrabold text-emerald-600">
+                {formatCurrency(totalZeroDueDiscounts)}
+              </p>
+            </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Status:</span>
+              <span className="font-bold text-emerald-700">100% Scholarship / Settled</span>
+            </div>
+          </div>
+        </button>
+
+        {/* Card 3: Carried Forward Records */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('carried')}
+          style={{
+            background:
+              activeTab === 'carried'
+                ? `linear-gradient(160deg, #fffbeb 0%, #ffffff 45%, #ffffff 100%)`
+                : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
+            borderColor: activeTab === 'carried' ? '#f59e0b' : '#e2e8f0',
+          }}
+          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
+            activeTab === 'carried' ? 'ring-2 ring-amber-400/40 shadow-sm' : 'hover:border-slate-300'
+          }`}
+        >
+          <div
+            className="h-1.5 w-full transition-all duration-300"
+            style={{
+              background:
+                activeTab === 'carried'
+                  ? 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)'
+                  : '#cbd5e1',
+            }}
+          />
+          <div className="p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
+                    activeTab === 'carried'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <ArrowRight className="w-4 h-4" />
+                </div>
+                <span className="font-bold text-slate-900 text-xs">Carried Forward</span>
+              </div>
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                  activeTab === 'carried'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {carriedVouchers.length} Carried
+              </span>
+            </div>
+            <div>
+              <p className="text-[11px] text-slate-500 font-medium">Carried Balances</p>
+              <p className="text-lg font-mono font-extrabold text-amber-700">
+                {formatCurrency(totalCarriedArrears)}
+              </p>
+            </div>
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-400">Target:</span>
+              <span className="font-bold text-amber-700">Next Month Arrears</span>
+            </div>
+          </div>
+        </button>
+      </div>
+
       {/* Month Closure Gate Status Card */}
       <div
-        className={`p-5 rounded-2xl border flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 transition-all ${
-          monthStatus.isClosed
-            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
-            : 'bg-amber-50/80 border-amber-200 text-amber-900'
-        }`}
+        style={{
+          background: monthStatus.isClosed
+            ? 'linear-gradient(160deg, #ecfdf5 0%, #ffffff 40%, #ffffff 100%)'
+            : `linear-gradient(160deg, ${preset.lightBg}50 0%, #ffffff 40%, #ffffff 100%)`,
+          borderColor: monthStatus.isClosed ? '#a7f3d0' : preset.lightBorder,
+        }}
+        className="p-5 rounded-2xl border flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 transition-all shadow-xs"
       >
         <div className="flex items-start gap-3.5">
           {monthStatus.isClosed ? (
@@ -500,13 +703,20 @@ export const DefaultersView: React.FC = () => {
               <ShieldCheck className="w-6 h-6" />
             </div>
           ) : (
-            <div className="p-2.5 rounded-xl bg-amber-100 border border-amber-300 text-amber-700 shrink-0">
+            <div
+              className="p-2.5 rounded-xl border shrink-0"
+              style={{
+                backgroundColor: preset.lightBg,
+                borderColor: preset.lightBorder,
+                color: preset.primaryColor,
+              }}
+            >
               <AlertTriangle className="w-6 h-6" />
             </div>
           )}
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h3 className="text-sm font-bold">
+              <h3 className="text-sm font-bold text-slate-900">
                 Month Status for {formatMonthName(activeMonth)}:
               </h3>
               <span
@@ -529,16 +739,16 @@ export const DefaultersView: React.FC = () => {
                 )}
               </span>
             </div>
-            <p className="text-xs opacity-90 mt-1 flex items-center gap-2 flex-wrap">
-              <span>Total Vouchers: <strong className="font-bold">{monthStatus.totalVouchers}</strong></span>
+            <p className="text-xs text-slate-600 mt-1 flex items-center gap-2 flex-wrap">
+              <span>Total Vouchers: <strong className="font-bold text-slate-900">{monthStatus.totalVouchers}</strong></span>
               <span>&bull;</span>
-              <span>Paid / Settled: <strong className="font-bold text-emerald-800">{monthStatus.paidCount}</strong></span>
+              <span>Paid / Settled: <strong className="font-bold text-emerald-700">{monthStatus.paidCount}</strong></span>
               <span>&bull;</span>
-              <span>Zero-Due: <strong className="font-bold text-teal-800">{zeroDueVouchers.length}</strong></span>
+              <span>Zero-Due: <strong className="font-bold text-teal-700">{zeroDueVouchers.length}</strong></span>
               <span>&bull;</span>
-              <span>Carried: <strong className="font-bold">{monthStatus.carriedCount}</strong></span>
+              <span>Carried: <strong className="font-bold text-slate-700">{monthStatus.carriedCount}</strong></span>
               <span>&bull;</span>
-              <span className={`px-2 py-0.5 rounded font-bold ${monthStatus.uncarriedUnpaidCount > 0 ? 'bg-amber-200/80 text-amber-950' : 'bg-emerald-200/80 text-emerald-950'}`}>
+              <span className={`px-2 py-0.5 rounded font-bold ${monthStatus.uncarriedUnpaidCount > 0 ? 'bg-amber-100 text-amber-900 border border-amber-200' : 'bg-emerald-100 text-emerald-900 border border-emerald-200'}`}>
                 Uncarried Defaulters: {monthStatus.uncarriedUnpaidCount}
               </span>
             </p>

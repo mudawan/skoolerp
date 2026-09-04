@@ -11,6 +11,7 @@ import { StopModal } from './transport/StopModal';
 import { AssignmentModal } from './transport/AssignmentModal';
 import { BulkTransportCsvModal, BulkTransportPreviewRow } from './transport/BulkTransportCsvModal';
 import { BulkStopsCsvModal, BulkStopPreviewRow } from './transport/BulkStopsCsvModal';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Check, Upload, GripVertical } from 'lucide-react';
 
 export const TransportView: React.FC = () => {
@@ -37,7 +38,10 @@ export const TransportView: React.FC = () => {
     bulkUpdateTransportDaysForMonth,
     hasPermission,
     showToast,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [subTab, setSubTab] = useState<'buses' | 'stops' | 'assignments'>('assignments');
   const [busesViewMode, setBusesViewMode] = useState<'grid' | 'list'>('grid');
@@ -1429,82 +1433,156 @@ export const TransportView: React.FC = () => {
                       onDragOver={(e) => handleBusDragOver(e, bus)}
                       onDrop={(e) => handleBusDrop(e, bus)}
                       onDragEnd={handleBusDragEnd}
-                      className={`group relative p-5 rounded-2xl border transition-all space-y-3 select-none ${
+                      style={
                         isDragged
-                          ? 'opacity-40 scale-[0.98] border-dashed border-teal-500 bg-teal-50/40 ring-2 ring-teal-400/50 shadow-md'
+                          ? {
+                              borderColor: preset.primaryColor,
+                              backgroundColor: `${preset.lightBg}60`,
+                            }
                           : isDragOver
-                          ? 'border-teal-500 ring-2 ring-teal-500/50 bg-teal-50/30 transform -translate-y-1 shadow-lg'
+                          ? {
+                              borderColor: preset.primaryColor,
+                              boxShadow: `0 10px 25px -5px ${preset.primaryColor}25`,
+                              backgroundColor: `${preset.lightBg}40`,
+                            }
                           : bus.active
-                          ? 'bg-white border-slate-200/80 shadow-xs hover:shadow-md hover:border-slate-300'
-                          : 'bg-slate-50 border-slate-200 opacity-75'
+                          ? {
+                              background: `linear-gradient(160deg, ${preset.lightBg}60 0%, #ffffff 35%, #ffffff 100%)`,
+                              borderColor: '#e2e8f0',
+                            }
+                          : undefined
+                      }
+                      className={`group relative rounded-2xl border transition-all duration-200 select-none overflow-hidden ${
+                        isDragged
+                          ? 'opacity-40 scale-[0.98] border-dashed ring-2 shadow-md'
+                          : isDragOver
+                          ? 'ring-2 transform -translate-y-1 shadow-lg'
+                          : bus.active
+                          ? 'shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300'
+                          : 'bg-slate-50/90 border-slate-200 opacity-75'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2.5 min-w-0">
-                          {hasPermission('transport.manage') && (
+                      {/* Theme-Matched Prominence Accent Bar */}
+                      <div
+                        className="h-1.5 w-full transition-all duration-300"
+                        style={{
+                          background: bus.active
+                            ? `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`
+                            : '#cbd5e1',
+                        }}
+                      />
+
+                      <div className="p-5 pt-3.5 space-y-3.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            {hasPermission('transport.manage') && (
+                              <div
+                                title="Drag card to reorder position"
+                                className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition mt-1 shrink-0"
+                              >
+                                <GripVertical className="w-4 h-4" />
+                              </div>
+                            )}
+
+                            {/* Theme Vehicle Icon Badge */}
                             <div
-                              title="Drag card to reorder position"
-                              className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition mt-0.5 shrink-0"
+                              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border transition-transform duration-200 group-hover:scale-105 shadow-2xs"
+                              style={
+                                bus.active
+                                  ? {
+                                      backgroundColor: preset.lightBg,
+                                      borderColor: preset.lightBorder,
+                                      color: preset.primaryColor,
+                                    }
+                                  : {
+                                      backgroundColor: '#f1f5f9',
+                                      borderColor: '#e2e8f0',
+                                      color: '#94a3b8',
+                                    }
+                              }
                             >
-                              <GripVertical className="w-4 h-4" />
+                              <Bus className="w-5 h-5" />
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  style={{
+                                    backgroundColor: preset.lightBg,
+                                    color: preset.textColor,
+                                    borderColor: preset.lightBorder,
+                                  }}
+                                  className="font-mono font-bold text-xs px-2 py-0.5 rounded-md border"
+                                >
+                                  {bus.busNumber}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.2 rounded font-mono border"
+                                    style={
+                                      bus.active
+                                        ? {
+                                            backgroundColor: preset.lightBg,
+                                            color: preset.textColor,
+                                            borderColor: preset.lightBorder,
+                                          }
+                                        : {
+                                            backgroundColor: '#f1f5f9',
+                                            color: '#64748b',
+                                            borderColor: '#e2e8f0',
+                                          }
+                                    }
+                                  >
+                                    #{bus.sortOrder}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-medium">Sort Position</span>
+                                </div>
+                                {!bus.active && (
+                                  <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded shrink-0">
+                                    Inactive
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-slate-900 text-base mt-1 truncate">{bus.model}</h4>
+                              <p className="text-xs text-slate-500 font-mono">Reg #: {bus.regNumber || '—'}</p>
+                            </div>
+                          </div>
+
+                          {hasPermission('transport.manage') && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleOpenEditBus(bus)}
+                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+                                title="Edit Bus"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => setBusToDelete(bus)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+                                title="Delete Bus"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-teal-700 text-xs bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                                {bus.busNumber}
-                              </span>
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200/70 px-1.5 py-0.2 rounded font-mono">
-                                  #{bus.sortOrder}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-medium">Sort Position</span>
-                              </div>
-                              {!bus.active && (
-                                <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded shrink-0">
-                                  Inactive
-                                </span>
-                              )}
-                            </div>
-                            <h4 className="font-bold text-slate-900 text-base mt-1 truncate">{bus.model}</h4>
-                            <p className="text-xs text-slate-500 font-mono">Reg #: {bus.regNumber || '—'}</p>
-                          </div>
                         </div>
 
-                        {hasPermission('transport.manage') && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() => handleOpenEditBus(bus)}
-                              className="p-1.5 text-slate-400 hover:text-teal-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                              title="Edit Bus"
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => setBusToDelete(bus)}
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                              title="Delete Bus"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-1">
-                        <p className="font-semibold text-slate-800 truncate">
-                          <span className="text-slate-400 font-normal mr-1">Route:</span>
-                          {bus.routeName || '—'}
-                        </p>
-                        <p className="text-slate-600">
-                          <span className="text-slate-400 font-normal mr-1">Driver:</span>
-                          <span className="font-medium text-slate-800">{bus.driverName}</span>
-                          {bus.driverPhone && (
-                            <span className="text-slate-400 font-mono text-[11px] ml-1.5">
-                              ({bus.driverPhone})
-                            </span>
-                          )}
-                        </p>
+                        <div className="p-3 bg-slate-50/90 rounded-xl border border-slate-100 text-xs space-y-1">
+                          <p className="font-semibold text-slate-800 truncate">
+                            <span className="text-slate-400 font-normal mr-1">Route:</span>
+                            {bus.routeName || '—'}
+                          </p>
+                          <p className="text-slate-600">
+                            <span className="text-slate-400 font-normal mr-1">Driver:</span>
+                            <span className="font-medium text-slate-800">{bus.driverName}</span>
+                            {bus.driverPhone && (
+                              <span className="text-slate-400 font-mono text-[11px] ml-1.5">
+                                ({bus.driverPhone})
+                              </span>
+                            )}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1743,63 +1821,100 @@ export const TransportView: React.FC = () => {
                       onDragOver={(e) => handleStopDragOver(e, stop)}
                       onDrop={(e) => handleStopDrop(e, stop)}
                       onDragEnd={handleStopDragEnd}
-                      className={`group relative p-5 rounded-2xl border transition-all space-y-2 select-none ${
+                      style={
                         isDragged
-                          ? 'opacity-40 scale-[0.98] border-dashed border-teal-500 bg-teal-50/40 ring-2 ring-teal-400/50 shadow-md'
+                          ? {
+                              borderColor: preset.primaryColor,
+                              backgroundColor: `${preset.lightBg}60`,
+                            }
                           : isDragOver
-                          ? 'border-teal-500 ring-2 ring-teal-500/50 bg-teal-50/30 transform -translate-y-1 shadow-lg'
-                          : 'bg-white border-slate-200/80 shadow-xs hover:shadow-md hover:border-slate-300'
+                          ? {
+                              borderColor: preset.primaryColor,
+                              boxShadow: `0 10px 25px -5px ${preset.primaryColor}25`,
+                              backgroundColor: `${preset.lightBg}40`,
+                            }
+                          : {
+                              background: `linear-gradient(160deg, ${preset.lightBg}50 0%, #ffffff 40%, #ffffff 100%)`,
+                              borderColor: '#e2e8f0',
+                            }
+                      }
+                      className={`group relative rounded-2xl border transition-all duration-200 select-none overflow-hidden ${
+                        isDragged
+                          ? 'opacity-40 scale-[0.98] border-dashed ring-2 shadow-md'
+                          : isDragOver
+                          ? 'ring-2 transform -translate-y-1 shadow-lg'
+                          : 'shadow-xs hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 min-w-0">
+                      {/* Theme-Matched Top Accent Bar */}
+                      <div
+                        className="h-1.5 w-full"
+                        style={{
+                          background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
+                        }}
+                      />
+
+                      <div className="p-4 pt-3 space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2 min-w-0">
+                            {hasPermission('transport.manage') && (
+                              <div
+                                title="Drag card to reorder position"
+                                className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition mt-0.5 shrink-0"
+                              >
+                                <GripVertical className="w-4 h-4" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                <h4 className="font-bold text-slate-900 text-sm truncate">{stop.name}</h4>
+                              </div>
+                              <div className="flex items-center gap-1 mt-1">
+                                <span
+                                  className="text-[10px] font-bold px-1.5 py-0.2 rounded font-mono border"
+                                  style={{
+                                    backgroundColor: preset.lightBg,
+                                    color: preset.textColor,
+                                    borderColor: preset.lightBorder,
+                                  }}
+                                >
+                                  #{stop.sortOrder}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-medium">Sort Position</span>
+                              </div>
+                            </div>
+                          </div>
+
                           {hasPermission('transport.manage') && (
-                            <div
-                              title="Drag card to reorder position"
-                              className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-md transition mt-0.5 shrink-0"
-                            >
-                              <GripVertical className="w-4 h-4" />
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleOpenEditStop(stop)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded cursor-pointer transition"
+                                title="Edit Bus Stop"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setStopToDelete(stop)}
+                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded cursor-pointer transition"
+                                title="Delete Bus Stop"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                              <h4 className="font-bold text-slate-900 text-sm truncate">{stop.name}</h4>
-                            </div>
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200/70 px-1.5 py-0.2 rounded font-mono">
-                                #{stop.sortOrder}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-medium">Sort Position</span>
-                            </div>
-                          </div>
                         </div>
-
-                        {hasPermission('transport.manage') && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() => handleOpenEditStop(stop)}
-                              className="p-1 text-slate-400 hover:text-teal-600 hover:bg-slate-100 rounded cursor-pointer transition"
-                              title="Edit Bus Stop"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setStopToDelete(stop)}
-                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded cursor-pointer transition"
-                              title="Delete Bus Stop"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )}
+                        <p className="text-xs text-slate-500 truncate">
+                          {[stop.area, stop.landmark].filter(Boolean).join(' • ') || '—'}
+                        </p>
+                        <p
+                          className="font-bold text-sm pt-2 border-t border-slate-100"
+                          style={{ color: preset.textColor }}
+                        >
+                          {formatCurrency(stop.monthlyFare)} / mo
+                        </p>
                       </div>
-                      <p className="text-xs text-slate-500 truncate">
-                        {[stop.area, stop.landmark].filter(Boolean).join(' • ') || '—'}
-                      </p>
-                      <p className="font-bold text-teal-700 text-sm pt-2 border-t border-slate-100">
-                        {formatCurrency(stop.monthlyFare)} / mo
-                      </p>
                     </div>
                   );
                 })

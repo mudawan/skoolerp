@@ -5,6 +5,7 @@ import { Family } from '../types';
 import { downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   AlertCircle,
   ArrowDown,
@@ -43,7 +44,10 @@ export const FamiliesView: React.FC = () => {
     removeStudentFromFamily,
     hasPermission,
     showToast,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
@@ -572,76 +576,104 @@ export const FamiliesView: React.FC = () => {
               return (
                 <div
                   key={family.id}
-                  className={`bg-white p-5 rounded-2xl border transition space-y-4 shadow-xs ${
+                  style={
                     isSelected
-                      ? 'border-teal-400 ring-2 ring-teal-500/20 bg-teal-50/15'
+                      ? {
+                          borderColor: preset.primaryColor,
+                          background: `linear-gradient(160deg, ${preset.lightBg}80 0%, #ffffff 40%, #ffffff 100%)`,
+                        }
+                      : {
+                          background: `linear-gradient(160deg, ${preset.lightBg}50 0%, #ffffff 35%, #ffffff 100%)`,
+                        }
+                  }
+                  className={`bg-white rounded-2xl border transition-all duration-200 overflow-hidden shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
+                    isSelected
+                      ? 'ring-2'
                       : 'border-slate-200/80 hover:border-slate-300'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelectFamily(family.id)}
-                        className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer mt-1 w-4 h-4"
-                        title="Select family"
-                      />
-                      <div>
-                        <span className="text-[11px] font-mono font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/60 inline-block">
-                          {family.familyNo}
-                        </span>
-                        <h3 className="font-bold text-slate-900 text-base mt-1">
-                          {family.headName}
-                        </h3>
+                  {/* Subtle Theme Accent Bar */}
+                  <div
+                    className="h-1.5 w-full"
+                    style={{
+                      background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
+                    }}
+                  />
+
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2.5">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectFamily(family.id)}
+                          style={{ accentColor: preset.primaryColor }}
+                          className="rounded cursor-pointer mt-1 w-4 h-4"
+                          title="Select family"
+                        />
+                        <div>
+                          <span
+                            style={{
+                              backgroundColor: preset.lightBg,
+                              color: preset.textColor,
+                              borderColor: preset.lightBorder,
+                            }}
+                            className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-md border inline-block"
+                          >
+                            {family.familyNo}
+                          </span>
+                          <h3 className="font-bold text-slate-900 text-base mt-1">
+                            {family.headName}
+                          </h3>
+                        </div>
                       </div>
-                    </div>
 
-                    {hasPermission('families.manage') && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleOpenEditModal(family)}
-                          title="Edit Family Record"
-                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(family)}
-                          title="Delete Family Record"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-1 text-xs text-slate-600 border-t border-slate-100 pt-3">
-                    <p className="flex items-center gap-1.5 font-medium text-slate-800">
-                      <Phone className="w-3.5 h-3.5 text-slate-400" />
-                      {family.contactPhone}
-                    </p>
-                    <p className="text-slate-500 line-clamp-1">{family.address || '—'}</p>
-                  </div>
-
-                  {/* Member Students */}
-                  <div className="border-t border-slate-100 pt-3 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-slate-700 flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5 text-slate-500" />
-                        Family Members ({activeMemberStudents.length} active
-                        {inactiveMemberStudents.length > 0 && `, ${inactiveMemberStudents.length} inactive`})
-                      </span>
                       {hasPermission('families.manage') && (
-                        <button
-                          onClick={() => handleOpenMemberModal(family)}
-                          className="text-[11px] font-bold text-teal-600 hover:underline cursor-pointer"
-                        >
-                          + Manage
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditModal(family)}
+                            title="Edit Family Record"
+                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(family)}
+                            title="Delete Family Record"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       )}
                     </div>
+
+                    <div className="space-y-1 text-xs text-slate-600 border-t border-slate-100 pt-3">
+                      <p className="flex items-center gap-1.5 font-medium text-slate-800">
+                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                        {family.contactPhone}
+                      </p>
+                      <p className="text-slate-500 line-clamp-1">{family.address || '—'}</p>
+                    </div>
+
+                    {/* Member Students */}
+                    <div className="border-t border-slate-100 pt-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-700 flex items-center gap-1">
+                          <Users className="w-3.5 h-3.5 text-slate-500" />
+                          Family Members ({activeMemberStudents.length} active
+                          {inactiveMemberStudents.length > 0 && `, ${inactiveMemberStudents.length} inactive`})
+                        </span>
+                        {hasPermission('families.manage') && (
+                          <button
+                            onClick={() => handleOpenMemberModal(family)}
+                            style={{ color: preset.primaryColor }}
+                            className="text-[11px] font-bold hover:underline cursor-pointer"
+                          >
+                            + Manage
+                          </button>
+                        )}
+                      </div>
 
                     <div className="flex flex-wrap gap-1.5">
                       {displayMemberStudents.length > 0 ? (
@@ -697,8 +729,9 @@ export const FamiliesView: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              );
-            })
+              </div>
+            );
+          })
           ) : (
             <div className="col-span-full bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 italic">
               No family records found matching your filters.

@@ -10,6 +10,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { DatePicker } from './DatePicker';
 import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import { PaymentReceiptModal } from './PaymentReceiptModal';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   AlertCircle,
   ArrowDown,
@@ -54,6 +55,8 @@ export const CollectionsView: React.FC = () => {
     roundingMultiple,
     roundingEnabled,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
@@ -1099,66 +1102,85 @@ export const CollectionsView: React.FC = () => {
               return (
                 <div
                   key={col.id}
-                  className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3"
+                  style={{
+                    background: `linear-gradient(160deg, ${preset.lightBg}40 0%, #ffffff 35%, #ffffff 100%)`,
+                  }}
+                  className="rounded-2xl border border-slate-200/80 hover:border-slate-300 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 overflow-hidden"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold">
-                        <Receipt className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-slate-900 text-base">{col.collectionNo}</h3>
-                          {col.isBulkImport ? (
-                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
-                              Bulk CSV Import
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
-                              Direct Collection
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-500 font-mono">
-                          Date: {col.date} &bull; {col.transactionCount} Transaction(s)
-                        </p>
-                      </div>
-                    </div>
+                  {/* Theme Accent Bar */}
+                  <div
+                    className="h-1.5 w-full"
+                    style={{
+                      background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
+                    }}
+                  />
 
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg font-bold text-emerald-600">
-                        {formatCurrency(col.totalAmount)}
-                      </span>
-                      {colTxns.length > 1 ? (
-                        <button
-                          onClick={() => handleOpenCollectionReceipts(col)}
-                          title={`View & print all ${colTxns.length} payment receipts in batch`}
-                          className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  <div className="p-5 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-10 h-10 rounded-xl border flex items-center justify-center font-bold shadow-2xs"
+                          style={{
+                            backgroundColor: preset.lightBg,
+                            borderColor: preset.lightBorder,
+                            color: preset.primaryColor,
+                          }}
                         >
-                          <Receipt className="w-3.5 h-3.5" />
-                          <span>Batch Receipts ({colTxns.length})</span>
-                        </button>
-                      ) : colTxns.length === 1 ? (
-                        <button
-                          onClick={() => handleOpenCollectionReceipts(col)}
-                          title="Print Payment Receipt Slip"
-                          className="px-2.5 py-1 text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Receipt className="w-3.5 h-3.5" />
-                          <span>Receipt</span>
-                        </button>
-                      ) : null}
-                      {hasPermission('fees.delete') && (
-                        <button
-                          onClick={() => handleDeleteSession(col)}
-                          title="Delete Collection Session"
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                          <Receipt className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-900 text-base">{col.collectionNo}</h3>
+                            {col.isBulkImport ? (
+                              <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
+                                Bulk CSV Import
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
+                                Direct Collection
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500 font-mono">
+                            Date: {col.date} &bull; {col.transactionCount} Transaction(s)
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg font-bold text-emerald-600">
+                          {formatCurrency(col.totalAmount)}
+                        </span>
+                        {colTxns.length > 1 ? (
+                          <button
+                            onClick={() => handleOpenCollectionReceipts(col)}
+                            title={`View & print all ${colTxns.length} payment receipts in batch`}
+                            className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          >
+                            <Receipt className="w-3.5 h-3.5" />
+                            <span>Batch Receipts ({colTxns.length})</span>
+                          </button>
+                        ) : colTxns.length === 1 ? (
+                          <button
+                            onClick={() => handleOpenCollectionReceipts(col)}
+                            title="Print Payment Receipt Slip"
+                            className="px-2.5 py-1 text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 hover:text-teal-800 border border-teal-200 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Receipt className="w-3.5 h-3.5" />
+                            <span>Receipt</span>
+                          </button>
+                        ) : null}
+                        {hasPermission('fees.delete') && (
+                          <button
+                            onClick={() => handleDeleteSession(col)}
+                            title="Delete Collection Session"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
                   {/* Sub Transactions List */}
                   <div className="space-y-1.5 pt-1">
@@ -1205,8 +1227,9 @@ export const CollectionsView: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              );
-            })
+              </div>
+            );
+          })
           ) : (
             <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 italic">
               No fee collection sessions recorded yet. Click "Record Payment" to record a collection.
