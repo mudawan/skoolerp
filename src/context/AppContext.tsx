@@ -815,7 +815,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const saved = localStorage.getItem(`${STORAGE_KEY}_theme_config`);
     if (saved) {
       try {
-        return { ...DEFAULT_THEME_CONFIG, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_THEME_CONFIG, ...parsed };
       } catch {
         return DEFAULT_THEME_CONFIG;
       }

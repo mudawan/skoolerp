@@ -276,12 +276,10 @@ export type ActiveTab =
 
 export type ThemeColor = 'teal' | 'navy' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
 export type SidebarTheme = 'dark' | 'light' | 'branded';
-export type UiDensity = 'comfortable' | 'compact';
 
 export interface AppThemeConfig {
   color: ThemeColor;
   sidebarTheme: SidebarTheme;
-  density: UiDensity;
 }
 
 export type PriorMonthVoucherRule = 'strict' | 'warning' | 'recalculate';

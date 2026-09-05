@@ -326,70 +326,59 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
 
   return (
     <div id="audit-trail-container" className="space-y-6">
-      {/* Top Header Card */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 flex items-center justify-center shrink-0">
-              <History className="w-6 h-6 text-teal-600 dark:text-teal-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                  Audit Trail & Operator Accountability
-                </h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                  <CheckCircle2 className="w-3 h-3" />
-                  Tamper-Evident Ledger
-                </span>
-              </div>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                Forensic tracking for manual fine adjustments, bulk CSV collections, reversals, and operator authorization privileges.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5 self-end md:self-center">
-            {hasPermission('audit.export') && (
-              <button
-                id="btn-export-audit-csv"
-                onClick={handleExportCsv}
-                disabled={filteredLogs.length === 0}
-                className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-50 cursor-pointer"
-                title="Export filtered audit logs to CSV"
-              >
-                <Download className="w-4 h-4 text-slate-500" />
-                Export CSV ({filteredLogs.length})
-              </button>
-            )}
-
-            <button
-              id="btn-print-audit-report"
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
-              title="Print Audit Report"
-            >
-              <Printer className="w-4 h-4 text-slate-500" />
-              Print
-            </button>
-
-            {currentUser.role === 'Admin' && (
-              <button
-                id="btn-clear-audit-logs"
-                onClick={() => setShowClearConfirmModal(true)}
-                disabled={auditLogs.length === 0}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl text-rose-700 dark:text-rose-400 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 transition disabled:opacity-40 cursor-pointer"
-                title="Purge audit logs (Admin only)"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Purge
-              </button>
-            )}
-          </div>
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <History className="w-6 h-6 text-teal-600 dark:text-teal-400 shrink-0" />
+            Audit Trail & Operator Accountability
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Forensic tracking for manual fine adjustments, bulk CSV collections, reversals, and operator authorization privileges.
+          </p>
         </div>
 
-        {/* Accountability KPI Summary */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mt-6">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {hasPermission('audit.export') && (
+            <button
+              id="btn-export-audit-csv"
+              onClick={handleExportCsv}
+              disabled={filteredLogs.length === 0}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-50 cursor-pointer shadow-2xs"
+              title="Export filtered audit logs to CSV"
+            >
+              <Download className="w-4 h-4 text-slate-500" />
+              <span>Export CSV ({filteredLogs.length})</span>
+            </button>
+          )}
+
+          <button
+            id="btn-print-audit-report"
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition cursor-pointer shadow-2xs"
+            title="Print Audit Report"
+          >
+            <Printer className="w-4 h-4 text-slate-500" />
+            <span>Print</span>
+          </button>
+
+          {currentUser.role === 'Admin' && (
+            <button
+              id="btn-clear-audit-logs"
+              onClick={() => setShowClearConfirmModal(true)}
+              disabled={auditLogs.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl text-rose-700 dark:text-rose-400 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 transition disabled:opacity-40 cursor-pointer shadow-2xs"
+              title="Purge audit logs (Admin only)"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Purge</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Accountability KPI Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
           <div
             onClick={() => setQuickFilter('fines')}
             className={`p-4 rounded-xl border transition cursor-pointer ${
@@ -470,7 +459,6 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
             </p>
           </div>
         </div>
-      </div>
 
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-4">

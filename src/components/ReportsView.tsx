@@ -17,6 +17,7 @@ import {
   BarChart3,
   BookMarked,
   History,
+  Calendar,
   CalendarRange,
   Layers,
   Search,
@@ -949,25 +950,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
-        <div className="flex items-center gap-3.5">
-          {institute.logoUrl ? (
-            <img
-              src={institute.logoUrl}
-              alt={institute.name}
-              className="w-12 h-12 object-contain rounded-xl border border-slate-200/80 p-1 bg-white shrink-0 shadow-2xs"
-            />
-          ) : (
-            <div className="p-2.5 rounded-xl bg-teal-50 text-teal-700 shrink-0">
-              <BarChart3 className="w-6 h-6 text-teal-600" />
-            </div>
-          )}
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              Financial & Fee Audit Reports
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {institute.name} &bull; Fee collection metrics, generated fee reports, and outstanding balance audits.
-            </p>
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <BarChart3 className="w-6 h-6 text-teal-600 shrink-0" />
+            Financial & Fee Audit Reports
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">
+            Fee collection metrics, generated fee reports, and outstanding balance audits.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center bg-teal-50 border border-teal-200 text-teal-900 rounded-xl px-3.5 py-2 text-xs font-bold shadow-2xs">
+            <Calendar className="w-4 h-4 text-teal-600 mr-2 shrink-0" />
+            <span className="text-teal-700 font-medium mr-1.5">Working Month:</span>
+            <span>{formatMonthName(activeMonth)}</span>
           </div>
         </div>
       </div>

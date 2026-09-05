@@ -13,7 +13,12 @@ import {
   VoucherCopyType,
   VoucherDeletionResolution,
 } from '../types';
-import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import {
+  formatCurrency,
+  formatMonthName,
+  getMonthPickerWindow,
+  mergeWithDataMonths,
+} from '../utils/feeMath';
 import { parseCsvLine, CSV_DELIMITERS_TEMPLATE } from '../utils/csv';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
@@ -52,13 +57,14 @@ import {
   GraduationCap,
   GripVertical,
   KeyRound,
-  Layers,
+  ListFilter,
   Palette,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
   Settings,
+  ShieldCheck,
   Sliders,
   Sparkles,
   Trash2,
@@ -122,6 +128,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     currentUser,
     students,
     classes,
+    vouchers,
+    getMonthClosureStatus,
+    themeConfig,
     activeMonth,
     setActiveMonth,
     beforeMonthChange,
@@ -148,6 +157,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [selectedVoucherDefaultCopies, setSelectedVoucherDefaultCopies] = useState<VoucherCopyType[]>(voucherDefaultCopies);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Month data availability and closure status for MonthPicker components
+  const pickerWindowMonths = useMemo(
+    () => mergeWithDataMonths(getMonthPickerWindow(), vouchers.map((v) => v.month)),
+    [vouchers]
+  );
+  const monthsWithData = useMemo(
+    () => Array.from(new Set(vouchers.map((v) => v.month))),
+    [vouchers]
+  );
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
   const [bankToDelete, setBankToDelete] = useState<BankAccount | null>(null);
 
@@ -556,8 +575,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     saveGlobalRoster();
   };
 
-  // 3-Way Hierarchy Fee Template Overrides State: Global | Class | Student
-  const [templateScopeMode, setTemplateScopeMode] = useState<'global' | 'class' | 'student'>('global');
+  // 4-Way Hierarchy Fee Template Overrides State: Global | Class | Student | Overrides Directory
+  const [templateScopeMode, setTemplateScopeMode] = useState<'global' | 'class' | 'student' | 'overrides'>('global');
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
@@ -922,7 +941,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       ? 'Global tier'
       : templateScopeMode === 'class'
         ? `Class Override tier (${selectedClass?.name || ''})`
-        : `Student Override tier (${selectedStudent?.name || selectedStudent?.regNo || ''})`;
+        : templateScopeMode === 'student'
+          ? `Student Override tier (${selectedStudent?.name || selectedStudent?.regNo || ''})`
+          : 'Overrides Directory';
 
   const discardDirtyDrafts = () => {
     if (templateScopeMode === 'global') {
@@ -964,7 +985,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   type PendingTransition =
     | { kind: 'scope'; label: string; apply: () => void }
-    | { kind: 'month'; label: string; apply: () => void };
+    | { kind: 'month'; label: string; apply: () => void }
+    | { kind: 'view'; label: string; apply: () => void }
+    | { kind: 'class'; label: string; apply: () => void }
+    | { kind: 'student'; label: string; apply: () => void };
 
   const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null);
 
@@ -1013,106 +1037,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
     setTimeout(() => setToastMessage(null), 4500);
   };
-
-  // 6-Tier waterfall precedence resolution state & definitions
-  const currentEditingTier = useMemo(() => {
-    if (templateScopeMode === 'student' || selectedStudentId) {
-      return effectiveTemplateMonth !== 'all' ? 1 : 2;
-    }
-    if (templateScopeMode === 'class' || (selectedClassId && !selectedStudentId)) {
-      return effectiveTemplateMonth !== 'all' ? 3 : 4;
-    }
-    return effectiveTemplateMonth !== 'all' ? 5 : 6;
-  }, [templateScopeMode, selectedStudentId, selectedClassId, effectiveTemplateMonth]);
-
-  const handleSelectTier = (tier: number) => {
-    const targetScope: 'student' | 'class' | 'global' =
-      tier <= 2 ? 'student' : tier <= 4 ? 'class' : 'global';
-    const targetMonthMode: 'all' | 'specific' = tier % 2 === 1 ? 'specific' : 'all';
-
-    requestTransition({
-      kind: 'scope',
-      label: `Tier ${tier}`,
-      apply: () => {
-        setTemplateScopeMode(targetScope);
-        if (targetScope === 'global') {
-          setSelectedStudentId('');
-          setSelectedClassId('');
-        } else if (targetScope === 'class') {
-          setSelectedStudentId('');
-          if (!selectedClassId && classes.length > 0) {
-            setSelectedClassId(classes[0].id);
-          }
-        } else if (targetScope === 'student') {
-          setSelectedClassId('');
-        }
-        setTemplateMonthMode(targetMonthMode);
-      },
-    });
-  };
-
-  const TIER_DEFINITIONS = [
-    {
-      tier: 1,
-      scope: 'Student',
-      period: 'Month',
-      desc: 'Highest Priority Override',
-      activeClass: 'bg-emerald-600 border-emerald-700 text-white shadow-sm ring-2 ring-emerald-400/40',
-      badgeClass: 'bg-emerald-50/90 hover:bg-emerald-100/80 border-emerald-200/90 text-emerald-950',
-      numberBadgeClass: 'bg-emerald-200 text-emerald-900',
-      scheduleBadgeClass: 'bg-emerald-100 text-emerald-800 border border-emerald-200',
-    },
-    {
-      tier: 2,
-      scope: 'Student',
-      period: 'All Months',
-      desc: 'Student Recurring Default',
-      activeClass: 'bg-teal-600 border-teal-700 text-white shadow-sm ring-2 ring-teal-400/40',
-      badgeClass: 'bg-teal-50/90 hover:bg-teal-100/80 border-teal-200/90 text-teal-950',
-      numberBadgeClass: 'bg-teal-200 text-teal-900',
-      scheduleBadgeClass: 'bg-teal-100 text-teal-800 border border-teal-200',
-    },
-    {
-      tier: 3,
-      scope: 'Class',
-      period: 'Month',
-      desc: 'Class Specific Override',
-      activeClass: 'bg-indigo-600 border-indigo-700 text-white shadow-sm ring-2 ring-indigo-400/40',
-      badgeClass: 'bg-indigo-50/90 hover:bg-indigo-100/80 border-indigo-200/90 text-indigo-950',
-      numberBadgeClass: 'bg-indigo-200 text-indigo-900',
-      scheduleBadgeClass: 'bg-indigo-100 text-indigo-800 border border-indigo-200',
-    },
-    {
-      tier: 4,
-      scope: 'Class',
-      period: 'All Months',
-      desc: 'Class Recurring Default',
-      activeClass: 'bg-violet-600 border-violet-700 text-white shadow-sm ring-2 ring-violet-400/40',
-      badgeClass: 'bg-violet-50/90 hover:bg-violet-100/80 border-violet-200/90 text-violet-950',
-      numberBadgeClass: 'bg-violet-200 text-violet-900',
-      scheduleBadgeClass: 'bg-violet-100 text-violet-800 border border-violet-200',
-    },
-    {
-      tier: 5,
-      scope: 'Global',
-      period: 'Month',
-      desc: 'Global Specific Override',
-      activeClass: 'bg-slate-800 border-slate-900 text-white shadow-sm ring-2 ring-slate-400/40',
-      badgeClass: 'bg-slate-100 hover:bg-slate-200/80 border-slate-300 text-slate-900',
-      numberBadgeClass: 'bg-slate-200 text-slate-800',
-      scheduleBadgeClass: 'bg-slate-200 text-slate-700 border border-slate-300',
-    },
-    {
-      tier: 6,
-      scope: 'Global',
-      period: 'All Months',
-      desc: 'Base Standard Default',
-      activeClass: 'bg-slate-800 border-slate-900 text-white shadow-sm ring-2 ring-slate-400/40',
-      badgeClass: 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800',
-      numberBadgeClass: 'bg-slate-200/80 text-slate-700',
-      scheduleBadgeClass: 'bg-slate-100 text-slate-600 border border-slate-200',
-    },
-  ];
 
   // Search filter for student dropdown
   const filteredStudents = useMemo(() => {
@@ -1220,6 +1144,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       })
       .filter((item) => !!item.student && item.overrides.length > 0);
   }, [templates, students, classes, overridesFilter, templateSpecificMonth, activeMonth]);
+
+  // Total active overrides count across class and student tiers
+  const totalOverridesCount = activeClassOverridesList.length + activeStudentOverridesList.length;
 
   // Bulk selection state for active student overrides list (keyed by uniqueKey: studentId:::month)
   const [selectedOverrideKeys, setSelectedOverrideKeys] = useState<string[]>([]);
@@ -1977,105 +1904,259 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setShowBankModal(false);
   };
 
+  const totalActiveOverridesCount = activeClassOverridesList.length + activeStudentOverridesList.length;
+
+  type SettingsCategory = 'institution' | 'financial' | 'governance';
+
+  const NAV_CATEGORIES: {
+    id: SettingsCategory;
+    name: string;
+    description: string;
+    icon: React.ElementType;
+    items: {
+      id: typeof activeSubTab;
+      htmlId: string;
+      name: string;
+      shortName: string;
+      description: string;
+      icon: React.ElementType;
+      badge?: string | number;
+      badgeVariant?: 'teal' | 'indigo' | 'rose' | 'amber';
+      hasDot?: boolean;
+      hidden?: boolean;
+    }[];
+  }[] = [
+    {
+      id: 'institution',
+      name: 'Institution & Campus',
+      description: 'Campus identity, deposit banks & UI customization',
+      icon: Building2,
+      items: [
+        {
+          id: 'profile',
+          htmlId: 'settings-tab-profile',
+          name: 'Institute Profile',
+          shortName: 'Profile',
+          description: 'Campus name, official logo & contact details',
+          icon: Building2,
+        },
+        {
+          id: 'banks',
+          htmlId: 'settings-tab-banks',
+          name: 'Bank Accounts',
+          shortName: 'Banks',
+          description: 'Deposit bank instructions printed on vouchers',
+          icon: CreditCard,
+          badge: bankAccounts.length > 0 ? `${bankAccounts.length}` : undefined,
+          badgeVariant: 'teal',
+        },
+        {
+          id: 'appearance',
+          htmlId: 'settings-tab-appearance',
+          name: 'Appearance & Themes',
+          shortName: 'Theme',
+          description: 'Color themes, sidebar mode & visual styling',
+          icon: Palette,
+        },
+      ],
+    },
+    {
+      id: 'financial',
+      name: 'Financial Policies',
+      description: 'Voucher rules, surcharges & fee pricing engine',
+      icon: Sliders,
+      items: [
+        {
+          id: 'policies',
+          htmlId: 'settings-tab-policies',
+          name: 'Voucher Policies',
+          shortName: 'Policies',
+          description: 'Due dates, late fees, copy orders & rounding up',
+          icon: Sliders,
+          hasDot: hasPolicyChanges,
+          badge: roundingEnabled && roundingMultiple > 1 ? `Rs. ${roundingMultiple}` : undefined,
+          badgeVariant: 'indigo',
+        },
+        {
+          id: 'templates',
+          htmlId: 'settings-tab-templates',
+          name: 'Fee Templates',
+          shortName: 'Templates',
+          description: 'Global fee rates, class & student overrides',
+          icon: FileSpreadsheet,
+          badge: totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active` : undefined,
+          badgeVariant: 'teal',
+        },
+      ],
+    },
+    {
+      id: 'governance',
+      name: 'Governance & Audit',
+      description: 'RBAC security, period locking & maintenance',
+      icon: ShieldCheck,
+      items: [
+        {
+          id: 'users',
+          htmlId: 'settings-tab-users',
+          name: 'Users & Permissions',
+          shortName: 'Users',
+          description: 'Operator accounts, login access & granular RBAC',
+          icon: Users,
+          badge: users.length > 0 ? `${users.length}` : undefined,
+          badgeVariant: 'teal',
+          hidden: !(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')),
+        },
+        {
+          id: 'monthEnd',
+          htmlId: 'settings-tab-month-end',
+          name: 'Month End Wizard',
+          shortName: 'Month-End',
+          description: 'Monthly reconciliation, defaulter audit & period lock',
+          icon: CalendarCheck,
+          badge: 'Audit Lock',
+          badgeVariant: 'indigo',
+        },
+        {
+          id: 'cleanup',
+          htmlId: 'settings-tab-cleanup',
+          name: 'Data Maintenance',
+          shortName: 'Maintenance',
+          description: 'Selective table purge, test data reset & cleanup',
+          icon: Database,
+          badge: 'High Risk',
+          badgeVariant: 'rose',
+          hidden: !(currentUser?.role === 'Admin' || hasPermission('settings.manage')),
+        },
+      ],
+    },
+  ];
+
+  const currentCategoryObj =
+    NAV_CATEGORIES.find((c) => c.items.some((i) => i.id === activeSubTab)) || NAV_CATEGORIES[0];
+  const currentItemObj =
+    currentCategoryObj.items.find((i) => i.id === activeSubTab) || currentCategoryObj.items[0];
+  const ActiveItemIcon = currentItemObj.icon;
+
   return (
     <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <Settings className="w-6 h-6 text-teal-600" />
-            System & Administrative Settings
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Manage institute profile, active default bank accounts for voucher printing, and fee particular templates.
-          </p>
+      {/* Unified Compact Settings Header & Domain Category Navigation */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-3.5 sm:p-4 space-y-3">
+        {/* Row 1: Settings Identity & Domain Category Switcher */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/90 flex items-center justify-center text-teal-700 shadow-2xs shrink-0">
+              <Settings className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
+                  System Settings
+                </h2>
+                <span className="text-slate-300">/</span>
+                <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
+                  {currentCategoryObj.name}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 hidden sm:block truncate">
+                {currentCategoryObj.description}
+              </p>
+            </div>
+          </div>
+
+          {/* Domain Category Selector: 3 Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/60 self-start sm:self-auto overflow-x-auto max-w-full shrink-0">
+            {NAV_CATEGORIES.map((cat) => {
+              const isCatActive = cat.id === currentCategoryObj.id;
+              const CatIcon = cat.icon;
+              const catHasDot = cat.items.some((i) => i.hasDot);
+              return (
+                <button
+                  key={cat.id}
+                  id={`settings-category-${cat.id}`}
+                  type="button"
+                  onClick={() => {
+                    const firstVisible = cat.items.find((i) => !i.hidden);
+                    if (firstVisible) {
+                      setActiveSubTab(firstVisible.id);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                    isCatActive
+                      ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/70'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <CatIcon className={`w-3.5 h-3.5 ${isCatActive ? 'text-teal-600' : 'text-slate-400'}`} />
+                  <span>{cat.name}</span>
+                  {catHasDot && (
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved policy changes" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl flex-wrap">
-          <button
-            onClick={() => setActiveSubTab('profile')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'profile' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Building2 className="w-3.5 h-3.5 text-teal-600" />
-            <span>Institute Profile</span>
-          </button>
-          <button
-            id="settings-tab-appearance"
-            onClick={() => setActiveSubTab('appearance')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'appearance' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Palette className="w-3.5 h-3.5 text-teal-600" />
-            <span>Appearance & Themes</span>
-          </button>
-          <button
-            onClick={() => setActiveSubTab('policies')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'policies' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5 text-teal-600" />
-            <span>Voucher Policies</span>
-          </button>
-          <button
-            onClick={() => setActiveSubTab('banks')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'banks' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CreditCard className="w-3.5 h-3.5 text-teal-600" />
-            <span>Bank Accounts</span>
-          </button>
-          <button
-            onClick={() => setActiveSubTab('templates')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'templates' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
-            <span>Fee Templates</span>
-          </button>
-          <button
-            id="settings-tab-month-end"
-            onClick={() => setActiveSubTab('monthEnd')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'monthEnd'
-                ? 'bg-white text-indigo-900 shadow-2xs ring-1 ring-indigo-200'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <CalendarCheck className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Month End Wizard</span>
-          </button>
-          {(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (
-            <button
-              id="settings-tab-users"
-              onClick={() => setActiveSubTab('users')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                activeSubTab === 'users' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5 text-teal-600" />
-              <span>Users & Auth</span>
-            </button>
-          )}
-          {(currentUser?.role === 'Admin' || hasPermission('settings.manage')) && (
-            <button
-              id="settings-tab-cleanup"
-              onClick={() => setActiveSubTab('cleanup')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                activeSubTab === 'cleanup'
-                  ? 'bg-rose-50 text-rose-800 shadow-2xs border border-rose-200'
-                  : 'text-slate-600 hover:text-rose-700'
-              }`}
-            >
-              <Database className="w-3.5 h-3.5 text-rose-600" />
-              <span>Data Cleanup</span>
-            </button>
-          )}
+        {/* Row 2: Sub-tabs within Active Category */}
+        <div className="flex items-center justify-between gap-3 overflow-x-auto pt-0.5">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 max-w-full">
+            {currentCategoryObj.items
+              .filter((item) => !item.hidden)
+              .map((item) => {
+                const isItemActive = activeSubTab === item.id;
+                const ItemIcon = item.icon;
+
+                let activeClasses = 'bg-teal-600 text-white shadow-xs';
+                if (item.id === 'monthEnd') {
+                  activeClasses = 'bg-indigo-600 text-white shadow-xs';
+                } else if (item.id === 'cleanup') {
+                  activeClasses = 'bg-rose-600 text-white shadow-xs';
+                }
+
+                return (
+                  <button
+                    key={item.id}
+                    id={item.htmlId}
+                    type="button"
+                    onClick={() => setActiveSubTab(item.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer ${
+                      isItemActive
+                        ? activeClasses
+                        : 'bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/70'
+                    }`}
+                  >
+                    <ItemIcon className={`w-3.5 h-3.5 ${isItemActive ? 'text-white' : 'text-teal-600'}`} />
+                    <span>{item.name}</span>
+                    {item.hasDot && (
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${isItemActive ? 'bg-amber-300' : 'bg-amber-500 animate-pulse'}`} />
+                    )}
+                    {item.badge && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                          isItemActive
+                            ? 'bg-white/20 text-white'
+                            : item.badgeVariant === 'rose'
+                            ? 'bg-rose-100 text-rose-800'
+                            : item.badgeVariant === 'indigo'
+                            ? 'bg-indigo-100 text-indigo-800'
+                            : item.badgeVariant === 'teal'
+                            ? 'bg-teal-100 text-teal-800'
+                            : 'bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+          </div>
+
+          <div className="hidden lg:flex items-center gap-2 text-xs text-slate-400 shrink-0">
+            <span className="text-[11px] font-medium truncate max-w-xs">
+              {currentItemObj.description}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -2150,33 +2231,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Subtab 3: Fee Particular Templates */}
       {activeSubTab === 'templates' && (
         <div className="space-y-4">
-          {/* 3-Tier Fee Template Scope Switcher */}
+          {/* 4-Tier Fee Template Scope Switcher Card */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
                   <h3 className="font-bold text-slate-900 text-sm">
-                    Fee Template Hierarchy & Schedule
+                    Fee Template Hierarchy & Overrides
                   </h3>
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
-                    Target: {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
-                  </span>
+                  {templateScopeMode !== 'overrides' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                      Target: {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
+                    </span>
+                  )}
+                  {templateScopeMode === 'overrides' && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                      {totalOverridesCount} Active Overrides Configured
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Configure default fee particular templates and multi-tier override rules for billing vouchers.
+                  {templateScopeMode === 'overrides'
+                    ? 'Audit, filter, bulk-manage, and import/export class & student custom fee template overrides.'
+                    : 'Configure default fee particular templates and multi-tier override rules for billing vouchers.'}
                 </p>
               </div>
 
-              {/* Scope Segmented Control */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1 shrink-0 self-start md:self-auto border border-slate-200/70">
+              {/* 4-Tier Scope Segmented Control */}
+              <div className="flex flex-wrap items-center bg-slate-100 p-1 rounded-xl gap-1 shrink-0 self-start md:self-auto border border-slate-200/70 max-w-full">
                 <button
                   type="button"
                   id="tab-scope-global"
                   onClick={() =>
                     requestTransition({
                       kind: 'scope',
-                      label: scopeLabel,
+                      label: 'Global Default',
                       apply: () => {
                         setTemplateScopeMode('global');
                         setSelectedStudentId('');
@@ -2191,7 +2281,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   }`}
                 >
                   <Sliders className="w-3.5 h-3.5 text-teal-600" />
-                  1. Global Default
+                  <span>1. Global Default</span>
                 </button>
                 <button
                   type="button"
@@ -2199,7 +2289,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={() =>
                     requestTransition({
                       kind: 'scope',
-                      label: scopeLabel,
+                      label: 'Class Override',
                       apply: () => {
                         setTemplateScopeMode('class');
                         setSelectedStudentId('');
@@ -2210,13 +2300,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     })
                   }
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'class' || (selectedClassId && !selectedStudentId)
+                    templateScopeMode === 'class'
                       ? 'bg-white text-indigo-950 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-                  2. Class Override
+                  <span>2. Class Override</span>
                   {activeClassOverridesList.length > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 text-indigo-800 font-extrabold">
                       {activeClassOverridesList.length}
@@ -2229,7 +2319,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={() =>
                     requestTransition({
                       kind: 'scope',
-                      label: scopeLabel,
+                      label: 'Student Override',
                       apply: () => {
                         setTemplateScopeMode('student');
                         setSelectedClassId('');
@@ -2237,117 +2327,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     })
                   }
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'student' || selectedStudentId
+                    templateScopeMode === 'student'
                       ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   <GraduationCap className="w-3.5 h-3.5 text-teal-600" />
-                  3. Student Override
+                  <span>3. Student Override</span>
                   {activeStudentOverridesList.length > 0 && (
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold">
                       {activeStudentOverridesList.length}
                     </span>
                   )}
                 </button>
+                <button
+                  type="button"
+                  id="tab-scope-overrides"
+                  onClick={() =>
+                    requestTransition({
+                      kind: 'scope',
+                      label: 'Overrides Directory',
+                      apply: () => {
+                        setTemplateScopeMode('overrides');
+                      },
+                    })
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    templateScopeMode === 'overrides'
+                      ? 'bg-white text-amber-950 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <ListFilter className="w-3.5 h-3.5 text-amber-600" />
+                  <span>4. Overrides Directory</span>
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      templateScopeMode === 'overrides'
+                        ? 'bg-amber-100 text-amber-900'
+                        : totalOverridesCount > 0
+                        ? 'bg-amber-500 text-white'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {totalOverridesCount}
+                  </span>
+                </button>
               </div>
             </div>
 
-            {/* 6-Tier Waterfall Resolution Precedence Track */}
-            <div className="p-4 bg-gradient-to-r from-slate-50 via-slate-50/90 to-slate-100/70 rounded-xl border border-slate-200/80 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-teal-100/90 border border-teal-200 flex items-center justify-center text-teal-700 shrink-0">
-                    <Layers className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                      6-Tier Fee Resolution Waterfall
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/80 text-slate-700">
-                        Precedence Order
-                      </span>
-                    </h4>
-                    <p className="text-[11px] text-slate-500">
-                      Evaluated left-to-right: specific student &amp; class overrides take precedence over global defaults.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 self-start sm:self-auto bg-white px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-medium text-slate-600 shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
-                  <span>Active in Editor:</span>
-                  <span className="font-bold text-teal-800">Tier {currentEditingTier}</span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto pb-1 -mb-1 pt-0.5">
-                <div className="flex items-center min-w-max gap-2">
-                  {TIER_DEFINITIONS.map((t, idx) => {
-                    const isCurrent = currentEditingTier === t.tier;
-                    return (
-                      <React.Fragment key={t.tier}>
-                        <button
-                          type="button"
-                          onClick={() => handleSelectTier(t.tier)}
-                          title={`Click to switch editor to Tier ${t.tier}: ${t.scope} (${t.period})`}
-                          className={`group flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 text-left cursor-pointer ${
-                            isCurrent
-                              ? t.activeClass
-                              : `${t.badgeClass} hover:shadow-xs`
-                          }`}
-                        >
-                          <div
-                            className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
-                              isCurrent ? 'bg-white/25 text-white' : t.numberBadgeClass
-                            }`}
-                          >
-                            {t.tier}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`text-xs font-bold ${isCurrent ? 'text-white' : 'text-slate-900'}`}>
-                                {t.scope}
-                              </span>
-                              <span
-                                className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
-                                  isCurrent
-                                    ? 'bg-white/20 text-white'
-                                    : t.scheduleBadgeClass
-                                }`}
-                              >
-                                {t.period === 'Month'
-                                  ? templateMonthMode === 'specific'
-                                    ? formatMonthName(templateSpecificMonth).split(' ')[0]
-                                    : 'Month'
-                                  : t.period}
-                              </span>
-                              {isCurrent && (
-                                <span className="text-[9px] font-black uppercase px-1 py-0.2 rounded bg-white/25 text-white ml-0.5 tracking-wider">
-                                  Editing
-                                </span>
-                              )}
-                            </div>
-                            <div className={`text-[10px] mt-0.5 ${isCurrent ? 'text-white/80 font-medium' : 'text-slate-500'}`}>
-                              {t.desc}
-                            </div>
-                          </div>
-                        </button>
-
-                        {idx < TIER_DEFINITIONS.length - 1 && (
-                          <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+            {/* Scope 1-3 Configuration: Application Period & Scope Target Controls */}
+            {templateScopeMode !== 'overrides' && (
+              <>
 
             {/* Schedule / Application Period Selector */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-slate-50/80 border border-slate-200/80 rounded-xl">
-              <div className="flex items-center gap-2">
+            <div className="p-3 bg-slate-50/90 border border-slate-200/80 rounded-xl flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
                 <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
-                <div className="text-xs">
+                <div className="text-xs min-w-0">
                   <span className="font-bold text-slate-800">Application Schedule:</span>{' '}
                   <span className="text-slate-600">
                     {templateMonthMode === 'all'
@@ -2357,7 +2393,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0 max-w-full">
                 <div className="inline-flex p-1 bg-white border border-slate-200 rounded-xl shadow-2xs">
                   <button
                     type="button"
@@ -2371,14 +2407,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         });
                       }
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer text-center ${
                       templateMonthMode === 'all'
                         ? 'bg-teal-600 text-white shadow-2xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                     }`}
                   >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    All Months (Recurring)
+                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">All Months</span>
+                    <span className="hidden sm:inline text-[10px] opacity-90">(Recurring)</span>
                   </button>
                   <button
                     type="button"
@@ -2392,25 +2429,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         });
                       }
                     }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer text-center ${
                       templateMonthMode === 'specific'
                         ? 'bg-teal-600 text-white shadow-2xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                     }`}
                   >
-                    <Calendar className="w-3.5 h-3.5" />
-                    Specific Month Override
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Specific Month</span>
+                    <span className="hidden sm:inline text-[10px] opacity-90">Override</span>
                   </button>
                 </div>
 
                 {templateMonthMode === 'specific' && (
-                  <div className="relative">
-                    <input
-                      type="month"
-                      id="input-template-specific-month"
+                  <div id="input-template-specific-month" className="inline-flex items-center">
+                    <MonthPicker
                       value={templateSpecificMonth}
-                      onChange={(e) => {
-                        const val = e.target.value;
+                      onChange={(val) => {
                         if (!val) return;
                         requestTransition({
                           kind: 'month',
@@ -2418,7 +2453,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           apply: () => setTemplateSpecificMonth(val),
                         });
                       }}
-                      className="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 shadow-2xs cursor-pointer"
+                      availableMonths={monthsWithData}
+                      closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+                      themeColor={themeConfig?.color || 'teal'}
+                      isLight={true}
+                      align="right"
+                      showSteppers={true}
+                      variant="pill"
+                      idPrefix="template-specific-month"
                     />
                   </div>
                 )}
@@ -2714,18 +2756,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
             </div>
+            </>
+          )}
           </div>
 
-          <form
-            onSubmit={
-              selectedStudent
-                ? handleSaveStudentOverrides
-                : selectedClass
-                ? handleSaveClassOverrides
-                : handleSaveAllParticulars
-            }
-            className="space-y-4"
-          >
+          {/* Form for Scope 1-3 (Global, Class, Student) */}
+          {templateScopeMode !== 'overrides' && (
+            <>
+              <form
+                onSubmit={
+                  selectedStudent
+                    ? handleSaveStudentOverrides
+                    : selectedClass
+                    ? handleSaveClassOverrides
+                    : handleSaveAllParticulars
+                }
+                className="space-y-4"
+              >
             {/* Selected Student Banner (if a student is active) */}
             {selectedStudent && (
               <div className="bg-teal-50/70 rounded-2xl border border-teal-200 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
@@ -3099,6 +3146,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </form>
 
+          {/* Quick link to Overrides Directory if overrides exist */}
+          {totalOverridesCount > 0 && (
+            <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs">
+              <div className="flex items-center gap-2 text-slate-600">
+                <ListFilter className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>{totalOverridesCount}</strong> custom fee override{totalOverridesCount === 1 ? '' : 's'} active ({activeClassOverridesList.length} class, {activeStudentOverridesList.length} student).
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  requestTransition({
+                    kind: 'scope',
+                    label: 'Overrides Directory',
+                    apply: () => setTemplateScopeMode('overrides'),
+                  })
+                }
+                className="font-bold text-teal-700 hover:text-teal-900 hover:underline cursor-pointer flex items-center gap-1"
+              >
+                <span>Switch to 4. Overrides Directory</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Scope 4: Active Overrides Directory */}
+      {templateScopeMode === 'overrides' && (
+        <div className="space-y-4">
           {/* Overrides Management Filter Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
             <div className="flex items-center gap-2">
@@ -3472,6 +3550,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       )}
+    </div>
+  )}
 
       {activeSubTab === 'users' &&
         (currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')) && (

@@ -1,4 +1,4 @@
-import { AppThemeConfig, ThemeColor, SidebarTheme, UiDensity } from '../types';
+import { AppThemeConfig, ThemeColor, SidebarTheme } from '../types';
 
 export interface ThemeColorPreset {
   id: ThemeColor;
@@ -135,7 +135,6 @@ export const THEME_COLOR_PRESETS: Record<ThemeColor, ThemeColorPreset> = {
 export const DEFAULT_THEME_CONFIG: AppThemeConfig = {
   color: 'teal',
   sidebarTheme: 'dark',
-  density: 'comfortable',
 };
 
 /**
@@ -148,7 +147,6 @@ export function applyThemeToDom(theme: AppThemeConfig) {
 
   root.setAttribute('data-theme-color', theme.color);
   root.setAttribute('data-sidebar-theme', theme.sidebarTheme);
-  root.setAttribute('data-ui-density', theme.density);
 
   root.style.setProperty('--color-primary', preset.primaryColor);
   root.style.setProperty('--color-primary-hover', preset.hoverColor);
