@@ -120,6 +120,118 @@ td {
   padding-bottom: 0.6rem;
 }
 
+/* ==========================================================================
+   MINIMAL THEME-BLENDED SIDEBAR SCROLLBAR
+   ========================================================================== */
+
+/* Standard Firefox Scrollbar */
+.sidebar-scrollbar,
+#app-sidebar nav,
+#app-sidebar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+[data-sidebar-theme="light"] .sidebar-scrollbar,
+[data-sidebar-theme="light"] #app-sidebar nav,
+[data-sidebar-theme="light"] #app-sidebar {
+  scrollbar-color: rgba(15, 23, 42, 0.15) transparent;
+}
+
+[data-sidebar-theme="branded"] .sidebar-scrollbar,
+[data-sidebar-theme="branded"] #app-sidebar nav,
+[data-sidebar-theme="branded"] #app-sidebar {
+  scrollbar-color: var(--color-primary-border) transparent;
+}
+
+/* WebKit (Chrome, Safari, Edge) Minimal 4px Scrollbar */
+.sidebar-scrollbar::-webkit-scrollbar,
+#app-sidebar nav::-webkit-scrollbar,
+#app-sidebar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-track,
+#app-sidebar nav::-webkit-scrollbar-track,
+#app-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scrollbar::-webkit-scrollbar-thumb,
+#app-sidebar nav::-webkit-scrollbar-thumb,
+#app-sidebar::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+/* Light Theme Sidebar Scrollbar */
+[data-sidebar-theme="light"] .sidebar-scrollbar::-webkit-scrollbar-thumb,
+[data-sidebar-theme="light"] #app-sidebar nav::-webkit-scrollbar-thumb,
+[data-sidebar-theme="light"] #app-sidebar::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.15);
+}
+
+/* Branded Theme Sidebar Scrollbar */
+[data-sidebar-theme="branded"] .sidebar-scrollbar::-webkit-scrollbar-thumb,
+[data-sidebar-theme="branded"] #app-sidebar nav::-webkit-scrollbar-thumb,
+[data-sidebar-theme="branded"] #app-sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--color-primary-border);
+  opacity: 0.35;
+}
+
+/* Hover over container - gently highlights scrollbar with theme accent */
+.sidebar-scrollbar:hover::-webkit-scrollbar-thumb,
+#app-sidebar:hover nav::-webkit-scrollbar-thumb,
+#app-sidebar:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-primary-border);
+  opacity: 0.7;
+}
+
+[data-sidebar-theme="light"] .sidebar-scrollbar:hover::-webkit-scrollbar-thumb,
+[data-sidebar-theme="light"] #app-sidebar:hover nav::-webkit-scrollbar-thumb {
+  background-color: var(--color-primary);
+  opacity: 0.45;
+}
+
+/* Direct hover on the scrollbar thumb itself - full vibrant theme glow */
+.sidebar-scrollbar::-webkit-scrollbar-thumb:hover,
+#app-sidebar nav::-webkit-scrollbar-thumb:hover,
+#app-sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-primary) !important;
+  opacity: 1 !important;
+}
+
+/* Utility to hide scrollbar where explicitly requested */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Custom subtle scrollbar for modals and scrollable panels */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
 @media print {
   /* Hide application navigation, top headers, sidebars, buttons, toolbars, search bars, modals */
   header,

@@ -15,6 +15,7 @@ import { SettingsView } from './components/SettingsView';
 import { LoginView } from './components/LoginView';
 import { MonthPicker } from './components/MonthPicker';
 import { GlobalStudentSearch } from './components/GlobalStudentSearch';
+import { DatabaseStatusBadge } from './components/DatabaseStatusBadge';
 import { ActiveTab } from './types';
 import { THEME_COLOR_PRESETS } from './utils/themeConfig';
 import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
@@ -200,21 +201,24 @@ function MainApp() {
               </span>
             </div>
           </div>
-          <MonthPicker
-            value={activeMonth}
-            onChange={changeMonth}
-            availableMonths={availableMonths}
-            closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
-            themeColor={themeConfig?.color || 'teal'}
-            isLight={isLight}
-            compact={true}
-            idPrefix="mobile-header-month-picker"
-            align="right"
-          />
+          <div className="flex items-center gap-2">
+            <DatabaseStatusBadge />
+            <MonthPicker
+              value={activeMonth}
+              onChange={changeMonth}
+              availableMonths={availableMonths}
+              closedMonths={availableMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+              themeColor={themeConfig?.color || 'teal'}
+              isLight={isLight}
+              compact={true}
+              idPrefix="mobile-header-month-picker"
+              align="right"
+            />
+          </div>
         </div>
 
         {/* Mobile Search Bar Wrapper */}
-        <div className="md:hidden px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
+        <div className="md:hidden relative z-30 px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
           <GlobalStudentSearch
             onNavigateToLedger={handleNavigateToLedger}
             onNavigateToStudents={() => setActiveTab('students')}
@@ -222,7 +226,7 @@ function MainApp() {
         </div>
 
         {/* Desktop Top Header Bar (Global Search + Quick Actions) */}
-        <header className="hidden md:flex sticky top-0 z-20 bg-slate-100/90 backdrop-blur-md px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
+        <header className="hidden md:flex sticky top-0 z-30 bg-slate-100/90 backdrop-blur-md px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
           {/* Global Search Bar */}
           <div className="flex-1 max-w-xl">
             <GlobalStudentSearch
@@ -233,6 +237,7 @@ function MainApp() {
 
           {/* Right Header Status / Indicators */}
           <div className="flex items-center gap-3 shrink-0">
+            <DatabaseStatusBadge />
             {/* Operator info pill */}
             <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs text-xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />

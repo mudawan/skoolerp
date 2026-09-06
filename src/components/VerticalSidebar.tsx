@@ -175,6 +175,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 
       {/* Sidebar Container */}
       <aside
+        id="app-sidebar"
         className={`fixed top-0 bottom-0 left-0 z-40 flex flex-col ${sidebarBgClass} transition-all duration-300 ease-in-out print:hidden ${
           // Mobile state: slide in / out
           mobileOpen
@@ -313,7 +314,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         )}
 
         {/* Navigation Items Links */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 no-scrollbar">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 sidebar-scrollbar">
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

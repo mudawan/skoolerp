@@ -15,6 +15,7 @@ import {
   CreditCard,
   FileSpreadsheet,
   FileText,
+  GraduationCap,
   PlusCircle,
   Receipt,
   ShieldAlert,
@@ -258,141 +259,195 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Target */}
+        {/* Total Fee Target */}
         <div
           style={{
             background: `linear-gradient(160deg, ${preset.lightBg}65 0%, #ffffff 40%, #ffffff 100%)`,
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
         >
           <div
-            className="h-1 w-full"
+            className="h-1 w-full shrink-0"
             style={{
               background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
             }}
           />
-          <div className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Total Fee Target ({formatMonthName(activeMonth)})
-              </p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">
+          <div className="p-5 flex flex-col justify-between flex-1">
+            {/* Top Row: Title & Uniform Icon Box */}
+            <div className="flex items-start justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
+                  Total Fee Target
+                </p>
+              </div>
+              <div
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                  borderColor: preset.lightBorder,
+                }}
+                className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform"
+              >
+                <Coins className="w-5.5 h-5.5" />
+              </div>
+            </div>
+
+            {/* Metric Value */}
+            <div className="my-2.5">
+              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
                 {formatCurrency(totalGrossTarget)}
               </h3>
-              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5" />
-                {monthVouchers.length} Vouchers Issued
-              </p>
             </div>
-            <div
-              style={{
-                backgroundColor: preset.lightBg,
-                color: preset.primaryColor,
-                borderColor: preset.lightBorder,
-              }}
-              className="w-12 h-12 rounded-xl border flex items-center justify-center font-bold shadow-2xs group-hover:scale-105 transition-transform"
-            >
-              <Coins className="w-6 h-6" />
+
+            {/* Bottom Row: Metadata & Badge */}
+            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
+              <span className="flex items-center gap-1.5 font-medium text-slate-600 truncate">
+                <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5 shrink-0" />
+                <span>{monthVouchers.length} Vouchers Issued</span>
+              </span>
+              <span className="text-[11px] font-medium text-slate-400 shrink-0">
+                {formatMonthName(activeMonth)}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Total Collected */}
+        {/* Collected Amount */}
         <div
           style={{
             background: 'linear-gradient(160deg, #ecfdf565 0%, #ffffff 40%, #ffffff 100%)',
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
         >
-          <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-teal-500" />
-          <div className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Collected Amount
-              </p>
-              <h3 className="text-2xl font-bold text-emerald-600 mt-1">
+          <div className="h-1 w-full shrink-0 bg-gradient-to-r from-emerald-500 to-teal-500" />
+          <div className="p-5 flex flex-col justify-between flex-1">
+            {/* Top Row: Title & Uniform Icon Box */}
+            <div className="flex items-start justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
+                  Collected Amount
+                </p>
+              </div>
+              <div className="w-11 h-11 bg-emerald-50 border border-emerald-200/70 rounded-xl flex items-center justify-center text-emerald-600 shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
+                <CheckCircle2 className="w-5.5 h-5.5" />
+              </div>
+            </div>
+
+            {/* Metric Value */}
+            <div className="my-2.5">
+              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-emerald-600">
                 {formatCurrency(totalCollected)}
               </h3>
-              <div className="flex items-center gap-2 mt-1">
-                <div className="w-16 bg-slate-100 rounded-full h-2 overflow-hidden">
+            </div>
+
+            {/* Bottom Row: Metadata & Progress Indicator */}
+            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
+              <span className="flex items-center gap-1.5 font-medium text-emerald-700 truncate">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>{collectionPercentage}% Collected</span>
+              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <div className="w-16 bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200/50">
                   <div
-                    className="bg-emerald-500 h-2 rounded-full"
+                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
                     style={{ width: `${Math.min(100, collectionPercentage)}%` }}
                   />
                 </div>
-                <span className="text-xs font-bold text-emerald-700">
-                  {collectionPercentage}%
-                </span>
               </div>
-            </div>
-            <div className="w-12 h-12 bg-emerald-50 border border-emerald-100 rounded-xl flex items-center justify-center text-emerald-600 font-bold shadow-2xs group-hover:scale-105 transition-transform">
-              <CheckCircle2 className="w-6 h-6" />
             </div>
           </div>
         </div>
 
-        {/* Total Outstanding */}
+        {/* Outstanding Defaulters */}
         <div
           style={{
             background: 'linear-gradient(160deg, #fff1f265 0%, #ffffff 40%, #ffffff 100%)',
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
         >
-          <div className="h-1 w-full bg-gradient-to-r from-rose-500 to-amber-500" />
-          <div className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Outstanding Defaulters
-              </p>
-              <h3 className="text-2xl font-bold text-rose-600 mt-1">
+          <div className="h-1 w-full shrink-0 bg-gradient-to-r from-rose-500 to-amber-500" />
+          <div className="p-5 flex flex-col justify-between flex-1">
+            {/* Top Row: Title & Uniform Icon Box */}
+            <div className="flex items-start justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
+                  Outstanding Defaulters
+                </p>
+              </div>
+              <div className="w-11 h-11 bg-rose-50 border border-rose-200/70 rounded-xl flex items-center justify-center text-rose-600 shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
+                <Clock className="w-5.5 h-5.5" />
+              </div>
+            </div>
+
+            {/* Metric Value */}
+            <div className="my-2.5">
+              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-rose-600">
                 {formatCurrency(totalOutstanding)}
               </h3>
-              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
-                {defaultersCount} Unpaid Student Vouchers
-              </p>
             </div>
-            <div className="w-12 h-12 bg-rose-50 border border-rose-100 rounded-xl flex items-center justify-center text-rose-600 font-bold shadow-2xs group-hover:scale-105 transition-transform">
-              <Clock className="w-6 h-6" />
+
+            {/* Bottom Row: Metadata & Badge */}
+            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
+              <span className="flex items-center gap-1.5 font-medium text-rose-600 truncate">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                <span>{defaultersCount} Unpaid Vouchers</span>
+              </span>
+              <span className="text-[11px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200/60 shrink-0">
+                {totalGrossTarget > 0 ? `${Math.round((totalOutstanding / totalGrossTarget) * 100)}%` : '0%'} Due
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Active Students & Classes */}
+        {/* Active Enrolled Students */}
         <div
           style={{
             background: `linear-gradient(160deg, ${preset.lightBg}45 0%, #ffffff 40%, #ffffff 100%)`,
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group"
+          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
         >
           <div
-            className="h-1 w-full"
+            className="h-1 w-full shrink-0"
             style={{
               background: `linear-gradient(90deg, ${preset.hoverColor} 0%, ${preset.primaryColor} 100%)`,
             }}
           />
-          <div className="p-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Active Enrolled Students
-              </p>
-              <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                {activeStudents.length} Students
-              </h3>
-              <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                <BookOpen className="w-3.5 h-3.5 text-slate-600" />
-                {classes.filter((c) => c.active).length} Active Classes
-              </p>
+          <div className="p-5 flex flex-col justify-between flex-1">
+            {/* Top Row: Title & Uniform Icon Box */}
+            <div className="flex items-start justify-between gap-3 shrink-0">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
+                  Active Enrolled Students
+                </p>
+              </div>
+              <div
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                  borderColor: preset.lightBorder,
+                }}
+                className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform"
+              >
+                <Users className="w-5.5 h-5.5" />
+              </div>
             </div>
-            <div
-              style={{
-                backgroundColor: preset.lightBg,
-                color: preset.primaryColor,
-                borderColor: preset.lightBorder,
-              }}
-              className="w-12 h-12 rounded-xl border flex items-center justify-center font-bold shadow-2xs group-hover:scale-105 transition-transform"
-            >
-              <Users className="w-6 h-6" />
+
+            {/* Metric Value (No redundant second 'Students' word) */}
+            <div className="my-2.5">
+              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
+                {activeStudents.length.toLocaleString()}
+              </h3>
+            </div>
+
+            {/* Bottom Row: Metadata & Badge */}
+            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
+              <span className="flex items-center gap-1.5 font-medium text-slate-600 truncate">
+                <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span>{classes.filter((c) => c.active).length} Active Classes</span>
+              </span>
+              <span className="text-[11px] font-medium text-slate-400 shrink-0">
+                All Sections
+              </span>
             </div>
           </div>
         </div>
@@ -445,7 +500,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Voucher Payment Status Pie Chart */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div>
-            <h3 className="text-base font-bold text-slate-900">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <FileSpreadsheet style={{ color: preset.primaryColor }} className="w-5 h-5" />
               Voucher Status Breakdown
             </h3>
             <p className="text-xs text-slate-500">
@@ -496,7 +552,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-base font-bold text-slate-900">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <GraduationCap style={{ color: preset.primaryColor }} className="w-5 h-5" />
                 Class-Wise Fee Collection Performance
               </h3>
               <p className="text-xs text-slate-500">
@@ -542,7 +599,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-base font-bold text-slate-900">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Receipt style={{ color: preset.primaryColor }} className="w-5 h-5" />
                 Recent Collections Ledger
               </h3>
               <p className="text-xs text-slate-500">

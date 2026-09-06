@@ -1,8 +1,9 @@
 import React, { useState, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentDocument, StudentStatus } from '../types';
-import { formatCurrency, calculateAge } from '../utils/feeMath';
+import { formatCurrency, calculateAge, normalizeDateToISO } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { StudentAvatar } from './StudentAvatar';
@@ -93,12 +94,15 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     photoUrl: student?.photoUrl || '',
     name: student?.name || '',
     regNo: student?.regNo || computeNextRegNo(),
-    admissionDate: student?.admissionDate || new Date().toISOString().split('T')[0],
+    admissionDate: student?.admissionDate
+      ? (normalizeDateToISO(student.admissionDate) || student.admissionDate)
+      : new Date().toISOString().split('T')[0],
     firstBillingMonth: (() => {
       if (student?.firstBillingMonth) return student.firstBillingMonth;
       const now = new Date();
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const admMonth = student?.admissionDate ? student.admissionDate.substring(0, 7) : currentMonth;
+      const normAdm = student?.admissionDate ? normalizeDateToISO(student.admissionDate) : null;
+      const admMonth = normAdm ? normAdm.substring(0, 7) : (student?.admissionDate ? student.admissionDate.substring(0, 7) : currentMonth);
       return admMonth > currentMonth ? admMonth : currentMonth;
     })(),
     classId: student
@@ -112,7 +116,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     status: student?.status || ('Active' as StudentStatus),
 
     // 2. Other Information
-    dob: student?.dob || '',
+    dob: student?.dob ? (normalizeDateToISO(student.dob) || student.dob) : '',
     gender: ((student?.gender === 'Female') ? 'Female' : 'Male') as 'Male' | 'Female',
     bFormNo: student?.bFormNo || '',
     familyId: student?.familyId || '',
@@ -411,7 +415,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       regNo: formData.regNo.trim(),
       studentNo: formData.regNo.trim(),
       name: formData.name.trim(),
-      admissionDate: formData.admissionDate,
+      admissionDate: normalizeDateToISO(formData.admissionDate) || formData.admissionDate,
       firstBillingMonth: formData.firstBillingMonth?.trim() || undefined,
       classId: formData.classId,
       monthlyDiscount: Math.max(0, Number(formData.monthlyDiscount) || 0),
@@ -419,7 +423,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       notes: formData.notes.trim() || undefined,
       photoUrl: formData.photoUrl.trim() || undefined,
 
-      dob: formData.dob,
+      dob: normalizeDateToISO(formData.dob) || formData.dob,
       gender: formData.gender,
       bFormNo: formData.bFormNo.trim() || undefined,
       familyId: formData.familyId || undefined,
@@ -457,8 +461,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+  const modalContent = (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl space-y-5 my-6 max-h-[92vh] flex flex-col border border-slate-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
@@ -1258,7 +1262,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
       {/* Document Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[80] bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
               <h4 className="font-bold text-slate-900 text-sm truncate flex items-center gap-2">
@@ -1318,4 +1322,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modalContent, document.body);
 };

@@ -66,8 +66,15 @@ import {
   getPreviousMonthString,
   roundUpToMultiple,
   VoucherPreviewCalculation,
+  normalizeDateToISO,
 } from '../utils/feeMath';
 import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
+import {
+  queueDatabaseSync,
+  fetchServerState,
+  initLiveRealtimeSync,
+  subscribeRemoteChanges,
+} from '../services/apiSync';
 
 export interface DownstreamConflict {
   voucher: FeeVoucher;
@@ -572,17 +579,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [students, setStudents] = useState<Student[]>(() => {
     const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
     const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
+    const normalizedStudents: Student[] = rawStudents.map((s) => ({
+      ...s,
+      dob: s.dob ? (normalizeDateToISO(s.dob) || s.dob) : s.dob,
+      admissionDate: s.admissionDate ? (normalizeDateToISO(s.admissionDate) || s.admissionDate) : s.admissionDate,
+    }));
     const savedFamilies = localStorage.getItem(`${STORAGE_KEY}_families`);
     const rawFamilies: Family[] = savedFamilies ? JSON.parse(savedFamilies) : INITIAL_FAMILIES;
-    return reconcileFamiliesAndStudents(rawFamilies, rawStudents).students;
+    return reconcileFamiliesAndStudents(rawFamilies, normalizedStudents).students;
   });
 
   const [families, setFamilies] = useState<Family[]>(() => {
     const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
     const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
+    const normalizedStudents: Student[] = rawStudents.map((s) => ({
+      ...s,
+      dob: s.dob ? (normalizeDateToISO(s.dob) || s.dob) : s.dob,
+      admissionDate: s.admissionDate ? (normalizeDateToISO(s.admissionDate) || s.admissionDate) : s.admissionDate,
+    }));
     const savedFamilies = localStorage.getItem(`${STORAGE_KEY}_families`);
     const rawFamilies: Family[] = savedFamilies ? JSON.parse(savedFamilies) : INITIAL_FAMILIES;
-    return reconcileFamiliesAndStudents(rawFamilies, rawStudents).families;
+    return reconcileFamiliesAndStudents(rawFamilies, normalizedStudents).families;
   });
 
   // Loop-safe sequence counters for auto-generated codes (Reg #, Family #).
@@ -1079,7 +1096,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem(`${STORAGE_KEY}_audit_logs`);
   }, []);
 
-  // Sync to local storage
+  const isRemoteUpdateRef = useRef(false);
+
+  const applyServerState = useCallback((d: any) => {
+    if (!d) return;
+    isRemoteUpdateRef.current = true;
+    if (Array.isArray(d.users) && d.users.length > 0) setUsers(d.users);
+    if (Array.isArray(d.classes) && d.classes.length > 0) setClasses(d.classes);
+    if (Array.isArray(d.students) && d.students.length > 0) setStudents(d.students);
+    if (Array.isArray(d.families) && d.families.length > 0) setFamilies(d.families);
+    if (Array.isArray(d.buses) && d.buses.length > 0) setBuses(d.buses);
+    if (Array.isArray(d.stops) && d.stops.length > 0) setStops(d.stops);
+    if (Array.isArray(d.transportAssignments)) setTransportAssignments(d.transportAssignments);
+    if (Array.isArray(d.templates) && d.templates.length > 0) setTemplates(d.templates);
+    if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
+    if (Array.isArray(d.collections)) setCollections(d.collections);
+    if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+    if (Array.isArray(d.bankAccounts) && d.bankAccounts.length > 0) setBankAccounts(d.bankAccounts);
+    if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
+    if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
+    if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
+    if (d.institute && d.institute.name) setInstitute(d.institute);
+
+    setTimeout(() => {
+      isRemoteUpdateRef.current = false;
+    }, 150);
+  }, []);
+
+  // Hydrate from centralized backend database on mount & subscribe to live SSE real-time sync
+  useEffect(() => {
+    fetchServerState().then((res) => {
+      if (res?.success && res.data) {
+        applyServerState(res.data);
+      }
+    });
+
+    const cleanupSSE = initLiveRealtimeSync();
+    const unsubRemote = subscribeRemoteChanges((remoteData) => {
+      applyServerState(remoteData);
+    });
+
+    return () => {
+      cleanupSSE();
+      unsubRemote();
+    };
+  }, [applyServerState]);
+
+  // Sync to local storage & database
   useEffect(() => {
     localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(users));
     localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(classes));
@@ -1097,6 +1160,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_KEY}_audit_logs`, JSON.stringify(auditLogs));
     localStorage.setItem(`${STORAGE_KEY}_student_account_history`, JSON.stringify(studentAccountHistory));
     localStorage.setItem(`${STORAGE_KEY}_locked_months`, JSON.stringify(lockedMonths));
+
+    if (isRemoteUpdateRef.current) {
+      return;
+    }
+
+    // Persist to central database engine
+    queueDatabaseSync({
+      users,
+      classes,
+      students,
+      families,
+      buses,
+      stops,
+      transportAssignments,
+      templates,
+      vouchers,
+      collections,
+      transactions,
+      institute,
+      bankAccounts,
+      auditLogs,
+      studentAccountHistory,
+      lockedMonths,
+    });
   }, [
     users,
     classes,
@@ -1480,8 +1567,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    const normalizedDob = studentData.dob ? (normalizeDateToISO(studentData.dob) || studentData.dob) : '';
+    const normalizedAdmDate = studentData.admissionDate ? (normalizeDateToISO(studentData.admissionDate) || studentData.admissionDate) : undefined;
+
     const newStudent: Student = {
       ...studentData,
+      dob: normalizedDob,
+      admissionDate: normalizedAdmDate,
       id: generateUniqueId('stu'),
       studentNo,
       regNo,
@@ -1632,12 +1724,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
+    const sanitizedUpdates = { ...updates };
+    if (sanitizedUpdates.dob !== undefined) {
+      sanitizedUpdates.dob = sanitizedUpdates.dob ? (normalizeDateToISO(sanitizedUpdates.dob) || sanitizedUpdates.dob) : '';
+    }
+    if (sanitizedUpdates.admissionDate !== undefined) {
+      sanitizedUpdates.admissionDate = sanitizedUpdates.admissionDate ? (normalizeDateToISO(sanitizedUpdates.admissionDate) || sanitizedUpdates.admissionDate) : '';
+    }
+
     setStudents((prev) =>
       prev.map((s) => {
         if (s.id !== id) return s;
         return {
           ...s,
-          ...updates,
+          ...sanitizedUpdates,
           familyId: newFamilyId,
         };
       })

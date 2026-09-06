@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { User, UserRole, PermissionCategory } from '../types';
 import {
   ALL_PERMISSIONS,
@@ -191,12 +192,25 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
     }
   };
 
-  return (
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div
       id="user-permissions-modal"
-      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-[85] bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-2 sm:p-4 flex flex-col items-center justify-start sm:justify-center"
     >
-      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh] sm:max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="relative bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col min-h-0 animate-in fade-in zoom-in-95 duration-150 my-auto"
+        style={{
+          maxHeight: 'min(calc(100dvh - 1.5rem), calc(100vh - 1.5rem), 850px)',
+        }}
+      >
         {/* Modal Header */}
         <div className="bg-slate-900 text-white p-3.5 sm:p-5 border-b border-slate-800 flex items-start justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -422,7 +436,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
         </div>
 
         {/* Scrollable Permissions Matrix */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6 bg-slate-50/50">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6 bg-slate-50/50 custom-scrollbar overscroll-contain">
           {groupedCategories.size === 0 ? (
             <div className="text-center py-12 text-slate-500">
               <Search className="w-8 h-8 text-slate-300 mx-auto mb-2" />
@@ -602,6 +616,7 @@ export const UserPermissionsModal: React.FC<UserPermissionsModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

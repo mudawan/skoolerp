@@ -65,14 +65,156 @@ export interface StudentAgeResult {
 }
 
 /**
- * Calculates student age accurately from Date of Birth (YYYY-MM-DD)
+ * Robust date normalizer that parses almost any user, form, or CSV date input
+ * and returns standard ISO format 'YYYY-MM-DD', or null if invalid.
+ *
+ * Handles:
+ *  - Standard ISO: 'YYYY-MM-DD' (e.g. '2015-08-15', '2026-9-1')
+ *  - Commonwealth / Asian / UK slash or hyphen: 'DD/MM/YYYY', 'DD-MM-YYYY', 'DD.MM.YYYY' (e.g. '15/08/2015', '15-08-2015')
+ *  - Single digit day/month: '1/9/2026', '5-8-2015'
+ *  - US format when day > 12 in middle: '08/15/2015'
+ *  - Month names: '15 Aug 2015', '15-Aug-2015', 'August 15, 2015', '15 August 2015'
+ *  - ISO strings with timestamps: '2015-08-15T00:00:00.000Z', '2015-08-15 00:00:00'
+ *  - Excel serial numbers: e.g. 42231
+ */
+export function normalizeDateToISO(dateStr: string | number | undefined | null): string | null {
+  if (dateStr === undefined || dateStr === null) return null;
+
+  // Handle number (e.g. Excel serial date)
+  if (typeof dateStr === 'number') {
+    if (isNaN(dateStr) || dateStr <= 0) return null;
+    if (dateStr > 20000 && dateStr < 80000) {
+      const utcDays = Math.floor(dateStr - 25569);
+      const d = new Date(utcDays * 86400 * 1000);
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+    }
+  }
+
+  const str = String(dateStr).trim();
+  if (!str) return null;
+
+  // 1. If already standard YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10);
+    const d = parseInt(isoMatch[3], 10);
+    if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+  }
+
+  // 2. Handle DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, or MM/DD/YYYY with 4-digit or 2-digit year at the end
+  const endYearMatch = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
+  if (endYearMatch) {
+    const p1 = parseInt(endYearMatch[1], 10);
+    const p2 = parseInt(endYearMatch[2], 10);
+    let rawYear = parseInt(endYearMatch[3], 10);
+    if (rawYear < 100) {
+      rawYear = rawYear >= 50 ? 1900 + rawYear : 2000 + rawYear;
+    }
+
+    let day = p1;
+    let month = p2;
+
+    // Disambiguate day vs month
+    if (p1 > 12 && p2 <= 12) {
+      // Clearly DD/MM/YYYY (e.g. 15/08/2015)
+      day = p1;
+      month = p2;
+    } else if (p2 > 12 && p1 <= 12) {
+      // Clearly MM/DD/YYYY (e.g. 08/15/2015)
+      month = p1;
+      day = p2;
+    } else {
+      // Both <= 12 (e.g. 05/08/2015 or 01/09/2026): Default to DD/MM/YYYY as standard in Pakistan & school records
+      day = p1;
+      month = p2;
+    }
+
+    if (rawYear >= 1900 && rawYear <= 2100 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${rawYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  // 3. Check for textual month representations, e.g. '15 Aug 2015', '15-Aug-2015', 'August 15, 2015'
+  const MONTH_MAP: Record<string, number> = {
+    jan: 1, january: 1,
+    feb: 2, february: 2,
+    mar: 3, march: 3,
+    apr: 4, april: 4,
+    may: 5,
+    jun: 6, june: 6,
+    jul: 7, july: 7,
+    aug: 8, august: 8,
+    sep: 9, september: 9,
+    oct: 10, october: 10,
+    nov: 11, november: 11,
+    dec: 12, december: 12,
+  };
+
+  const textMonthMatch = str.match(/(\d{1,2})[-/\s]+([a-zA-Z]+)[-/\s,]+(\d{2,4})/) ||
+                         str.match(/([a-zA-Z]+)[-/\s]+(\d{1,2})[-/\s,]+(\d{2,4})/);
+  if (textMonthMatch) {
+    let dayStr: string;
+    let monthWord: string;
+    let yrStr: string;
+
+    if (isNaN(Number(textMonthMatch[1]))) {
+      // [MonthName, Day, Year]
+      monthWord = textMonthMatch[1].toLowerCase();
+      dayStr = textMonthMatch[2];
+      yrStr = textMonthMatch[3];
+    } else {
+      // [Day, MonthName, Year]
+      dayStr = textMonthMatch[1];
+      monthWord = textMonthMatch[2].toLowerCase();
+      yrStr = textMonthMatch[3];
+    }
+
+    const monthNum = MONTH_MAP[monthWord] || MONTH_MAP[monthWord.substring(0, 3)];
+    let yr = parseInt(yrStr, 10);
+    if (yr < 100) yr = yr >= 50 ? 1900 + yr : 2000 + yr;
+    const dayNum = parseInt(dayStr, 10);
+
+    if (monthNum && yr >= 1900 && yr <= 2100 && dayNum >= 1 && dayNum <= 31) {
+      return `${yr}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    }
+  }
+
+  // 4. Fallback to JS Date.parse if it can extract a valid date
+  const parsedTs = Date.parse(str);
+  if (!isNaN(parsedTs)) {
+    const d = new Date(parsedTs);
+    const yr = d.getFullYear();
+    if (yr >= 1900 && yr <= 2100) {
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${yr}-${m}-${day}`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Calculates student age accurately from Date of Birth in any common format
+ * (e.g. YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, 15 Aug 2015)
  */
 export function calculateAge(
   dob: string | undefined | null,
   asOfDate: Date = new Date()
 ): StudentAgeResult | null {
   if (!dob || typeof dob !== 'string' || dob.trim() === '') return null;
-  const parts = dob.trim().split('-');
+  const iso = normalizeDateToISO(dob);
+  if (!iso) return null;
+
+  const parts = iso.split('-');
   if (parts.length < 3) return null;
 
   const birthYear = parseInt(parts[0], 10);
@@ -434,7 +576,7 @@ export function calculateStudentVoucherPreview(
     student.firstBillingMonth && month < student.firstBillingMonth
   );
   const firstBillingMonthBlockReason = isBeforeFirstBillingMonth
-    ? `First billing month is ${formatMonthName(student.firstBillingMonth)} (${student.firstBillingMonth}). Target month (${formatMonthName(month)}) is prior to billing start.`
+    ? `First billing month is ${formatMonthName(student.firstBillingMonth)}. Target month (${formatMonthName(month)}) is prior to billing start.`
     : undefined;
 
   if (isBeforeFirstBillingMonth) {

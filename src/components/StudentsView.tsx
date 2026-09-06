@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentStatus } from '../types';
-import { formatCurrency, formatStudentAge, calculateAge } from '../utils/feeMath';
+import { formatCurrency, formatStudentAge, calculateAge, normalizeDateToISO } from '../utils/feeMath';
 import { parseCsvLine, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
@@ -486,15 +486,20 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
           const rawRegNo = colMap.regNo !== -1 ? row[colMap.regNo] || '' : '';
           const name = colMap.name !== -1 ? row[colMap.name] || '' : '';
-          const admissionDate = colMap.admissionDate !== -1 ? row[colMap.admissionDate] || '' : '';
+          const rawAdmDate = colMap.admissionDate !== -1 ? row[colMap.admissionDate] || '' : '';
+          const admissionDate = normalizeDateToISO(rawAdmDate) || rawAdmDate.trim();
           const rawFirstBillingMonth = colMap.firstBillingMonth !== -1 ? row[colMap.firstBillingMonth] || '' : '';
           
           // Determine firstBillingMonth: if specified in CSV use it; otherwise pick the later of current month and admission month
-          let firstBillingMonth: string | undefined = rawFirstBillingMonth.trim() || undefined;
+          let firstBillingMonth: string | undefined = undefined;
+          if (rawFirstBillingMonth.trim()) {
+            const parsedMonth = normalizeDateToISO(rawFirstBillingMonth.trim());
+            firstBillingMonth = parsedMonth ? parsedMonth.substring(0, 7) : rawFirstBillingMonth.trim();
+          }
           if (!firstBillingMonth) {
             const now = new Date();
             const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-            const admMonth = admissionDate ? admissionDate.substring(0, 7) : '';
+            const admMonth = admissionDate && admissionDate.length >= 7 ? admissionDate.substring(0, 7) : '';
             if (admMonth && currentMonth) {
               firstBillingMonth = admMonth > currentMonth ? admMonth : currentMonth;
             } else {
@@ -503,7 +508,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
           }
           const rawClassName = colMap.class !== -1 ? row[colMap.class] || '' : '';
           const rawGender = colMap.gender !== -1 ? row[colMap.gender] || 'Male' : 'Male';
-          const dob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '';
+          const rawDob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '';
+          const dob = normalizeDateToISO(rawDob) || rawDob.trim();
           const bFormNo = colMap.bform !== -1 ? row[colMap.bform] || '' : '';
           const mobileNumber = colMap.mobile !== -1 ? row[colMap.mobile] || '' : '';
           const address = colMap.address !== -1 ? row[colMap.address] || '' : '';
@@ -1653,8 +1659,15 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                           </td>
                           <td className="p-3">
                             <span className="font-bold text-slate-900 block">{r.name || '(Empty)'}</span>
-                            <span className="text-[10px] text-slate-500">
-                              {r.gender} &bull; DOB: {r.dob}
+                            <span className="text-[10px] text-slate-500 flex items-center gap-1 flex-wrap">
+                              <span>{r.gender}</span>
+                              <span>&bull;</span>
+                              <span>DOB: {r.dob || 'N/A'}</span>
+                              {r.dob && (
+                                <span className="font-semibold text-teal-700 bg-teal-50 border border-teal-200/60 px-1 py-0.2 rounded text-[10px]" title={`Calculated Age: ${calculateAge(r.dob)?.fullText || ''}`}>
+                                  {formatStudentAge(r.dob)}
+                                </span>
+                              )}
                             </span>
                           </td>
                           <td className="p-3">

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, X } from 'lucide-react';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
+import { normalizeDateToISO } from '../utils/feeMath';
 
 export interface DatePickerProps {
   value: string; // 'YYYY-MM-DD'
@@ -67,11 +68,11 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   // Parse value
   const parsedDate = useMemo(() => {
     if (!value || typeof value !== 'string') return null;
-    const delimiter = value.includes('-') ? '-' : value.includes('/') ? '/' : null;
-    if (!delimiter) return null;
-    const [y, m, d] = value.split(delimiter).map(Number);
+    const iso = normalizeDateToISO(value);
+    if (!iso) return null;
+    const [y, m, d] = iso.split('-').map(Number);
     if (!y || !m || !d) return null;
-    return { year: y, month: m - 1, day: d };
+    return { year: y, month: m - 1, day: d, isoStr: iso };
   }, [value]);
 
   const today = useMemo(() => {
@@ -327,7 +328,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         monthOffset: -1,
         dateStr: dStr,
         isToday: dStr === today.str,
-        isSelected: dStr === value,
+        isSelected: parsedDate ? dStr === parsedDate.isoStr : dStr === value,
         isDisabled: Boolean(
           (minDate && dStr < minDate) || (maxDate && dStr > maxDate)
         ),
@@ -343,7 +344,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         monthOffset: 0,
         dateStr: dStr,
         isToday: dStr === today.str,
-        isSelected: dStr === value,
+        isSelected: parsedDate ? dStr === parsedDate.isoStr : dStr === value,
         isDisabled: Boolean(
           (minDate && dStr < minDate) || (maxDate && dStr > maxDate)
         ),
@@ -367,7 +368,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         monthOffset: 1,
         dateStr: dStr,
         isToday: dStr === today.str,
-        isSelected: dStr === value,
+        isSelected: parsedDate ? dStr === parsedDate.isoStr : dStr === value,
         isDisabled: Boolean(
           (minDate && dStr < minDate) || (maxDate && dStr > maxDate)
         ),
@@ -452,7 +453,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             </button>
           )}
           <span className="text-[9px] font-mono uppercase bg-slate-100 text-slate-500 px-1 py-0.5 rounded pointer-events-none">
-            {value || 'YYYY-MM-DD'}
+            {parsedDate ? parsedDate.isoStr : value || 'YYYY-MM-DD'}
           </span>
         </div>
       </div>

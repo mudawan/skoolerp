@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { ParticularKind, Student } from '../types';
-import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString, resolveTemplateParticular } from '../utils/feeMath';
+import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString, resolveTemplateParticular, normalizeDateToISO } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
@@ -81,7 +82,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const [showAdmVoucherModal, setShowAdmVoucherModal] = useState(false);
   const [admMonth, setAdmMonth] = useState<string>(() => {
     // Default to the month of admission, or the current active month
-    if (student.admissionDate) return student.admissionDate.substring(0, 7);
+    if (student.admissionDate) {
+      const norm = normalizeDateToISO(student.admissionDate);
+      if (norm) return norm.substring(0, 7);
+      if (student.admissionDate.length >= 7) return student.admissionDate.substring(0, 7);
+    }
     return getCurrentMonthString();
   });
 
@@ -131,7 +136,11 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   // and must fall strictly before the first regular tuition (billing) month
   // -- once billing starts, that month's balance belongs on the regular
   // monthly voucher instead.
-  const admMonthMin = student.admissionDate ? student.admissionDate.substring(0, 7) : undefined;
+  const admMonthMin = (() => {
+    if (!student.admissionDate) return undefined;
+    const norm = normalizeDateToISO(student.admissionDate);
+    return norm ? norm.substring(0, 7) : (student.admissionDate.length >= 7 ? student.admissionDate.substring(0, 7) : undefined);
+  })();
   const admMonthMax = student.firstBillingMonth ? getPreviousMonthString(student.firstBillingMonth) : undefined;
   const admRangeInvalid = Boolean(admMonthMin && admMonthMax && admMonthMin > admMonthMax);
 
@@ -207,8 +216,8 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const studentClass = classes.find((c) => c.id === student.classId);
   const studentFamily = families.find((f) => f.id === student.familyId);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+  const modalContent = (
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl space-y-5 my-6 max-h-[92vh] flex flex-col border border-slate-200">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-slate-200 pb-4 shrink-0">
@@ -333,7 +342,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               <div>
                 <span className="text-[10px] text-slate-400 font-bold uppercase block">First Billing Month</span>
                 <span className="font-bold text-teal-800 text-xs">
-                  {student.firstBillingMonth ? `${formatMonthName(student.firstBillingMonth)} (${student.firstBillingMonth})` : 'Not specified'}
+                  {student.firstBillingMonth ? formatMonthName(student.firstBillingMonth) : 'Not specified'}
                 </span>
               </div>
               <div>
@@ -666,7 +675,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
       {/* Admission Voucher Modal */}
       {showAdmVoucherModal && (
-        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-lg w-full p-4 sm:p-5 shadow-2xl space-y-3.5 my-auto border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-start justify-between border-b border-slate-100 pb-3">
@@ -878,7 +887,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
       {/* Document Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto border border-slate-200 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
               <h4 className="font-bold text-slate-900 text-sm truncate flex items-center gap-2">
@@ -938,4 +947,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       )}
     </div>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(modalContent, document.body);
 };
