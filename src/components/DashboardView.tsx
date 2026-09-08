@@ -5,6 +5,7 @@ import { ActiveTab } from '../types';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   BookOpen,
   Calendar,
@@ -217,30 +218,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Month Closure Gate Warning Banner */}
+      {/* Month Closure Gate Warning Card - DefaultersView Styled */}
       {!prevMonthStatus.isClosed && prevMonthStatus.totalVouchers > 0 && (
-        <div className="bg-amber-50 border-l-4 border-amber-500 py-2.5 px-3.5 rounded-xl shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs">
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+        <div
+          style={{
+            background: 'linear-gradient(160deg, #fffbeb 0%, #ffffff 40%, #ffffff 100%)',
+            borderColor: '#fde68a',
+          }}
+          className="p-4 sm:p-5 rounded-2xl border flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 transition-all shadow-xs"
+        >
+          <div className="flex items-start gap-3.5">
+            <div className="p-2.5 rounded-xl border shrink-0 bg-amber-100 border-amber-300 text-amber-800">
+              <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
             <div>
-              <span className="font-bold text-amber-900">
-                Month Closure Required for {formatMonthName(prevMonthStr)} ({prevMonthStr}):{' '}
-              </span>
-              <span className="text-amber-800">
-                {prevMonthStatus.uncarriedUnpaidCount} uncarried outstanding voucher(s).
-              </span>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Month Closure Gate for {formatMonthName(prevMonthStr)}:
+                </h3>
+                <span className="text-xs px-2.5 py-0.5 rounded-full font-extrabold uppercase tracking-wide inline-flex items-center gap-1 bg-amber-200 text-amber-950">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-800" />
+                  <span>ACTION REQUIRED</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                <span>
+                  <strong>{prevMonthStatus.uncarriedUnpaidCount} uncarried outstanding voucher(s)</strong> require collection or carry forward before closing.
+                </span>
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
             <button
               id="btn-warning-manage-defaulters"
+              type="button"
               onClick={() => setActiveTab('defaulters')}
-              className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold text-xs rounded-md transition shadow-2xs cursor-pointer whitespace-nowrap flex items-center gap-1"
+              className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 font-semibold text-xs rounded-xl transition shadow-2xs cursor-pointer whitespace-nowrap flex items-center gap-1"
             >
               Manage Defaulters
             </button>
             <button
               id="btn-warning-month-end-wizard"
+              type="button"
               onClick={() => {
                 if (onOpenMonthEndWizard) {
                   onOpenMonthEndWizard(prevMonthStr);
@@ -248,224 +267,247 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   setActiveTab('settings');
                 }
               }}
-              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-md transition shadow-xs cursor-pointer whitespace-nowrap flex items-center gap-1"
+              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap flex items-center gap-1.5"
             >
-              <CalendarCheck className="w-3 h-3" />
-              Month End Wizard &rarr;
+              <CalendarCheck className="w-3.5 h-3.5" />
+              <span>Month End Wizard &rarr;</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* KPI Cards Grid */}
+      {/* Primary KPI Status Cards - DefaultersView Design Language */}
+      {/* Primary KPI Status Cards - Redesigned Layout */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Fee Target */}
-        <div
+        {/* Card 1: Total Fee Target */}
+        <button
+          id="kpi-card-fee-target"
+          type="button"
+          onClick={() => setActiveTab('vouchers')}
           style={{
-            background: `linear-gradient(160deg, ${preset.lightBg}65 0%, #ffffff 40%, #ffffff 100%)`,
+            background: `linear-gradient(160deg, ${preset.lightBg}40 0%, #ffffff 45%, #ffffff 100%)`,
+            borderColor: '#e2e8f0',
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
+          className="text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 hover:border-slate-300 group flex flex-col justify-between"
         >
           <div
-            className="h-1 w-full shrink-0"
+            className="h-1 w-full transition-all duration-300 shrink-0"
             style={{
               background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
             }}
           />
-          <div className="p-5 flex flex-col justify-between flex-1">
-            {/* Top Row: Title & Uniform Icon Box */}
-            <div className="flex items-start justify-between gap-3 shrink-0">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
-                  Total Fee Target
-                </p>
-              </div>
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
               <div
                 style={{
                   backgroundColor: preset.lightBg,
                   color: preset.primaryColor,
-                  borderColor: preset.lightBorder,
                 }}
-                className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform"
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs"
               >
-                <Coins className="w-5.5 h-5.5" />
+                <Coins className="w-3.5 h-3.5" />
               </div>
+              <span
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                }}
+                className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0"
+              >
+                {monthVouchers.length} Vouchers
+              </span>
             </div>
 
-            {/* Metric Value */}
-            <div className="my-2.5">
-              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
+            {/* Middle: Title & Metric Value */}
+            <div>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Total Fee Target
+              </p>
+              <p
+                style={{ color: preset.primaryColor }}
+                className="text-lg sm:text-xl font-mono font-extrabold tracking-tight mt-0.5"
+              >
                 {formatCurrency(totalGrossTarget)}
-              </h3>
+              </p>
             </div>
 
-            {/* Bottom Row: Metadata & Badge */}
-            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
-              <span className="flex items-center gap-1.5 font-medium text-slate-600 truncate">
-                <FileText style={{ color: preset.primaryColor }} className="w-3.5 h-3.5 shrink-0" />
-                <span>{monthVouchers.length} Vouchers Issued</span>
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
+              <span style={{ color: preset.primaryColor }}>
+                View Vouchers
               </span>
-              <span className="text-[11px] font-medium text-slate-400 shrink-0">
-                {formatMonthName(activeMonth)}
-              </span>
+              <ArrowRight
+                className="w-3 h-3 transition-transform duration-200 group-hover:translate-x-1 shrink-0"
+                style={{ color: preset.primaryColor }}
+              />
             </div>
           </div>
-        </div>
+        </button>
 
-        {/* Collected Amount */}
-        <div
+        {/* Card 2: Collected Amount */}
+        <button
+          id="kpi-card-collected-amount"
+          type="button"
+          onClick={() => setActiveTab('collections')}
           style={{
-            background: 'linear-gradient(160deg, #ecfdf565 0%, #ffffff 40%, #ffffff 100%)',
+            background: 'linear-gradient(160deg, #ecfdf5 0%, #ffffff 45%, #ffffff 100%)',
+            borderColor: '#e2e8f0',
           }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
-        >
-          <div className="h-1 w-full shrink-0 bg-gradient-to-r from-emerald-500 to-teal-500" />
-          <div className="p-5 flex flex-col justify-between flex-1">
-            {/* Top Row: Title & Uniform Icon Box */}
-            <div className="flex items-start justify-between gap-3 shrink-0">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
-                  Collected Amount
-                </p>
-              </div>
-              <div className="w-11 h-11 bg-emerald-50 border border-emerald-200/70 rounded-xl flex items-center justify-center text-emerald-600 shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
-                <CheckCircle2 className="w-5.5 h-5.5" />
-              </div>
-            </div>
-
-            {/* Metric Value */}
-            <div className="my-2.5">
-              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-emerald-600">
-                {formatCurrency(totalCollected)}
-              </h3>
-            </div>
-
-            {/* Bottom Row: Metadata & Progress Indicator */}
-            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
-              <span className="flex items-center gap-1.5 font-medium text-emerald-700 truncate">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>{collectionPercentage}% Collected</span>
-              </span>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <div className="w-16 bg-slate-100 rounded-full h-1.5 overflow-hidden border border-slate-200/50">
-                  <div
-                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(100, collectionPercentage)}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Outstanding Defaulters */}
-        <div
-          style={{
-            background: 'linear-gradient(160deg, #fff1f265 0%, #ffffff 40%, #ffffff 100%)',
-          }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
-        >
-          <div className="h-1 w-full shrink-0 bg-gradient-to-r from-rose-500 to-amber-500" />
-          <div className="p-5 flex flex-col justify-between flex-1">
-            {/* Top Row: Title & Uniform Icon Box */}
-            <div className="flex items-start justify-between gap-3 shrink-0">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
-                  Outstanding Defaulters
-                </p>
-              </div>
-              <div className="w-11 h-11 bg-rose-50 border border-rose-200/70 rounded-xl flex items-center justify-center text-rose-600 shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
-                <Clock className="w-5.5 h-5.5" />
-              </div>
-            </div>
-
-            {/* Metric Value */}
-            <div className="my-2.5">
-              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-rose-600">
-                {formatCurrency(totalOutstanding)}
-              </h3>
-            </div>
-
-            {/* Bottom Row: Metadata & Badge */}
-            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
-              <span className="flex items-center gap-1.5 font-medium text-rose-600 truncate">
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                <span>{defaultersCount} Unpaid Vouchers</span>
-              </span>
-              <span className="text-[11px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200/60 shrink-0">
-                {totalGrossTarget > 0 ? `${Math.round((totalOutstanding / totalGrossTarget) * 100)}%` : '0%'} Due
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Active Enrolled Students */}
-        <div
-          style={{
-            background: `linear-gradient(160deg, ${preset.lightBg}45 0%, #ffffff 40%, #ffffff 100%)`,
-          }}
-          className="relative bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden group flex flex-col justify-between"
+          className="text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 hover:border-slate-300 group flex flex-col justify-between"
         >
           <div
-            className="h-1 w-full shrink-0"
+            className="h-1 w-full transition-all duration-300 shrink-0"
             style={{
-              background: `linear-gradient(90deg, ${preset.hoverColor} 0%, ${preset.primaryColor} 100%)`,
+              background: 'linear-gradient(90deg, #10b981 0%, #34d399 100%)',
             }}
           />
-          <div className="p-5 flex flex-col justify-between flex-1">
-            {/* Top Row: Title & Uniform Icon Box */}
-            <div className="flex items-start justify-between gap-3 shrink-0">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide truncate">
-                  Active Enrolled Students
-                </p>
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold bg-emerald-100 text-emerald-700 shrink-0 shadow-2xs">
+                <CheckCircle2 className="w-3.5 h-3.5" />
               </div>
-              <div
-                style={{
-                  backgroundColor: preset.lightBg,
-                  color: preset.primaryColor,
-                  borderColor: preset.lightBorder,
-                }}
-                className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform"
-              >
-                <Users className="w-5.5 h-5.5" />
-              </div>
+              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 shrink-0">
+                {collectionPercentage}% Realized
+              </span>
             </div>
 
-            {/* Metric Value (No redundant second 'Students' word) */}
-            <div className="my-2.5">
-              <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
-                {activeStudents.length.toLocaleString()}
-              </h3>
+            {/* Middle: Title & Metric Value */}
+            <div>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Collected Amount
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-emerald-600 mt-0.5">
+                {formatCurrency(totalCollected)}
+              </p>
             </div>
 
-            {/* Bottom Row: Metadata & Badge */}
-            <div className="pt-3 border-t border-slate-100/80 flex items-center justify-between text-xs text-slate-500 shrink-0">
-              <span className="flex items-center gap-1.5 font-medium text-slate-600 truncate">
-                <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span>{classes.filter((c) => c.active).length} Active Classes</span>
-              </span>
-              <span className="text-[11px] font-medium text-slate-400 shrink-0">
-                All Sections
-              </span>
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-emerald-700">
+              <span>Record & Receipts</span>
+              <ArrowRight className="w-3 h-3 transition-transform duration-200 group-hover:translate-x-1 shrink-0" />
             </div>
           </div>
-        </div>
+        </button>
+
+        {/* Card 3: Outstanding Defaulters */}
+        <button
+          id="kpi-card-outstanding-defaulters"
+          type="button"
+          onClick={() => setActiveTab('defaulters')}
+          style={{
+            background: 'linear-gradient(160deg, #fff1f2 0%, #ffffff 45%, #ffffff 100%)',
+            borderColor: '#e2e8f0',
+          }}
+          className="text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 hover:border-slate-300 group flex flex-col justify-between"
+        >
+          <div
+            className="h-1 w-full transition-all duration-300 shrink-0"
+            style={{
+              background: 'linear-gradient(90deg, #f43f5e 0%, #fb7185 100%)',
+            }}
+          />
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold bg-rose-100 text-rose-700 shrink-0 shadow-2xs">
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </div>
+              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 shrink-0">
+                {defaultersCount} Unpaid
+              </span>
+            </div>
+
+            {/* Middle: Title & Metric Value */}
+            <div>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Outstanding Defaulters
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-rose-600 mt-0.5">
+                {formatCurrency(totalOutstanding)}
+              </p>
+            </div>
+
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-rose-700">
+              <span>Collect or Carry</span>
+              <ArrowRight className="w-3 h-3 transition-transform duration-200 group-hover:translate-x-1 shrink-0" />
+            </div>
+          </div>
+        </button>
+
+        {/* Card 4: Active Enrolled Students */}
+        <button
+          id="kpi-card-active-students"
+          type="button"
+          onClick={() => setActiveTab('students')}
+          style={{
+            background: 'linear-gradient(160deg, #eef2ff 0%, #ffffff 45%, #ffffff 100%)',
+            borderColor: '#e2e8f0',
+          }}
+          className="text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 hover:border-slate-300 group flex flex-col justify-between"
+        >
+          <div
+            className="h-1 w-full transition-all duration-300 shrink-0"
+            style={{
+              background: 'linear-gradient(90deg, #6366f1 0%, #818cf8 100%)',
+            }}
+          />
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold bg-indigo-100 text-indigo-700 shrink-0 shadow-2xs">
+                <Users className="w-3.5 h-3.5" />
+              </div>
+              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 shrink-0">
+                {classes.filter((c) => c.active).length} Classes
+              </span>
+            </div>
+
+            {/* Middle: Title & Metric Value */}
+            <div>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Enrolled Students
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-indigo-700 mt-0.5">
+                {activeStudents.length.toLocaleString()} Students
+              </p>
+            </div>
+
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-indigo-700">
+              <span>Student Profiles</span>
+              <ArrowRight className="w-3 h-3 transition-transform duration-200 group-hover:translate-x-1 shrink-0" />
+            </div>
+          </div>
+        </button>
       </div>
 
       {/* Analytics Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 6-Month Trend Chart */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+        <div className="lg:col-span-2 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <TrendingUp style={{ color: preset.primaryColor }} className="w-5 h-5" />
-                6-Month Fee Collection Trend
-              </h3>
-              <p className="text-xs text-slate-500">
-                Target vs Actual Collections over the past 6 months
-              </p>
+            <div className="flex items-center gap-2.5">
+              <div
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                  borderColor: preset.lightBorder,
+                }}
+                className="w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs"
+              >
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                  6-Month Fee Collection Trend
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Target vs Actual Collections over the past 6 months
+                </p>
+              </div>
             </div>
           </div>
 
@@ -498,15 +540,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Voucher Payment Status Pie Chart */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <FileSpreadsheet style={{ color: preset.primaryColor }} className="w-5 h-5" />
-              Voucher Status Breakdown
-            </h3>
-            <p className="text-xs text-slate-500">
-              Status of {monthVouchers.length} vouchers for {formatMonthName(activeMonth)}
-            </p>
+        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+          <div className="flex items-center gap-2.5">
+            <div
+              style={{
+                backgroundColor: preset.lightBg,
+                color: preset.primaryColor,
+                borderColor: preset.lightBorder,
+              }}
+              className="w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                Voucher Status Breakdown
+              </h3>
+              <p className="text-xs text-slate-500">
+                Status of {monthVouchers.length} vouchers for {formatMonthName(activeMonth)}
+              </p>
+            </div>
           </div>
 
           <div className="h-52 w-full flex items-center justify-center">
@@ -549,20 +602,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Class Collection Performance & Recent Ledger Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Class Collection Progress Bars */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+        <div className="lg:col-span-2 bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <GraduationCap style={{ color: preset.primaryColor }} className="w-5 h-5" />
-                Class-Wise Fee Collection Performance
-              </h3>
-              <p className="text-xs text-slate-500">
-                Issued vs collected progress across all active classes for {formatMonthName(activeMonth)}
-              </p>
+            <div className="flex items-center gap-2.5">
+              <div
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                  borderColor: preset.lightBorder,
+                }}
+                className="w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs"
+              >
+                <GraduationCap className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                  Class-Wise Fee Collection Performance
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Issued vs collected progress across all active classes for {formatMonthName(activeMonth)}
+                </p>
+              </div>
             </div>
             <button
               onClick={() => setActiveTab('reports')}
-              className="text-xs text-teal-600 hover:text-teal-700 font-semibold flex items-center gap-1 cursor-pointer"
+              className="text-xs font-semibold flex items-center gap-1 cursor-pointer hover:underline"
+              style={{ color: preset.primaryColor }}
             >
               Full Report &rarr;
             </button>
@@ -596,20 +661,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Recent Collections Feed */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+        <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Receipt style={{ color: preset.primaryColor }} className="w-5 h-5" />
-                Recent Collections Ledger
-              </h3>
-              <p className="text-xs text-slate-500">
-                Latest payment transactions
-              </p>
+            <div className="flex items-center gap-2.5">
+              <div
+                style={{
+                  backgroundColor: preset.lightBg,
+                  color: preset.primaryColor,
+                  borderColor: preset.lightBorder,
+                }}
+                className="w-7 h-7 rounded-lg border flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs"
+              >
+                <Receipt className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                  Recent Collections Ledger
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Latest payment transactions
+                </p>
+              </div>
             </div>
             <button
               onClick={() => setActiveTab('collections')}
-              className="text-xs text-teal-600 hover:text-teal-700 font-semibold cursor-pointer"
+              className="text-xs font-semibold cursor-pointer hover:underline"
+              style={{ color: preset.primaryColor }}
             >
               View All
             </button>

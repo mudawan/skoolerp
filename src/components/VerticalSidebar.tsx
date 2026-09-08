@@ -100,63 +100,130 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     (v) => v.month === activeMonth && (v.status === 'Issued' || v.status === 'Partial')
   );
 
-  const navItems: {
+  interface NavItemDef {
     id: ActiveTab;
     label: string;
     icon: React.FC<{ className?: string }>;
     badge?: number | string;
-  }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'students', label: 'Students', icon: Users },
-    { id: 'families', label: 'Families', icon: FolderKanban },
-    { id: 'classes', label: 'Classes', icon: BookOpen },
-    { id: 'vouchers', label: 'Fee Vouchers', icon: FileText },
-    { id: 'collections', label: 'Collections', icon: Receipt },
+    permission: () => boolean;
+  }
+
+  interface NavSectionDef {
+    id: string;
+    label: string;
+    items: NavItemDef[];
+  }
+
+  const navSections: NavSectionDef[] = [
     {
-      id: 'defaulters',
-      label: 'Defaulters & Month Close',
-      icon: AlertTriangle,
-      badge: monthDefaulters.length > 0 ? monthDefaulters.length : undefined,
+      id: 'overview',
+      label: 'Overview',
+      items: [
+        {
+          id: 'dashboard',
+          label: 'Dashboard',
+          icon: LayoutDashboard,
+          permission: () => hasPermission('dashboard.view'),
+        },
+      ],
     },
-    { id: 'transport', label: 'Transport', icon: Bus },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-    { id: 'audit', label: 'Audit Trail', icon: History },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    {
+      id: 'academics',
+      label: 'Directory & Academics',
+      items: [
+        {
+          id: 'students',
+          label: 'Students',
+          icon: Users,
+          permission: () => hasPermission('students.view'),
+        },
+        {
+          id: 'families',
+          label: 'Families',
+          icon: FolderKanban,
+          permission: () => hasPermission('families.view'),
+        },
+        {
+          id: 'classes',
+          label: 'Classes & Sections',
+          icon: BookOpen,
+          permission: () => hasPermission('classes.view'),
+        },
+        {
+          id: 'transport',
+          label: 'Transport Routes',
+          icon: Bus,
+          permission: () => hasPermission('transport.view'),
+        },
+      ],
+    },
+    {
+      id: 'billing',
+      label: 'Fee Operations',
+      items: [
+        {
+          id: 'vouchers',
+          label: 'Fee Vouchers',
+          icon: FileText,
+          permission: () => hasPermission('fees.view'),
+        },
+        {
+          id: 'collections',
+          label: 'Collections',
+          icon: Receipt,
+          permission: () => hasPermission('fees.collect') || hasPermission('fees.view'),
+        },
+        {
+          id: 'defaulters',
+          label: 'Defaulters & Close',
+          icon: AlertTriangle,
+          badge: monthDefaulters.length > 0 ? monthDefaulters.length : undefined,
+          permission: () => hasPermission('defaulters.view') || hasPermission('fees.view'),
+        },
+      ],
+    },
+    {
+      id: 'reports_audit',
+      label: 'Reports & Governance',
+      items: [
+        {
+          id: 'reports',
+          label: 'Financial Reports',
+          icon: BarChart3,
+          permission: () => hasPermission('fees.report'),
+        },
+        {
+          id: 'audit',
+          label: 'Audit Trail',
+          icon: History,
+          permission: () => hasPermission('audit.view'),
+        },
+      ],
+    },
+    {
+      id: 'system',
+      label: 'Administration',
+      items: [
+        {
+          id: 'settings',
+          label: 'Settings',
+          icon: Settings,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('users.manage') ||
+            hasPermission('system.cleanup'),
+        },
+      ],
+    },
   ];
 
-  const visibleNavItems = navItems.filter((item) => {
-    switch (item.id) {
-      case 'dashboard':
-        return hasPermission('dashboard.view');
-      case 'students':
-        return hasPermission('students.view');
-      case 'families':
-        return hasPermission('families.view');
-      case 'classes':
-        return hasPermission('classes.view');
-      case 'vouchers':
-        return hasPermission('fees.view');
-      case 'collections':
-        return hasPermission('fees.collect') || hasPermission('fees.view');
-      case 'defaulters':
-        return hasPermission('defaulters.view') || hasPermission('fees.view');
-      case 'transport':
-        return hasPermission('transport.view');
-      case 'reports':
-        return hasPermission('fees.report');
-      case 'audit':
-        return hasPermission('audit.view');
-      case 'settings':
-        return (
-          hasPermission('settings.view') ||
-          hasPermission('settings.manage') ||
-          hasPermission('users.manage') ||
-          hasPermission('system.cleanup')
-        );
-      default:
-        return true;
-    }
-  });
+  const visibleSections = navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.permission()),
+    }))
+    .filter((section) => section.items.length > 0);
 
   const handleNavClick = (tabId: ActiveTab) => {
     setActiveTab(tabId);
@@ -169,14 +236,16 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
       {mobileOpen && (
         <div
           onClick={() => setMobileOpen(false)}
-          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-xs md:hidden"
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs md:hidden"
         />
       )}
 
       {/* Sidebar Container */}
       <aside
         id="app-sidebar"
-        className={`fixed top-0 bottom-0 left-0 z-40 flex flex-col ${sidebarBgClass} transition-all duration-300 ease-in-out print:hidden ${
+        className={`fixed top-0 bottom-0 left-0 ${
+          mobileOpen ? 'z-50' : 'z-40'
+        } flex flex-col ${sidebarBgClass} transition-all duration-300 ease-in-out print:hidden ${
           // Mobile state: slide in / out
           mobileOpen
             ? 'translate-x-0 w-72 shadow-2xl'
@@ -313,56 +382,92 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           </div>
         )}
 
-        {/* Navigation Items Links */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1.5 sidebar-scrollbar">
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
+        {/* Navigation Items Links with Group Boundaries */}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-4 sidebar-scrollbar">
+          {visibleSections.map((section, sIdx) => {
             const isCollapsed = isSidebarCollapsed && !mobileOpen;
 
             return (
-              <button
-                key={item.id}
-                onClick={() => handleNavClick(item.id)}
-                title={isCollapsed ? item.label : undefined}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer group relative ${
-                  isActive
-                    ? `${preset.activeNavBg} text-white shadow-md ${preset.activeNavGlow} font-bold`
-                    : isLight
-                    ? 'text-slate-600 hover:text-slate-950 hover:bg-slate-100'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
-                } ${isCollapsed ? 'justify-center px-2' : 'justify-between'}`}
-              >
-                <div className={`flex items-center gap-3 min-w-0 ${isCollapsed ? 'justify-center' : ''}`}>
-                  <Icon
-                    className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
-                      isActive
-                        ? 'text-white'
-                        : isLight
-                        ? 'text-slate-400 group-hover:text-slate-900'
-                        : 'text-slate-400 group-hover:text-slate-200'
-                    }`}
-                  />
-                  {!isCollapsed && <span className="truncate">{item.label}</span>}
+              <div key={section.id} className="space-y-1">
+                {/* Section Header (when expanded) or subtle divider (when collapsed) */}
+                {!isCollapsed ? (
+                  <div className="px-2 pt-1 pb-1 flex items-center justify-between">
+                    <span
+                      className={`text-[10px] font-bold tracking-wider uppercase select-none ${
+                        isLight ? 'text-slate-400' : 'text-slate-400'
+                      }`}
+                    >
+                      {section.label}
+                    </span>
+                  </div>
+                ) : (
+                  sIdx > 0 && (
+                    <div
+                      className={`my-2 mx-1 border-t ${
+                        isLight ? 'border-slate-200' : 'border-slate-800'
+                      }`}
+                    />
+                  )
+                )}
+
+                {/* Section Items */}
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeTab === item.id;
+
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleNavClick(item.id)}
+                        title={isCollapsed ? `${section.label}: ${item.label}` : undefined}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer group relative ${
+                          isActive
+                            ? `${preset.activeNavBg} text-white shadow-md ${preset.activeNavGlow} font-bold`
+                            : isLight
+                            ? 'text-slate-600 hover:text-slate-950 hover:bg-slate-100'
+                            : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                        } ${isCollapsed ? 'justify-center px-2' : 'justify-between'}`}
+                      >
+                        <div
+                          className={`flex items-center gap-2.5 min-w-0 ${
+                            isCollapsed ? 'justify-center' : ''
+                          }`}
+                        >
+                          <Icon
+                            className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
+                              isActive
+                                ? 'text-white'
+                                : isLight
+                                ? 'text-slate-400 group-hover:text-slate-900'
+                                : 'text-slate-400 group-hover:text-slate-200'
+                            }`}
+                          />
+                          {!isCollapsed && <span className="truncate">{item.label}</span>}
+                        </div>
+
+                        {!isCollapsed && item.badge !== undefined && (
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                              isActive
+                                ? 'bg-amber-400 text-slate-950'
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            }`}
+                          >
+                            {item.badge}
+                          </span>
+                        )}
+
+                        {/* Badge Dot when collapsed */}
+                        {isCollapsed && item.badge !== undefined && (
+                          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-slate-900" />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-
-                {!isCollapsed && item.badge !== undefined && (
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
-                      isActive
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
-
-                {/* Badge Dot when collapsed */}
-                {isCollapsed && item.badge !== undefined && (
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-slate-900" />
-                )}
-              </button>
+              </div>
             );
           })}
         </nav>

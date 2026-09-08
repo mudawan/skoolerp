@@ -517,7 +517,7 @@ Thank you for your payment!`;
     >
       <div
         id="payment-receipt-modal-container"
-        className="bg-slate-100 border border-slate-300 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+        className="bg-slate-100 border border-slate-300 rounded-2xl w-full max-w-4xl my-auto max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col shadow-2xl overflow-hidden"
       >
         {/* Modal Top Control Bar */}
         <div className="bg-white px-5 py-3.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">

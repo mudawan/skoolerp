@@ -4,6 +4,7 @@ import { AuditActionType, AuditLogEntry } from '../types';
 import { formatCurrency, formatMonthName } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
 import { ConfirmModal } from './ConfirmModal';
+import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   Activity,
   AlertCircle,
@@ -31,6 +32,7 @@ import {
   RotateCcw,
   Search,
   Shield,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2,
   UserCheck,
@@ -50,7 +52,10 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
     hasPermission,
     clearAuditLogs,
     institute,
+    themeConfig,
   } = useApp();
+
+  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedActionType, setSelectedActionType] = useState<string>('all');
@@ -178,6 +183,60 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
       securityCount,
     };
   }, [auditLogs]);
+
+  // Metric cards configuration matching ReportsView style
+  const auditMetrics = useMemo(() => {
+    const reversalsCount = auditLogs.filter(
+      (l) => l.actionType === 'collection_reversal' || l.actionType === 'carry_forward'
+    ).length;
+
+    return [
+      {
+        key: 'fines' as const,
+        label: 'Manual Fine Mod.',
+        value: `${stats.fineModCount}`,
+        hint: `Rs ${stats.fineModTotal.toLocaleString()} adjusted`,
+        badge: `${stats.fineModCount} Events`,
+        badgeClass: 'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
+        icon: Coins,
+        iconBg: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-400',
+        accent: 'text-amber-600 dark:text-amber-400',
+      },
+      {
+        key: 'bulk' as const,
+        label: 'Bulk Collections',
+        value: `${stats.bulkCount}`,
+        hint: `Rs ${stats.bulkTotalAmount.toLocaleString()} imported`,
+        badge: `${stats.bulkCount} Batches`,
+        badgeClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+        icon: FileSpreadsheet,
+        iconBg: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400',
+        accent: 'text-emerald-600 dark:text-emerald-400',
+      },
+      {
+        key: 'reversals' as const,
+        label: 'Reversals & Carry',
+        value: `${reversalsCount}`,
+        hint: 'Ledger adjustments',
+        badge: `${reversalsCount} Entries`,
+        badgeClass: 'bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800',
+        icon: RotateCcw,
+        iconBg: 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400',
+        accent: 'text-rose-600 dark:text-rose-400',
+      },
+      {
+        key: 'security' as const,
+        label: 'Security & Roles',
+        value: `${stats.securityCount}`,
+        hint: 'Operator privileges',
+        badge: `${stats.securityCount} Records`,
+        badgeClass: 'bg-purple-50 text-purple-700 border border-purple-200/80 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800',
+        icon: Shield,
+        iconBg: 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-400',
+        accent: 'text-purple-600 dark:text-purple-400',
+      },
+    ];
+  }, [auditLogs, stats]);
 
   // Export to CSV
   const handleExportCsv = () => {
@@ -344,8 +403,8 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
               id="btn-export-audit-csv"
               onClick={handleExportCsv}
               disabled={filteredLogs.length === 0}
-              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-50 cursor-pointer shadow-2xs"
-              title="Export filtered audit logs to CSV"
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+              title={filteredLogs.length === 0 ? 'No audit logs to export' : 'Export filtered audit logs to CSV'}
             >
               <Download className="w-4 h-4 text-slate-500" />
               <span>Export CSV ({filteredLogs.length})</span>
@@ -355,8 +414,9 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           <button
             id="btn-print-audit-report"
             onClick={() => window.print()}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition cursor-pointer shadow-2xs"
-            title="Print Audit Report"
+            disabled={filteredLogs.length === 0}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+            title={filteredLogs.length === 0 ? 'No audit logs to print' : 'Print Audit Report'}
           >
             <Printer className="w-4 h-4 text-slate-500" />
             <span>Print</span>
@@ -378,87 +438,136 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
       </div>
 
       {/* Accountability KPI Summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-          <div
-            onClick={() => setQuickFilter('fines')}
-            className={`p-4 rounded-xl border transition cursor-pointer ${
-              quickFilter === 'fines'
-                ? 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 ring-2 ring-amber-500/20'
-                : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/60 hover:bg-amber-50/40 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Manual Fine Mod.</span>
-              <Coins className="w-4 h-4 text-amber-500" />
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-xs p-3.5 sm:p-4 print:hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div
+              style={{
+                backgroundColor: `${preset.primaryColor}14`,
+                color: preset.primaryColor,
+              }}
+              className="p-1.5 rounded-lg flex items-center justify-center shrink-0 shadow-2xs"
+            >
+              <ShieldCheck className="w-4 h-4" />
             </div>
-            <div className="mt-2 text-xl font-bold text-slate-900 dark:text-white">
-              {stats.fineModCount} <span className="text-xs font-normal text-slate-500">events</span>
+            <div>
+              <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider flex items-center gap-2">
+                <span>Accountability & Forensic Metrics</span>
+                <span className="text-[10px] font-normal normal-case text-slate-400 hidden sm:inline">
+                  • Click any metric to filter audit logs
+                </span>
+              </h3>
             </div>
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
-              Rs {stats.fineModTotal.toLocaleString()} adjusted
-            </p>
           </div>
 
-          <div
-            onClick={() => setQuickFilter('bulk')}
-            className={`p-4 rounded-xl border transition cursor-pointer ${
-              quickFilter === 'bulk'
-                ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 ring-2 ring-emerald-500/20'
-                : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/60 hover:bg-emerald-50/40 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Bulk Collections</span>
-              <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-            </div>
-            <div className="mt-2 text-xl font-bold text-slate-900 dark:text-white">
-              {stats.bulkCount} <span className="text-xs font-normal text-slate-500">batches</span>
-            </div>
-            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
-              Rs {stats.bulkTotalAmount.toLocaleString()} imported
-            </p>
-          </div>
-
-          <div
-            onClick={() => setQuickFilter('reversals')}
-            className={`p-4 rounded-xl border transition cursor-pointer ${
-              quickFilter === 'reversals'
-                ? 'bg-rose-50/80 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700 ring-2 ring-rose-500/20'
-                : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/60 hover:bg-rose-50/40 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Reversals & Carry</span>
-              <RotateCcw className="w-4 h-4 text-rose-500" />
-            </div>
-            <div className="mt-2 text-xl font-bold text-slate-900 dark:text-white">
-              {auditLogs.filter((l) => l.actionType === 'collection_reversal' || l.actionType === 'carry_forward').length}
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Ledger adjustments
-            </p>
-          </div>
-
-          <div
-            onClick={() => setQuickFilter('security')}
-            className={`p-4 rounded-xl border transition cursor-pointer ${
-              quickFilter === 'security'
-                ? 'bg-purple-50/80 dark:bg-purple-950/40 border-purple-300 dark:border-purple-700 ring-2 ring-purple-500/20'
-                : 'bg-slate-50/70 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700/60 hover:bg-purple-50/40 dark:hover:bg-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Security & Roles</span>
-              <Shield className="w-4 h-4 text-purple-500" />
-            </div>
-            <div className="mt-2 text-xl font-bold text-slate-900 dark:text-white">
-              {stats.securityCount}
-            </div>
-            <p className="text-xs text-purple-600 dark:text-purple-400 mt-0.5 font-medium">
-              Operator changes
-            </p>
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/70 dark:border-slate-700">
+              <Activity className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span>Total Activity Logs: <strong className="text-slate-800 dark:text-white font-semibold">{auditLogs.length}</strong></span>
+            </span>
+            {quickFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setQuickFilter('all')}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/60 px-2.5 py-1 rounded-lg border border-teal-200 dark:border-teal-800 transition cursor-pointer"
+              >
+                <span>Reset Filter</span>
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {auditMetrics.map((m) => {
+            const Icon = m.icon;
+            const isSelected = quickFilter === m.key;
+
+            return (
+              <button
+                key={m.key}
+                type="button"
+                id={`audit-kpi-card-${m.key}`}
+                onClick={() => setQuickFilter(quickFilter === m.key ? 'all' : m.key)}
+                title={`Click to filter: ${m.label}`}
+                style={
+                  isSelected
+                    ? {
+                        borderColor: preset.primaryColor,
+                        backgroundColor: `${preset.primaryColor}0d`,
+                        boxShadow: `0 0 0 1px ${preset.primaryColor}33`,
+                      }
+                    : undefined
+                }
+                className={`group text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer flex flex-col justify-between relative ${
+                  isSelected
+                    ? 'shadow-2xs'
+                    : 'bg-white dark:bg-slate-800/60 border-slate-200/80 dark:border-slate-700/80 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50/60 dark:hover:bg-slate-800 hover:shadow-2xs'
+                }`}
+              >
+                {/* Top Row: Metric Label & Icon */}
+                <div className="flex items-start justify-between gap-1.5 mb-1.5">
+                  <span
+                    style={isSelected ? { color: preset.textColor } : undefined}
+                    className="text-[11px] font-bold text-slate-600 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white transition-colors leading-tight line-clamp-1"
+                  >
+                    {m.label}
+                  </span>
+                  <span
+                    style={
+                      isSelected
+                        ? {
+                            backgroundColor: preset.primaryColor,
+                            color: '#ffffff',
+                          }
+                        : undefined
+                    }
+                    className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center transition-colors ${
+                      isSelected ? 'shadow-2xs' : m.iconBg
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+
+                {/* Middle Row: Primary Value */}
+                <div className="mb-2">
+                  <div
+                    className={`text-lg sm:text-xl font-black font-mono tracking-tight leading-none truncate ${
+                      isSelected ? 'text-slate-900 dark:text-white' : m.accent
+                    }`}
+                  >
+                    {m.value}
+                  </div>
+                </div>
+
+                {/* Bottom Row: Context Hint & Status Badge */}
+                <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-medium pt-1.5 border-t border-slate-100/90 dark:border-slate-700/60">
+                  <span className="truncate text-slate-500 dark:text-slate-400">{m.hint}</span>
+                  {m.badge && (
+                    <span
+                      style={
+                        isSelected
+                          ? {
+                              backgroundColor: `${preset.primaryColor}18`,
+                              color: preset.textColor,
+                              borderColor: `${preset.primaryColor}40`,
+                            }
+                          : undefined
+                      }
+                      className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded leading-none ${
+                        isSelected ? 'border' : m.badgeClass
+                      }`}
+                    >
+                      {m.badge}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-4">

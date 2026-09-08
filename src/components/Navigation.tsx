@@ -8,6 +8,7 @@ import {
   CreditCard,
   FileText,
   FolderKanban,
+  History,
   LayoutDashboard,
   Receipt,
   Settings,
@@ -43,6 +44,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
     },
     { id: 'transport', label: 'Transport', icon: Bus },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'audit', label: 'Audit Trail', icon: History },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -66,6 +68,8 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
         return hasPermission('transport.view');
       case 'reports':
         return hasPermission('fees.report');
+      case 'audit':
+        return hasPermission('audit.view');
       case 'settings':
         return (
           hasPermission('settings.view') ||

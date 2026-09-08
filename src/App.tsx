@@ -16,6 +16,7 @@ import { LoginView } from './components/LoginView';
 import { MonthPicker } from './components/MonthPicker';
 import { GlobalStudentSearch } from './components/GlobalStudentSearch';
 import { DatabaseStatusBadge } from './components/DatabaseStatusBadge';
+import { DomainSubNav } from './components/DomainSubNav';
 import { ActiveTab } from './types';
 import { THEME_COLOR_PRESETS } from './utils/themeConfig';
 import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
@@ -218,7 +219,7 @@ function MainApp() {
         </div>
 
         {/* Mobile Search Bar Wrapper */}
-        <div className="md:hidden relative z-30 px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
+        <div className="md:hidden relative z-20 px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
           <GlobalStudentSearch
             onNavigateToLedger={handleNavigateToLedger}
             onNavigateToStudents={() => setActiveTab('students')}
@@ -226,7 +227,7 @@ function MainApp() {
         </div>
 
         {/* Desktop Top Header Bar (Global Search + Quick Actions) */}
-        <header className="hidden md:flex sticky top-0 z-30 bg-slate-100/90 backdrop-blur-md px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
+        <header className="hidden md:flex relative z-20 bg-slate-100/95 px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
           {/* Global Search Bar */}
           <div className="flex-1 max-w-xl">
             <GlobalStudentSearch
@@ -270,6 +271,9 @@ function MainApp() {
             </div>
           ) : (
             <>
+              {/* Contextual Domain Sub-Navigation Hub */}
+              <DomainSubNav activeTab={activeTab} setActiveTab={setActiveTab} />
+
               {activeTab === 'dashboard' && (
                 <DashboardView
                   setActiveTab={setActiveTab}

@@ -28,8 +28,8 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
 }) => {
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-2xl space-y-3 sm:space-y-4 my-auto">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+      <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-2xl space-y-3 sm:space-y-4 my-auto max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
           <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate pr-2">
             Voucher Details &bull; <span className="font-mono">{voucher.voucherNo}</span>
           </h3>
@@ -42,7 +42,7 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
           </button>
         </div>
 
-        <div className="space-y-2 text-xs">
+        <div className="space-y-2 text-xs overflow-y-auto flex-1 min-h-0">
           <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[55vh] overflow-y-auto">
             <table className="w-full text-left">
               <thead className="bg-slate-100 font-bold text-slate-700 border-b border-slate-200 sticky top-0 z-10">

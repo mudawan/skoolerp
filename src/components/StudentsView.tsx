@@ -16,6 +16,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Calendar,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -760,8 +761,10 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
 
         <div className="flex flex-wrap items-center gap-2.5">
           {hasPermission('students.manage') && (
-            <>
+            <div className="flex items-start gap-2.5">
               <button
+                type="button"
+                id="btn-register-new-student"
                 onClick={() => {
                   setEditingStudent(null);
                   setShowFormModal(true);
@@ -772,30 +775,42 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                 Register New Student
               </button>
               <button
+                type="button"
+                id="btn-students-import-csv"
                 onClick={() => setShowImportModal(true)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200"
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200 shadow-xs"
+                title="Import student roster from CSV"
               >
                 <Upload className="w-4 h-4 text-slate-600" />
                 Import CSV
               </button>
-            </>
+            </div>
           )}
 
           <button
+            type="button"
+            id="btn-students-export-csv"
             onClick={handleExportCsv}
-            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200"
+            disabled={sortedStudents.length === 0}
+            title={sortedStudents.length === 0 ? 'No student records to export' : 'Export student roster to CSV'}
+            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
           >
             <Download className="w-4 h-4 text-slate-600" />
             Export CSV
           </button>
 
           <button
+            type="button"
+            id="btn-students-copy-clipboard"
             onClick={handleCopyToClipboard}
-            title="Copy student roster to clipboard (pasteable into Excel/Sheets)"
-            className={`flex items-center gap-2 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border ${
-              copied
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200'
+            disabled={sortedStudents.length === 0}
+            title={sortedStudents.length === 0 ? 'No student records to copy' : 'Copy student roster to clipboard (pasteable into Excel/Sheets)'}
+            className={`flex items-center gap-2 font-semibold px-3.5 py-2 rounded-xl text-xs transition border disabled:opacity-40 disabled:cursor-not-allowed ${
+              sortedStudents.length === 0
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : copied
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 cursor-pointer'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 cursor-pointer'
             }`}
           >
             {copied ? (
@@ -1314,13 +1329,15 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                 <p>
                   Upload a CSV file with student records. First row must contain column headers.
                 </p>
-                <button
-                  onClick={handleDownloadSampleCsv}
-                  className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  Download Sample CSV Format
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    onClick={handleDownloadSampleCsv}
+                    className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Download Sample CSV Format
+                  </button>
+                </div>
 
                 {/* Status alerts */}
                 {importStatus.message && (
@@ -1348,6 +1365,10 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                   <span className="text-[11px] text-slate-500 block mt-1">
                     Supports standard comma-separated .csv files
                   </span>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2 bg-slate-100 text-slate-600 rounded-md text-[11px] font-medium border border-slate-200">
+                    <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                    <span>Accepted Date formats: <strong>YYYY-MM-DD</strong> or <strong>DD/MM/YYYY</strong> (for Admission Date & DOB)</span>
+                  </div>
                   <button
                     type="button"
                     onClick={(e) => {

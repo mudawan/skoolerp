@@ -107,8 +107,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const updatePosition = () => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const popoverHeight = 240; // ultra-compact height with safety margin
-    const popoverWidth = 224;  // ultra-compact width
+    const actualHeight = popoverRef.current ? popoverRef.current.offsetHeight : 255;
+    const actualWidth = popoverRef.current ? popoverRef.current.offsetWidth : 216;
 
     // If trigger is scrolled completely out of viewport, close
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
@@ -120,16 +120,16 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     const spaceAbove = rect.top;
     const spaceRight = window.innerWidth - rect.left;
 
-    const vertical = spaceBelow < popoverHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
+    const vertical = spaceBelow < actualHeight && spaceAbove > spaceBelow ? 'top' : 'bottom';
 
     let horizontal = align;
     if (align === 'center') {
       const centerPos = rect.left + rect.width / 2;
-      if (centerPos < popoverWidth / 2) horizontal = 'left';
-      else if (window.innerWidth - centerPos < popoverWidth / 2) horizontal = 'right';
-    } else if (align === 'left' && spaceRight < popoverWidth) {
+      if (centerPos < actualWidth / 2) horizontal = 'left';
+      else if (window.innerWidth - centerPos < actualWidth / 2) horizontal = 'right';
+    } else if (align === 'left' && spaceRight < actualWidth) {
       horizontal = 'right';
-    } else if (align === 'right' && rect.right < popoverWidth) {
+    } else if (align === 'right' && rect.right < actualWidth) {
       horizontal = 'left';
     }
 
@@ -139,20 +139,22 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     if (vertical === 'bottom') {
       top = rect.bottom + 4;
     } else {
-      top = rect.top - popoverHeight - 4;
+      top = rect.top - actualHeight - 4;
     }
     let left: number;
     if (horizontal === 'right') {
-      left = rect.right - popoverWidth;
+      left = rect.right - actualWidth;
     } else if (horizontal === 'center') {
-      left = rect.left + rect.width / 2 - popoverWidth / 2;
+      left = rect.left + rect.width / 2 - actualWidth / 2;
     } else {
       left = rect.left;
     }
 
-    // Viewport bounds clamping
-    const safeTop = Math.max(8, Math.min(top, window.innerHeight - popoverHeight - 8));
-    const safeLeft = Math.max(8, Math.min(left, window.innerWidth - popoverWidth - 8));
+    // Viewport bounds clamping: ensure popover stays strictly within screen bounds
+    const maxTop = Math.max(8, window.innerHeight - actualHeight - 8);
+    const safeTop = Math.max(8, Math.min(top, maxTop));
+    const maxLeft = Math.max(8, window.innerWidth - actualWidth - 8);
+    const safeLeft = Math.max(8, Math.min(left, maxLeft));
 
     setPopoverPos({ top: safeTop, left: safeLeft });
   };
@@ -162,10 +164,15 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     if (!isOpen) return;
 
     updatePosition();
+    const rafId = requestAnimationFrame(() => {
+      updatePosition();
+    });
+
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
 
     return () => {
+      cancelAnimationFrame(rafId);
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
@@ -467,7 +474,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
             role="dialog"
             aria-modal="true"
             style={{ top: popoverPos.top, left: popoverPos.left }}
-            className="fixed z-[9999] w-[216px] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 select-none"
+            className="fixed z-[9999] w-[216px] max-h-[calc(100vh-16px)] overflow-y-auto rounded-xl bg-white border border-slate-200/90 shadow-2xl p-2 text-slate-900 animate-in fade-in zoom-in-95 duration-150 select-none"
           >
           {/* Header Controls (Compact) */}
           <div className="flex items-center justify-between pb-1 border-b border-slate-100">

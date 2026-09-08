@@ -16,6 +16,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Calendar,
   Check,
   CheckCircle,
   ChevronDown,
@@ -1021,17 +1022,23 @@ export const CollectionsView: React.FC = () => {
           {/* Export CSV & Copy Toolbar */}
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              id="btn-collections-export-csv"
               onClick={handleExportCsv}
-              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer"
-              title="Download Fee Collections & Payment Ledger as CSV"
+              disabled={filteredCollections.length === 0}
+              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
+              title={filteredCollections.length === 0 ? 'No collection records to export' : 'Download Fee Collections & Payment Ledger as CSV'}
             >
               <Download className="w-4 h-4 text-slate-600" />
               <span>Export CSV</span>
             </button>
             <button
+              type="button"
+              id="btn-collections-copy-csv"
               onClick={handleCopyCsvToClipboard}
-              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer"
-              title="Copy Collections & Payment Ledger CSV data to clipboard"
+              disabled={filteredCollections.length === 0}
+              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
+              title={filteredCollections.length === 0 ? 'No collection records to copy' : 'Copy Collections & Payment Ledger CSV data to clipboard'}
             >
               {copiedCsv ? (
                 <>
@@ -1048,8 +1055,10 @@ export const CollectionsView: React.FC = () => {
           </div>
 
           {hasPermission('fees.collect') && (
-            <>
+            <div className="flex items-start gap-2.5">
               <button
+                type="button"
+                id="btn-record-payment"
                 onClick={() => handleOpenDirectCollection()}
                 className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
               >
@@ -1057,13 +1066,16 @@ export const CollectionsView: React.FC = () => {
                 Record Payment
               </button>
               <button
+                type="button"
+                id="btn-bulk-csv-import"
                 onClick={() => setShowBulkModal(true)}
                 className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
+                title="Bulk import fee collections from CSV"
               >
                 <Upload className="w-4 h-4" />
                 Bulk CSV Import
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -1402,7 +1414,7 @@ export const CollectionsView: React.FC = () => {
       {/* Direct Quick Payment / Collection Modal */}
       {showDirectModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[96vh] sm:max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
               <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
@@ -1978,7 +1990,7 @@ export const CollectionsView: React.FC = () => {
           <div
             className={`bg-white rounded-2xl ${
               bulkPreviewRows.length > 0 ? 'max-w-4xl' : 'max-w-md'
-            } w-full p-6 shadow-2xl space-y-5 transition-all max-h-[90vh] flex flex-col`}
+            } w-full p-6 shadow-2xl space-y-5 transition-all my-auto max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col overflow-hidden`}
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
@@ -2014,10 +2026,6 @@ export const CollectionsView: React.FC = () => {
                     <FileSpreadsheet className="w-4 h-4" />
                     Download Sample CSV Format
                   </button>
-                  <span className="text-slate-300">|</span>
-                  <span className="text-[11px] text-slate-500">
-                    Supports optional <strong>Fine</strong> column (e.g. <code className="bg-slate-100 text-amber-800 px-1 py-0.5 rounded font-mono">500</code>) to add fine to voucher (e.g. Rs. 500 in fine column adds Rs. 500 to the existing voucher fine).
-                  </span>
                 </div>
 
                 {/* Status alerts */}
@@ -2046,6 +2054,10 @@ export const CollectionsView: React.FC = () => {
                   <span className="text-[11px] text-slate-500 block mt-1">
                     Supports standard comma-separated .csv files (RegNo, PaidAmount, Fine, Date, PaymentMode, RefNo)
                   </span>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2 bg-slate-100 text-slate-600 rounded-md text-[11px] font-medium border border-slate-200">
+                    <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                    <span>Accepted Date format: <strong>YYYY-MM-DD</strong> or <strong>DD/MM/YYYY</strong> (e.g. 2026-09-07 or 07/09/2026)</span>
+                  </div>
                   <button
                     type="button"
                     onClick={(e) => {

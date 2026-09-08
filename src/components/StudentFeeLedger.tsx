@@ -25,6 +25,7 @@ import {
   Filter,
   History,
   Info,
+  Loader2,
   Printer,
   Receipt,
   Save,
@@ -97,6 +98,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   // Modals & UI States
   const [selectedVoucherForPrint, setSelectedVoucherForPrint] = useState<FeeVoucher | null>(null);
   const [copiedToast, setCopiedToast] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [collectModalVoucher, setCollectModalVoucher] = useState<FeeVoucher | null>(null);
   const [collectAmount, setCollectAmount] = useState<number | string>('');
   const [collectMode, setCollectMode] = useState<PaymentTransaction['paymentMode']>('Cash');
@@ -249,9 +252,19 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   const nonZeroDueMonthsCount = overdueVouchers.length;
   const oldestOverdueMonth = overdueVouchers.length > 0 ? overdueVouchers[0].month : null;
 
+  // Availability of ledger records for action buttons
+  const hasLedgerRecords = Boolean(currentStudent && ledgerEntries.length > 0);
+
   // 1. Copy to Clipboard (Tab-separated for Excel / Google Sheets)
   const handleCopyToClipboard = () => {
-    if (!currentStudent || ledgerEntries.length === 0) return;
+    if (!currentStudent) {
+      showToast('Please select a student first.', 'info');
+      return;
+    }
+    if (ledgerEntries.length === 0) {
+      showToast('No billing or collection records found for this student.', 'info');
+      return;
+    }
 
     const headers = [
       'Sr #',
@@ -288,12 +301,20 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
     navigator.clipboard.writeText(textContent);
     setCopiedToast(true);
+    showToast('Student fee ledger copied to clipboard.', 'success');
     setTimeout(() => setCopiedToast(false), 3500);
   };
 
   // 2. Export Excel / CSV
   const handleExportCsv = () => {
-    if (!currentStudent || ledgerEntries.length === 0) return;
+    if (!currentStudent) {
+      showToast('Please select a student first.', 'info');
+      return;
+    }
+    if (ledgerEntries.length === 0) {
+      showToast('No billing or collection records found for this student.', 'info');
+      return;
+    }
 
     const headers = [
       'Serial No',
@@ -343,20 +364,52 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       `Fee_Collections_${cleanReg}_${new Date().toISOString().split('T')[0]}.csv`,
       [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
     );
+    showToast('Student fee ledger exported to CSV.', 'success');
   };
 
   // 3. Export PDF
   const handleExportPdf = async () => {
-    if (!currentStudent || ledgerEntries.length === 0) return;
-    const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
-    await exportStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+    if (!currentStudent) {
+      showToast('Please select a student first.', 'info');
+      return;
+    }
+    if (ledgerEntries.length === 0) {
+      showToast('No billing or collection records found for this student.', 'info');
+      return;
+    }
+    try {
+      setIsExportingPdf(true);
+      const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
+      await exportStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+      showToast('Student fee ledger PDF downloaded successfully!', 'success');
+    } catch (err) {
+      console.error('Failed to export student fee ledger PDF:', err);
+      showToast('Failed to generate PDF. Please try again.', 'error');
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   // 4. Quick Print (Prints the dedicated clean PDF ledger layout directly)
   const handlePrint = async () => {
-    if (!currentStudent || ledgerEntries.length === 0) return;
-    const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
-    await printStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+    if (!currentStudent) {
+      showToast('Please select a student first.', 'info');
+      return;
+    }
+    if (ledgerEntries.length === 0) {
+      showToast('No billing or collection records found for this student.', 'info');
+      return;
+    }
+    try {
+      setIsPrinting(true);
+      const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
+      await printStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+    } catch (err) {
+      console.error('Failed to print student fee ledger:', err);
+      showToast('Failed to open print preview. Please try again.', 'error');
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   // Direct Collection Handler
@@ -414,7 +467,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   return (
     <div className="space-y-6 print:space-y-4">
       {/* Top Header Card */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
+      <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-4 print:hidden">
         <div>
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-teal-50 text-teal-700">
@@ -429,88 +482,145 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
           </p>
         </div>
 
-        {/* Student Combobox / Quick Selector */}
-        <div className="relative w-full md:w-80">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search Reg #, Name, Class..."
-              value={studentSearch}
-              onChange={(e) => {
-                setStudentSearch(e.target.value);
-                setIsDropdownOpen(true);
-              }}
-              onFocus={() => setIsDropdownOpen(true)}
-              className="w-full pl-9.5 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition"
-            />
-            {studentSearch || selectedStudentId ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setStudentSearch('');
-                  setSelectedStudentId('');
-                  setIsDropdownOpen(false);
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Student Combobox / Quick Selector */}
+          <div className="relative w-full sm:w-80">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search Reg #, Name, Class..."
+                value={studentSearch}
+                onChange={(e) => {
+                  setStudentSearch(e.target.value);
+                  setIsDropdownOpen(true);
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                title="Clear selection"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            ) : (
-              <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                onFocus={() => setIsDropdownOpen(true)}
+                className="w-full pl-9.5 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition"
+              />
+              {studentSearch || selectedStudentId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStudentSearch('');
+                    setSelectedStudentId('');
+                    setIsDropdownOpen(false);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  title="Clear selection"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              )}
+            </div>
+
+            {/* Autocomplete Dropdown */}
+            {isDropdownOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onClick={() => setIsDropdownOpen(false)}
+                />
+                <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-64 overflow-y-auto divide-y divide-slate-100">
+                  {filteredStudentsList.length > 0 ? (
+                    filteredStudentsList.map((s) => {
+                      const cls = classes.find((c) => c.id === s.classId);
+                      const isSel = s.id === selectedStudentId;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => {
+                            setSelectedStudentId(s.id);
+                            setStudentSearch(`${s.name} (${s.regNo})`);
+                            setIsDropdownOpen(false);
+                          }}
+                          className={`w-full text-left p-2.5 hover:bg-slate-50 flex items-center gap-2.5 transition cursor-pointer ${
+                            isSel ? 'bg-teal-50/70 font-bold' : ''
+                          }`}
+                        >
+                          <StudentAvatar photoUrl={s.photoUrl} name={s.name} size="xs" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900 truncate">
+                                {s.name}
+                              </span>
+                              <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded">
+                                {s.regNo}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 truncate block">
+                              {cls?.name || 'Class'} &bull; {s.fatherName}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="p-3 text-center text-xs text-slate-400 italic">
+                      No matching student found.
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
-          {/* Autocomplete Dropdown */}
-          {isDropdownOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsDropdownOpen(false)}
-              />
-              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-64 overflow-y-auto divide-y divide-slate-100">
-                {filteredStudentsList.length > 0 ? (
-                  filteredStudentsList.map((s) => {
-                    const cls = classes.find((c) => c.id === s.classId);
-                    const isSel = s.id === selectedStudentId;
-                    return (
-                      <button
-                        key={s.id}
-                        onClick={() => {
-                          setSelectedStudentId(s.id);
-                          setStudentSearch(`${s.name} (${s.regNo})`);
-                          setIsDropdownOpen(false);
-                        }}
-                        className={`w-full text-left p-2.5 hover:bg-slate-50 flex items-center gap-2.5 transition cursor-pointer ${
-                          isSel ? 'bg-teal-50/70 font-bold' : ''
-                        }`}
-                      >
-                        <StudentAvatar photoUrl={s.photoUrl} name={s.name} size="xs" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-bold text-slate-900 truncate">
-                              {s.name}
-                            </span>
-                            <span className="text-[10px] font-mono font-bold text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded">
-                              {s.regNo}
-                            </span>
-                          </div>
-                          <span className="text-[11px] text-slate-500 truncate block">
-                            {cls?.name || 'Class'} &bull; {s.fatherName}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })
-                ) : (
-                  <div className="p-3 text-center text-xs text-slate-400 italic">
-                    No matching student found.
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+          {/* Header Action Buttons for Export PDF & Print Ledger */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              id="btn-ledger-header-export-pdf"
+              type="button"
+              onClick={handleExportPdf}
+              disabled={!hasLedgerRecords || isExportingPdf || isPrinting}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold shadow-2xs transition ${
+                !hasLedgerRecords
+                  ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                  : 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
+              }`}
+              title={
+                !currentStudent
+                  ? 'Select a student to export PDF ledger'
+                  : !hasLedgerRecords
+                  ? 'No fee or collection records available for this student'
+                  : 'Export official printable PDF statement'
+              }
+            >
+              {isExportingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin text-teal-400" />
+              ) : (
+                <FileText className="w-4 h-4 text-teal-400" />
+              )}
+              <span>{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
+            </button>
+
+            <button
+              id="btn-ledger-header-print"
+              type="button"
+              onClick={handlePrint}
+              disabled={!hasLedgerRecords || isPrinting || isExportingPdf}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold shadow-2xs transition ${
+                !hasLedgerRecords
+                  ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                  : 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer'
+              }`}
+              title={
+                !currentStudent
+                  ? 'Select a student to print ledger statement'
+                  : !hasLedgerRecords
+                  ? 'No fee or collection records available for this student'
+                  : 'Print official clean ledger statement'
+              }
+            >
+              {isPrinting ? (
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
+              <span>{isPrinting ? 'Preparing...' : 'Print Ledger'}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -621,9 +731,16 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
               {/* Action Buttons: Clipboard, Excel, PDF, Print */}
               <div className="flex items-center gap-2 flex-wrap print:hidden">
                 <button
+                  type="button"
+                  id="btn-ledger-copy-clipboard"
                   onClick={handleCopyToClipboard}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
-                  title="Copy formatted ledger to clipboard for Excel / Sheets"
+                  disabled={!hasLedgerRecords}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                  title={
+                    !hasLedgerRecords
+                      ? 'No fee or collection records available to copy'
+                      : 'Copy formatted ledger to clipboard for Excel / Sheets'
+                  }
                 >
                   {copiedToast ? (
                     <>
@@ -639,30 +756,59 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                 </button>
 
                 <button
+                  type="button"
+                  id="btn-ledger-export-excel"
                   onClick={handleExportCsv}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-emerald-700 border border-emerald-200 hover:border-emerald-300 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
-                  title="Download as Excel CSV"
+                  disabled={!hasLedgerRecords}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-emerald-700 border border-emerald-200 hover:border-emerald-300 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+                  title={
+                    !hasLedgerRecords
+                      ? 'No fee or collection records available to export'
+                      : 'Download as Excel CSV'
+                  }
                 >
                   <FileSpreadsheet className="w-4 h-4" />
                   <span>Export Excel</span>
                 </button>
 
                 <button
+                  type="button"
+                  id="btn-ledger-export-pdf"
                   onClick={handleExportPdf}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
-                  title="Export official printable PDF statement"
+                  disabled={!hasLedgerRecords || isExportingPdf || isPrinting}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-900"
+                  title={
+                    !hasLedgerRecords
+                      ? 'No fee or collection records available for this student'
+                      : 'Export official printable PDF statement'
+                  }
                 >
-                  <FileText className="w-4 h-4 text-teal-400" />
-                  <span>Export PDF</span>
+                  {isExportingPdf ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-teal-400" />
+                  ) : (
+                    <FileText className="w-4 h-4 text-teal-400" />
+                  )}
+                  <span>{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
                 </button>
 
                 <button
+                  type="button"
+                  id="btn-ledger-print"
                   onClick={handlePrint}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
-                  title="Print official clean ledger statement"
+                  disabled={!hasLedgerRecords || isPrinting || isExportingPdf}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-teal-700"
+                  title={
+                    !hasLedgerRecords
+                      ? 'No fee or collection records available for this student'
+                      : 'Print official clean ledger statement'
+                  }
                 >
-                  <Printer className="w-4 h-4" />
-                  <span>Print Ledger</span>
+                  {isPrinting ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  ) : (
+                    <Printer className="w-4 h-4" />
+                  )}
+                  <span>{isPrinting ? 'Preparing...' : 'Print Ledger'}</span>
                 </button>
               </div>
             </div>
@@ -1143,7 +1289,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       {/* Direct Deposit Collection Modal */}
       {collectModalVoucher && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden">
-          <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[96vh] sm:max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
               <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">

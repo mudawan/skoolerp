@@ -5,7 +5,7 @@ import { ALL_PERMISSIONS } from '../../utils/permissions';
 import { Edit2, KeyRound, Plus, Shield, Trash2, Users } from 'lucide-react';
 
 export interface UsersPanelProps {
-  handleOpenUserModal: (user?: User) => void;
+  handleOpenUserModal: (user?: User, initialTab?: 'profile' | 'permissions') => void;
   handleOpenPermissionsModal: (user: User) => void;
   handleDeleteUser: (id: string, name: string) => void;
 }

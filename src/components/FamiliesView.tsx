@@ -429,10 +429,15 @@ export const FamiliesView: React.FC = () => {
           </div>
 
           <button
+            type="button"
+            id="btn-families-export-csv"
             onClick={handleExportCsv}
-            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200"
+            disabled={filteredFamilies.length === 0}
+            className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
             title={
-              selectedFamilyIds.length > 0
+              filteredFamilies.length === 0
+                ? 'No families available to export'
+                : selectedFamilyIds.length > 0
                 ? `Export ${selectedFamilyIds.length} selected families to CSV`
                 : 'Export all filtered families to CSV'
             }
@@ -442,12 +447,21 @@ export const FamiliesView: React.FC = () => {
           </button>
 
           <button
+            type="button"
+            id="btn-families-copy-clipboard"
             onClick={handleCopyToClipboard}
-            title="Copy family roster to clipboard (pasteable into Excel/Sheets)"
-            className={`flex items-center gap-2 font-semibold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer border ${
-              copied
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200'
+            disabled={filteredFamilies.length === 0}
+            title={
+              filteredFamilies.length === 0
+                ? 'No families available to copy'
+                : 'Copy family roster to clipboard (pasteable into Excel/Sheets)'
+            }
+            className={`flex items-center gap-2 font-semibold px-3.5 py-2 rounded-xl text-xs transition border disabled:opacity-40 disabled:cursor-not-allowed ${
+              filteredFamilies.length === 0
+                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                : copied
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 cursor-pointer'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 cursor-pointer'
             }`}
           >
             {copied ? (

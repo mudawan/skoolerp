@@ -71,7 +71,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[96vh] sm:max-h-[92vh] flex flex-col">
+      <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col overflow-hidden">
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">

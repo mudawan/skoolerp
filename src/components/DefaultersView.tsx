@@ -501,7 +501,7 @@ export const DefaultersView: React.FC = () => {
         </div>
       </div>
 
-      {/* Defaulter Category Severity & Status Cards */}
+      {/* Defaulter Category Severity & Status Cards - Redesigned Layout */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Card 1: Unpaid Defaulters */}
         <button
@@ -514,12 +514,12 @@ export const DefaultersView: React.FC = () => {
                 : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
             borderColor: activeTab === 'uncarried' ? '#f43f5e' : '#e2e8f0',
           }}
-          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
-            activeTab === 'uncarried' ? 'ring-2 ring-rose-400/40 shadow-sm' : 'hover:border-slate-300'
+          className={`text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 group flex flex-col justify-between ${
+            activeTab === 'uncarried' ? 'ring-2 ring-rose-400/40 shadow-xs' : 'hover:border-slate-300'
           }`}
         >
           <div
-            className="h-1.5 w-full transition-all duration-300"
+            className="h-1 w-full transition-all duration-300 shrink-0"
             style={{
               background:
                 activeTab === 'uncarried'
@@ -527,22 +527,20 @@ export const DefaultersView: React.FC = () => {
                   : `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
             }}
           />
-          <div className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
-                    activeTab === 'uncarried'
-                      ? 'bg-rose-100 text-rose-700'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  <AlertTriangle className="w-4 h-4" />
-                </div>
-                <span className="font-bold text-slate-900 text-xs">Unpaid Defaulters</span>
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs ${
+                  activeTab === 'uncarried'
+                    ? 'bg-rose-100 text-rose-700'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
               </div>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                   activeTab === 'uncarried'
                     ? 'bg-rose-100 text-rose-800'
                     : 'bg-slate-100 text-slate-600'
@@ -551,15 +549,29 @@ export const DefaultersView: React.FC = () => {
                 {defaulterVouchers.length} Vouchers
               </span>
             </div>
+
+            {/* Middle: Title & Metric Value */}
             <div>
-              <p className="text-[11px] text-slate-500 font-medium">Outstanding Arrears</p>
-              <p className="text-lg font-mono font-extrabold text-rose-600">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Unpaid Defaulters
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-rose-600 mt-0.5">
                 {formatCurrency(totalUnpaidDefaultersArrears)}
               </p>
             </div>
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">Action:</span>
-              <span className="font-bold text-rose-700">Collect or Carry Forward</span>
+
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
+              <span className={activeTab === 'uncarried' ? 'text-rose-700' : 'text-slate-600'}>
+                Collect or Carry Forward
+              </span>
+              <ArrowRight
+                className={`w-3 h-3 transition-transform duration-200 shrink-0 ${
+                  activeTab === 'uncarried'
+                    ? 'text-rose-700 translate-x-0.5'
+                    : 'text-slate-400 group-hover:translate-x-1'
+                }`}
+              />
             </div>
           </div>
         </button>
@@ -575,12 +587,12 @@ export const DefaultersView: React.FC = () => {
                 : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
             borderColor: activeTab === 'zeroDue' ? '#10b981' : '#e2e8f0',
           }}
-          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
-            activeTab === 'zeroDue' ? 'ring-2 ring-emerald-400/40 shadow-sm' : 'hover:border-slate-300'
+          className={`text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 group flex flex-col justify-between ${
+            activeTab === 'zeroDue' ? 'ring-2 ring-emerald-400/40 shadow-xs' : 'hover:border-slate-300'
           }`}
         >
           <div
-            className="h-1.5 w-full transition-all duration-300"
+            className="h-1 w-full transition-all duration-300 shrink-0"
             style={{
               background:
                 activeTab === 'zeroDue'
@@ -588,22 +600,20 @@ export const DefaultersView: React.FC = () => {
                   : '#cbd5e1',
             }}
           />
-          <div className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
-                    activeTab === 'zeroDue'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  <CheckCircle className="w-4 h-4" />
-                </div>
-                <span className="font-bold text-slate-900 text-xs">Zero-Due / Settled</span>
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs ${
+                  activeTab === 'zeroDue'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
               </div>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                   activeTab === 'zeroDue'
                     ? 'bg-emerald-100 text-emerald-800'
                     : 'bg-slate-100 text-slate-600'
@@ -612,15 +622,29 @@ export const DefaultersView: React.FC = () => {
                 {zeroDueVouchers.length} Records
               </span>
             </div>
+
+            {/* Middle: Title & Metric Value */}
             <div>
-              <p className="text-[11px] text-slate-500 font-medium">Concessions / Waivers</p>
-              <p className="text-lg font-mono font-extrabold text-emerald-600">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Zero-Due / Settled
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-emerald-600 mt-0.5">
                 {formatCurrency(totalZeroDueDiscounts)}
               </p>
             </div>
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">Status:</span>
-              <span className="font-bold text-emerald-700">100% Scholarship / Settled</span>
+
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
+              <span className={activeTab === 'zeroDue' ? 'text-emerald-700' : 'text-slate-600'}>
+                100% Scholarship / Settled
+              </span>
+              <ArrowRight
+                className={`w-3 h-3 transition-transform duration-200 shrink-0 ${
+                  activeTab === 'zeroDue'
+                    ? 'text-emerald-700 translate-x-0.5'
+                    : 'text-slate-400 group-hover:translate-x-1'
+                }`}
+              />
             </div>
           </div>
         </button>
@@ -636,12 +660,12 @@ export const DefaultersView: React.FC = () => {
                 : `linear-gradient(160deg, ${preset.lightBg}35 0%, #ffffff 40%, #ffffff 100%)`,
             borderColor: activeTab === 'carried' ? '#f59e0b' : '#e2e8f0',
           }}
-          className={`text-left rounded-2xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
-            activeTab === 'carried' ? 'ring-2 ring-amber-400/40 shadow-sm' : 'hover:border-slate-300'
+          className={`text-left rounded-xl border transition-all duration-200 overflow-hidden cursor-pointer shadow-2xs hover:shadow-sm hover:-translate-y-0.5 group flex flex-col justify-between ${
+            activeTab === 'carried' ? 'ring-2 ring-amber-400/40 shadow-xs' : 'hover:border-slate-300'
           }`}
         >
           <div
-            className="h-1.5 w-full transition-all duration-300"
+            className="h-1 w-full transition-all duration-300 shrink-0"
             style={{
               background:
                 activeTab === 'carried'
@@ -649,22 +673,20 @@ export const DefaultersView: React.FC = () => {
                   : '#cbd5e1',
             }}
           />
-          <div className="p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
-                    activeTab === 'carried'
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-slate-100 text-slate-600'
-                  }`}
-                >
-                  <ArrowRight className="w-4 h-4" />
-                </div>
-                <span className="font-bold text-slate-900 text-xs">Carried Forward</span>
+          <div className="p-3 sm:p-3.5 space-y-2 flex flex-col justify-between flex-1">
+            {/* Top Row: Icon & Pill Badge */}
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 shadow-2xs ${
+                  activeTab === 'carried'
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                <ArrowRight className="w-3.5 h-3.5" />
               </div>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                   activeTab === 'carried'
                     ? 'bg-amber-100 text-amber-800'
                     : 'bg-slate-100 text-slate-600'
@@ -673,15 +695,29 @@ export const DefaultersView: React.FC = () => {
                 {carriedVouchers.length} Carried
               </span>
             </div>
+
+            {/* Middle: Title & Metric Value */}
             <div>
-              <p className="text-[11px] text-slate-500 font-medium">Carried Balances</p>
-              <p className="text-lg font-mono font-extrabold text-amber-700">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Carried Forward
+              </p>
+              <p className="text-lg sm:text-xl font-mono font-extrabold tracking-tight text-amber-700 mt-0.5">
                 {formatCurrency(totalCarriedArrears)}
               </p>
             </div>
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">Target:</span>
-              <span className="font-bold text-amber-700">Next Month Arrears</span>
+
+            {/* Footer Action Ribbon */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold">
+              <span className={activeTab === 'carried' ? 'text-amber-700' : 'text-slate-600'}>
+                Next Month Arrears
+              </span>
+              <ArrowRight
+                className={`w-3 h-3 transition-transform duration-200 shrink-0 ${
+                  activeTab === 'carried'
+                    ? 'text-amber-700 translate-x-0.5'
+                    : 'text-slate-400 group-hover:translate-x-1'
+                }`}
+              />
             </div>
           </div>
         </button>
