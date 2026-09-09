@@ -44,6 +44,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
 }) => {
   const {
     institute,
+    currentInstitution,
     currentUser,
     activeMonth,
     setActiveMonth,
@@ -295,11 +296,20 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             {(!isSidebarCollapsed || mobileOpen) && (
               <div className="min-w-0 leading-tight">
                 <h1 className={`text-sm font-bold tracking-tight truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                  {institute.name}
+                  {currentInstitution?.name || institute.name}
                 </h1>
-                <p className={`text-[11px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {institute.regNo || 'Fee Management'}
-                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className={`font-mono text-[9px] uppercase font-bold px-1.5 py-0.2 rounded border shrink-0 ${
+                    isLight
+                      ? 'bg-teal-50 text-teal-700 border-teal-200'
+                      : 'bg-teal-950 text-teal-300 border-teal-800'
+                  }`}>
+                    {currentInstitution?.code || institute.code || 'SYS'}
+                  </span>
+                  <p className={`text-[10px] truncate ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+                    {institute.regNo || 'Fee Portal'}
+                  </p>
+                </div>
               </div>
             )}
           </div>

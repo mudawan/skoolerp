@@ -29,6 +29,8 @@ import {
   TransportStop,
   User,
   UserRole,
+  Institution,
+  OperatorInvite,
   VoucherCopyType,
   VoucherDeletionResolution,
   VoucherItem,
@@ -74,6 +76,17 @@ import {
   fetchServerState,
   initLiveRealtimeSync,
   subscribeRemoteChanges,
+  setActiveInstitutionId,
+  apiRegisterInstitution,
+  apiRegisterUser,
+  apiLogin,
+  apiLogout,
+  apiGetMe,
+  apiCreateInvite,
+  apiListInvites,
+  apiGenerateVouchers,
+  apiReceiveCollection,
+  apiCarryForwardVoucher,
 } from '../services/apiSync';
 
 export interface DownstreamConflict {
@@ -85,14 +98,42 @@ export interface DownstreamConflict {
 }
 
 interface AppContextType {
-  // Auth & Roles
+  // Multi-Tenant & Auth
+  currentInstitution: Institution | null;
   currentUser: User;
   isAuthenticated: boolean;
   users: User[];
-  login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string; user?: User }>;
+  invites: OperatorInvite[];
+  registerInstitution: (params: {
+    schoolName: string;
+    schoolCode?: string;
+    currency?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    regNo?: string;
+    adminName: string;
+    adminUsername: string;
+    adminEmail?: string;
+    adminPassword: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  joinInstitution: (params: {
+    code: string;
+    fullName: string;
+    username: string;
+    password: string;
+    email?: string;
+  }) => Promise<{ success: boolean; error?: string }>;
+  createInvite: (params: {
+    fullName: string;
+    assignedRole: UserRole;
+    permissions?: string[];
+  }) => Promise<{ success: boolean; invite?: OperatorInvite; error?: string }>;
+  refreshInvites: () => Promise<void>;
+  login: (usernameOrEmail: string, password: string, institutionCode?: string) => Promise<{ success: boolean; error?: string; user?: User }>;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
-  addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string; credentialsSummary?: { username: string; password?: string; institutionCode?: string; role: string } }>;
   updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   updateUserPermissions: (id: string, permissions: string[], role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => { success: boolean; error?: string };
@@ -373,6 +414,25 @@ const STORAGE_KEY = 'skooler_app_data_v1';
  * Ensures no student can ever be listed in multiple families simultaneously.
  */
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Multi-Tenant Institution State
+  const [currentInstitution, setCurrentInstitution] = useState<Institution | null>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_institution`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.id) {
+          setActiveInstitutionId(parsed.id);
+          return parsed;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return null;
+  });
+
+  const [invites, setInvites] = useState<OperatorInvite[]>([]);
+
   // Stored Users in Database / Local Storage
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_users`);
@@ -1211,10 +1271,196 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [users, currentUser]);
 
+  // Multi-Tenant Institutional Workspaces & Operator Auth
+  const registerInstitution = async (params: {
+    schoolName: string;
+    schoolCode?: string;
+    currency?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    regNo?: string;
+    adminName: string;
+    adminUsername: string;
+    adminEmail?: string;
+    adminPassword: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await apiRegisterInstitution(params);
+      if (!res.success || !res.institution || !res.user) {
+        return { success: false, error: res.error || 'Failed to register institution workspace.' };
+      }
+
+      // Establish active tenant context
+      setCurrentInstitution(res.institution);
+      setCurrentUser(res.user);
+      setUsers([res.user]);
+      setIsAuthenticated(true);
+      setActiveInstitutionId(res.institution.id);
+
+      localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
+      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
+      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify([res.user]));
+
+      // Update institutional header identity & currency
+      setInstitute({
+        name: res.institution.name,
+        code: res.institution.code,
+        regNo: res.institution.registrationNo || '',
+        address: res.institution.address || '',
+        phone: res.institution.phone || '',
+        email: res.institution.email || '',
+        currency: res.institution.currency || 'PKR',
+        bankName: '',
+        bankAccountNo: '',
+        bankIban: '',
+        invoiceNotes: 'Thank you for your prompt fee settlement.',
+      });
+
+      // Clear previous in-memory state for fresh tenant
+      setClasses([]);
+      setStudents([]);
+      setFamilies([]);
+      setBuses([]);
+      setStops([]);
+      setTransportAssignments([]);
+      setVouchers([]);
+      setCollections([]);
+      setTransactions([]);
+      setStudentAccountHistory([]);
+      setLockedMonths([]);
+      setInvites([]);
+
+      logAuditEvent({
+        actionType: 'system_cleanup',
+        actionTitle: 'New Institution Workspace Provisioned',
+        description: `Created workspace for '${res.institution.name}' (${res.institution.code}) under Administrator @${res.user.username}.`,
+        module: 'Administration',
+        targetId: res.institution.id,
+        targetLabel: res.institution.name,
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error during institution creation.' };
+    }
+  };
+
+  const joinInstitution = async (params: {
+    code: string;
+    fullName: string;
+    username: string;
+    password: string;
+    email?: string;
+  }): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await apiRegisterUser(params);
+      if (!res.success || !res.user || !res.institution) {
+        return { success: false, error: res.error || 'Failed to join institution workspace.' };
+      }
+
+      setCurrentInstitution(res.institution);
+      setCurrentUser(res.user);
+      setIsAuthenticated(true);
+      setActiveInstitutionId(res.institution.id);
+
+      localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
+      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
+
+      // Hydrate state from server for this institution
+      const serverState = await fetchServerState(res.institution.id);
+      if (serverState?.success && serverState.data) {
+        applyServerState(serverState.data);
+      }
+
+      logAuditEvent({
+        actionType: 'user_create',
+        actionTitle: 'Operator Joined Workspace',
+        description: `@${res.user.username} (${res.user.role}) connected to ${res.institution.name}.`,
+        module: 'Administration',
+        targetId: res.user.id,
+        targetLabel: res.user.name,
+      });
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error connecting to institution.' };
+    }
+  };
+
+  const createInvite = async (params: {
+    fullName: string;
+    assignedRole: UserRole;
+    permissions?: string[];
+  }): Promise<{ success: boolean; invite?: OperatorInvite; error?: string }> => {
+    const targetInstId = currentInstitution?.id || 'default';
+    try {
+      const res = await apiCreateInvite(targetInstId, {
+        fullName: params.fullName,
+        assignedRole: params.assignedRole,
+        permissions: params.permissions || [],
+        createdBy: currentUser.username,
+      });
+
+      if (!res.success || !res.invite) {
+        return { success: false, error: res.error || 'Failed to generate staff invite code.' };
+      }
+
+      setInvites((prev) => [res.invite!, ...prev.filter((i) => i.inviteCode !== res.invite!.inviteCode)]);
+
+      logAuditEvent({
+        actionType: 'user_create',
+        actionTitle: 'Operator Invite Code Generated',
+        description: `Invite code ${res.invite.inviteCode} issued for ${params.fullName} (${params.assignedRole}).`,
+        module: 'Administration',
+        targetId: res.invite.inviteCode,
+        targetLabel: params.fullName,
+      });
+
+      return { success: true, invite: res.invite };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error creating invite.' };
+    }
+  };
+
+  const refreshInvites = useCallback(async () => {
+    const targetInstId = currentInstitution?.id;
+    if (!targetInstId) return;
+    try {
+      const res = await apiListInvites(targetInstId);
+      if (res.success && Array.isArray(res.invites)) {
+        setInvites(res.invites);
+      }
+    } catch {
+      // ignore
+    }
+  }, [currentInstitution]);
+
+  // Verify server-side session cookie on initial mount
+  useEffect(() => {
+    let isMounted = true;
+    apiGetMe().then((me) => {
+      if (!isMounted) return;
+      if (me.success && me.user) {
+        setCurrentUser(me.user);
+        setIsAuthenticated(true);
+        if (me.institution) {
+          setCurrentInstitution(me.institution);
+          setActiveInstitutionId(me.institution.id);
+          localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(me.institution));
+        }
+      }
+    }).catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Auth & Roles
   const login = async (
     usernameOrEmail: string,
-    password: string
+    password: string,
+    institutionCode?: string
   ): Promise<{ success: boolean; error?: string; user?: User }> => {
     const trimmed = usernameOrEmail.trim().toLowerCase();
     if (!trimmed) {
@@ -1222,6 +1468,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     if (!password) {
       return { success: false, error: 'Please enter your password.' };
+    }
+
+    // Authoritative backend multi-tenant login
+    try {
+      const apiRes = await apiLogin(trimmed, password, institutionCode);
+      if (apiRes.success && apiRes.user) {
+        setCurrentUser(apiRes.user);
+        setIsAuthenticated(true);
+        if (apiRes.institution) {
+          setCurrentInstitution(apiRes.institution);
+          setActiveInstitutionId(apiRes.institution.id);
+          localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(apiRes.institution));
+          if (apiRes.institution.name) {
+            setInstitute((prev) => ({
+              ...prev,
+              name: apiRes.institution!.name,
+              code: apiRes.institution!.code,
+              currency: apiRes.institution!.currency || prev.currency,
+              address: apiRes.institution!.address || prev.address,
+              phone: apiRes.institution!.phone || prev.phone,
+              email: apiRes.institution!.email || prev.email,
+            }));
+          }
+
+          // Hydrate state for this institution
+          const stateRes = await fetchServerState(apiRes.institution.id);
+          if (stateRes?.success && stateRes.data) {
+            applyServerState(stateRes.data);
+          }
+        }
+
+        localStorage.setItem(
+          `${STORAGE_KEY}_auth_session`,
+          JSON.stringify({ ...apiRes.user, password: undefined })
+        );
+        return { success: true, user: apiRes.user };
+      } else if (apiRes.error && !apiRes.error.includes('failed to fetch') && !apiRes.error.includes('Network')) {
+        // Authoritative server error (e.g. invalid password or user not found)
+        return { success: false, error: apiRes.error };
+      }
+    } catch {
+      // Backend unavailable, fallback to local match
     }
 
     const matchedUser = users.find(
@@ -1233,7 +1521,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!matchedUser) {
       return {
         success: false,
-        error: `User '${usernameOrEmail.trim()}' not found in authorization database. Please check username or email.`,
+        error: `User '${usernameOrEmail.trim()}' not found in authorization database. Please check username or school code.`,
       };
     }
 
@@ -1251,7 +1539,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (isSeededDemoAccount && (password === 'Demo@1234' || password === 'admin' || password === 'admin123')) {
         passwordValid = true;
-        // Upgrade stored password hash
         try {
           const newHash = await hashPassword(password === 'Demo@1234' ? 'Demo@1234' : password);
           const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
@@ -1295,13 +1582,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = () => {
     setIsAuthenticated(false);
     localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+    apiLogout().catch(() => {});
   };
 
   const hasPermission = (permission: string) => {
     return isPermissionAllowed(currentUser, permission);
   };
 
-  const addUser = async (userData: Omit<User, 'id'>): Promise<{ success: boolean; error?: string }> => {
+  const addUser = async (
+    userData: Omit<User, 'id'>
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    credentialsSummary?: { username: string; password?: string; institutionCode?: string; role: string };
+  }> => {
     if (!userData.username.trim()) return { success: false, error: 'Username is required.' };
     if (users.some((u) => u.username.toLowerCase() === userData.username.trim().toLowerCase())) {
       return { success: false, error: 'A user with this username already exists.' };
@@ -1328,7 +1622,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setUsers((prev) => [...prev, newUser]);
-    return { success: true };
+    return {
+      success: true,
+      credentialsSummary: {
+        username: newUser.username,
+        password: plainPassword,
+        institutionCode: currentInstitution?.code || institute?.code || '',
+        role: newUser.role,
+      },
+    };
   };
 
   const updateUser = async (id: string, updates: Partial<User>): Promise<{ success: boolean; error?: string }> => {
@@ -2984,6 +3286,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (newVouchers.length > 0) {
+      // Phase 3: Transactional server-side API call
+      const carriedPriorList = Array.from(priorVouchersToCarry.entries()).map(([id, targetMonth]) => ({
+        id,
+        targetMonth,
+      }));
+      apiGenerateVouchers(newVouchers, carriedPriorList).catch((err) => {
+        console.error('[API] Background voucher generation sync notice:', err);
+      });
+
       const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
       logAuditEvent({
         actionType: 'voucher_generation',
@@ -3227,6 +3538,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : v
       )
     );
+
+    // Phase 3: Transactional server-side API call
+    apiReceiveCollection({
+      payments: [
+        {
+          voucherId,
+          amount,
+          paymentMode,
+          referenceNo,
+          notes,
+          date,
+          fineAdded: fineDiff !== 0 ? fineDiff : undefined,
+          updatedParticulars: updatedParticulars && updatedParticulars.length > 0 ? cleanParticulars : undefined,
+        },
+      ],
+      collectionNotes: notes || `Payment for Voucher ${voucher.voucherNo}`,
+      date,
+    }).catch((err) => {
+      console.error('[API] Background collection receipt sync notice:', err);
+    });
 
     // Audit Logging: Fine adjustment at payment collection and collection receipt event
     const student = students.find((s) => s.id === voucher.studentId);
@@ -3504,6 +3835,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
 
+      // Phase 3: Transactional server-side API call for bulk collection
+      apiReceiveCollection({
+        payments: newTxns.map((t) => ({
+          voucherId: t.voucherId,
+          amount: t.amount,
+          paymentMode: t.paymentMode,
+          referenceNo: t.referenceNo,
+          notes: t.notes,
+          date: t.date,
+          fineAdded: t.fineAdded,
+        })),
+        collectionNotes: `Bulk CSV Payment Collection (${successCount} rows)`,
+        date: primaryCollectionDate,
+        isBulkImport: true,
+      }).catch((err) => {
+        console.error('[API] Background bulk collection sync notice:', err);
+      });
+
       // Audit Logging: Bulk CSV Collection
       logAuditEvent({
         actionType: 'bulk_collection',
@@ -3741,6 +4090,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
+
+    // Phase 3: Transactional server-side API call
+    apiCarryForwardVoucher({
+      voucherId,
+      targetMonth,
+      addLateFine,
+      customFineAmount,
+    }).catch((err) => {
+      console.error('[API] Background carry-forward sync notice:', err);
+    });
 
     // Audit Logging: Carry forward operation
     const student = students.find((s) => s.id === voucher.studentId);
@@ -4614,9 +4973,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        currentInstitution,
         currentUser,
         isAuthenticated,
         users,
+        invites,
+        registerInstitution,
+        joinInstitution,
+        createInvite,
+        refreshInvites,
         login,
         logout,
         hasPermission,

@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { InstituteProfile } from '../../types';
 import {
   AlertCircle,
   Building2,
   Check,
+  Copy,
   Globe,
   Image as ImageIcon,
   Link as LinkIcon,
@@ -52,10 +53,52 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
     handleSaveProfile,
   } = props;
 
-  const { hasPermission } = useApp();
+  const { hasPermission, currentInstitution, institute, showToast } = useApp();
+  const [codeCopied, setCodeCopied] = useState(false);
+
+  const activeSchoolCode = currentInstitution?.code || institute.code || 'SYS';
+  const activeSchoolName = currentInstitution?.name || institute.name || 'School Workspace';
 
   return (
     <form onSubmit={handleSaveProfile} className="space-y-6">
+      {/* Workspace Institution Code Banner */}
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 rounded-2xl border border-slate-700 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-xl bg-teal-600/30 border border-teal-500/50 flex items-center justify-center text-teal-300 shrink-0">
+            <Building2 className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-white text-base">{activeSchoolName}</h3>
+              <span className="font-mono text-xs text-teal-300 bg-teal-950 px-2 py-0.5 rounded border border-teal-800 uppercase font-semibold">
+                {activeSchoolCode}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              School Workspace Code &bull; Share this code with teachers or accountants so they can connect their account
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(activeSchoolCode);
+            setCodeCopied(true);
+            showToast(`School code ${activeSchoolCode} copied to clipboard!`, 'success');
+            setTimeout(() => setCodeCopied(false), 2500);
+          }}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer self-start sm:self-auto shrink-0 ${
+            codeCopied
+              ? 'bg-emerald-600 text-white'
+              : 'bg-teal-600 hover:bg-teal-700 text-white shadow-xs'
+          }`}
+        >
+          {codeCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          <span>{codeCopied ? 'Code Copied' : 'Copy School Code'}</span>
+        </button>
+      </div>
+
       {/* Main Card: Logo & Identity */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">

@@ -19,15 +19,13 @@ export const HeaderBar: React.FC = () => {
     beforeMonthChange,
     vouchers,
     institute,
+    currentInstitution,
     getMonthClosureStatus,
     themeConfig,
-    resetToDemoData,
     logout,
     hasPermission,
     showToast,
   } = useApp();
-
-  const [showResetModal, setShowResetModal] = useState(false);
 
   // `pickerWindowMonths` covers a reasonable +/- window around today, merged
   // with any months that actually have vouchers -- used only to check
@@ -94,6 +92,21 @@ export const HeaderBar: React.FC = () => {
             />
           </div>
 
+          {/* Active Institution Badge */}
+          <div
+            id="header-institution-badge"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 border border-slate-700/80 text-xs text-slate-300"
+            title={`Workspace: ${currentInstitution?.name || institute.name} (${currentInstitution?.code || institute.code || 'SYS'})`}
+          >
+            <Building2 className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+            <span className="font-semibold text-white truncate max-w-[140px]">
+              {currentInstitution?.name || institute.name}
+            </span>
+            <span className="font-mono text-[10px] text-teal-400 bg-teal-950/80 px-1.5 py-0.2 rounded border border-teal-800/80 uppercase tracking-wider">
+              {currentInstitution?.code || institute.code || 'SYS'}
+            </span>
+          </div>
+
           {/* Integrated User Profile, Role Badge & Logout Chip */}
           <div
             id="header-user-profile-card"
@@ -151,43 +164,8 @@ export const HeaderBar: React.FC = () => {
               <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
-
-          {/* Reset Demo Data (Admin or system.cleanup only) */}
-          {(currentUser.role === 'Admin' || hasPermission('system.cleanup')) && (
-            <button
-              onClick={() => setShowResetModal(true)}
-              title="Reset system data to initial demo state"
-              className="p-1.5 text-slate-400 hover:text-rose-300 hover:bg-slate-800 rounded-lg border border-transparent hover:border-slate-700 transition cursor-pointer"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          )}
         </div>
       </div>
-
-      {/* Reset System Data Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showResetModal}
-        title="Reset System Data"
-        message={
-          <div className="space-y-2">
-            <p>
-              Are you sure you want to reset all fee vouchers, collections, and records back to the initial demo state?
-            </p>
-            <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-[11px] text-rose-800">
-              Any newly created students, custom fee modifications, or collection receipts will be reverted to factory demo values.
-            </div>
-          </div>
-        }
-        confirmLabel="Reset Everything"
-        variant="danger"
-        onConfirm={() => {
-          resetToDemoData();
-          setShowResetModal(false);
-          showToast('System data successfully reset to demo baseline.', 'info');
-        }}
-        onClose={() => setShowResetModal(false)}
-      />
     </header>
   );
 };

@@ -28,6 +28,7 @@ function MainApp() {
     hasPermission,
     isAuthenticated,
     isSidebarCollapsed,
+    currentInstitution,
     institute,
     activeMonth,
     setActiveMonth,
@@ -219,15 +220,15 @@ function MainApp() {
         </div>
 
         {/* Mobile Search Bar Wrapper */}
-        <div className="md:hidden relative z-20 px-4 py-2 bg-white/95 border-b border-slate-200/80 shadow-2xs print:hidden">
+        <div className="md:hidden sticky top-[57px] z-25 px-4 py-2 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-2xs print:hidden">
           <GlobalStudentSearch
             onNavigateToLedger={handleNavigateToLedger}
             onNavigateToStudents={() => setActiveTab('students')}
           />
         </div>
 
-        {/* Desktop Top Header Bar (Global Search + Quick Actions) */}
-        <header className="hidden md:flex relative z-20 bg-slate-100/95 px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
+        {/* Desktop Top Header Bar (Global Search + Quick Actions + Workspace Indicator) */}
+        <header className="hidden md:flex sticky top-0 z-30 bg-slate-100/95 backdrop-blur-md px-6 lg:px-8 py-2.5 border-b border-slate-200/80 items-center justify-between gap-4 print:hidden">
           {/* Global Search Bar */}
           <div className="flex-1 max-w-xl">
             <GlobalStudentSearch
@@ -238,7 +239,23 @@ function MainApp() {
 
           {/* Right Header Status / Indicators */}
           <div className="flex items-center gap-3 shrink-0">
+            {/* Multi-Tenant Workspace Badge */}
+            <div
+              id="header-workspace-badge"
+              className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs text-xs"
+              title={`Active Workspace: ${currentInstitution?.name || institute.name} (${currentInstitution?.code || institute.code || 'SYS'})`}
+            >
+              <Building2 className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="font-semibold text-slate-800 truncate max-w-[150px]">
+                {currentInstitution?.name || institute.name}
+              </span>
+              <span className="font-mono text-[10px] text-teal-700 bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 font-bold uppercase">
+                {currentInstitution?.code || institute.code || 'SYS'}
+              </span>
+            </div>
+
             <DatabaseStatusBadge />
+
             {/* Operator info pill */}
             <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-200/80 shadow-2xs text-xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />

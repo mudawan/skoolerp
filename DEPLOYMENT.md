@@ -1,32 +1,16 @@
 # Skooler School Fee Management System - Production Deployment Guide
 
-This system is built with a dual-engine architecture:
-1. **Embedded SQLite**: Zero-setup, single-file relational database (ideal for instant localhost testing and lightweight single-server deployments).
-2. **PostgreSQL 16**: High-concurrency, ACID-compliant database with connection pooling (ideal for production schools with multiple simultaneous counters).
+This system is built with a production-grade database architecture:
+1. **PostgreSQL 16 (Production Default & Enforced)**: High-concurrency, ACID-compliant database with managed connection pooling, exponential retry backoff, and active db-ping health probes. When `REQUIRE_POSTGRES=true`, the app strictly enforces PostgreSQL and fails loudly if unreachable.
+2. **Embedded SQLite (Local Dev Fallback)**: Zero-setup, single-file relational database strictly intended for development when `REQUIRE_POSTGRES=false` and `DATABASE_URL` is omitted.
 
 ---
 
-## Option 1: Quick Run on Localhost (No Docker, No Database Setup)
-
-Requirements: Node.js 20+ installed on your machine.
-
-1. **Clone or download the project folder**.
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-3. **Run the development server**:
-   ```bash
-   npm run dev
-   ```
-4. **Open your browser**:
-   Navigate to `http://localhost:3000`. The system will automatically create `./data/school_management.db` and seed all default accounts, classes, and fee structures.
-
----
-
-## Option 2: 1-Click Production Deployment with Docker Compose (Recommended)
+## Option 1: 1-Click Production Deployment with Docker Compose (Recommended)
 
 Requirements: Docker and Docker Compose installed.
+
+In this setup, `REQUIRE_POSTGRES=true` is enabled by default with PostgreSQL 16 Alpine and an isolated data volume.
 
 1. **Start the application and PostgreSQL database**:
    ```bash
@@ -36,7 +20,13 @@ Requirements: Docker and Docker Compose installed.
    ```bash
    docker compose ps
    ```
-3. **Access the application**:
+3. **Verify Database Health & Connection Pool**:
+   ```bash
+   curl -s http://localhost:3000/api/health | jq .
+   ```
+   You will receive the PostgreSQL engine confirmation, latency probe (`database.latencyMs`), and connection pool metrics (`database.pool`).
+
+4. **Access the application**:
    Open `http://localhost:3000` (or `http://YOUR_SERVER_IP:3000`).
 
 ### Docker Management Commands:
@@ -56,7 +46,7 @@ Requirements: Docker and Docker Compose installed.
 
 ---
 
-## Option 3: Production VPS Deployment (Ubuntu / Debian + Nginx + Free SSL)
+## Option 2: Production VPS Deployment (Ubuntu / Debian + Nginx + Free SSL)
 
 ### Step 1: Install Node.js & Nginx
 ```bash

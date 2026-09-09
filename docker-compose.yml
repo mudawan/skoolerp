@@ -6,6 +6,9 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgres://postgres:postgrespassword@db:5432/school_db
+      - REQUIRE_POSTGRES=true
+      - DB_POOL_MAX=20
+      - DB_POOL_MIN=4
     depends_on:
       db:
         condition: service_healthy

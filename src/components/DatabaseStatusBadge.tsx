@@ -45,7 +45,11 @@ export const DatabaseStatusBadge: React.FC = () => {
         status.isSyncing
           ? 'Synchronizing state with database...'
           : status.isConnected
-          ? `Connected to ${status.engine.toUpperCase()} database (rev ${status.revision}). ${
+          ? `Connected to ${status.engine.toUpperCase()} database (rev ${status.revision})${
+              status.latencyMs !== undefined ? ` • ${status.latencyMs}ms latency` : ''
+            }${
+              status.pool ? ` • Pool: ${status.pool.idleCount} idle / ${status.pool.totalCount} active` : ''
+            }. ${
               status.activePeers > 1 ? `${status.activePeers} concurrent sessions active.` : 'Single session.'
             }`
           : 'Database connection offline. Changes stored in cache.'
@@ -54,6 +58,11 @@ export const DatabaseStatusBadge: React.FC = () => {
       <div className="flex items-center gap-1.5">
         <Database className="w-3.5 h-3.5 shrink-0" />
         <span className="capitalize">{status.engine}</span>
+        {status.latencyMs !== undefined && (
+          <span className="text-[10px] opacity-75 font-mono">
+            {status.latencyMs}ms
+          </span>
+        )}
       </div>
 
       {status.activePeers > 1 && (

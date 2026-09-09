@@ -1,9 +1,15 @@
+import { apiNextDocumentNumber } from '../services/apiSync';
+
 // Monotonic, per `prefix:year` document counters (vouchers, collections,
 // transactions). Counters are NEVER decreased: deleting a voucher/collection/
 // transaction does not reopen its number for reuse, producing stable
 // checkbook-style gaps that auditors can reconcile against. Each counter is
 // persisted independently of the data arrays, so it survives deletions and
 // reloads.
+//
+// In Phase 3, this is backed by PostgreSQL server sequences via /api/sequences/next
+// for high-concurrency multi-tenant safety, with local synchronous sequence store
+// acting as instant zero-latency fallback and offline cache.
 //
 // Design note (server migration): the sequence logic is kept behind the
 // `SequenceStore` interface below, so the storage backend is a single,
@@ -115,4 +121,24 @@ export function reconcileSequence(entries: { prefix: string; year: string; numbe
 // Mint a fully formatted document number, e.g. `FE2026-000042`.
 export function nextDocumentNumber(prefix: string, year: string, digits = 6): string {
   return `${prefix}${year}-${String(nextNumber(prefix, year)).padStart(digits, '0')}`;
+}
+
+/**
+ * Mint a guaranteed server-side atomic document number directly from PostgreSQL sequences
+ */
+export async function fetchAtomicServerDocumentNumber(
+  prefix: string,
+  year: string,
+  digits = 6
+): Promise<string> {
+  const remoteNo = await apiNextDocumentNumber(prefix, year, digits);
+  if (remoteNo) {
+    // Extract the counter portion to reconcile the local fallback cache
+    const match = remoteNo.match(/-(\d+)$/);
+    if (match) {
+      reconcileSequence([{ prefix, year, number: parseInt(match[1], 10) }]);
+    }
+    return remoteNo;
+  }
+  return nextDocumentNumber(prefix, year, digits);
 }

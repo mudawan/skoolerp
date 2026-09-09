@@ -30,8 +30,40 @@ export interface PermissionCategoryInfo {
   description: string;
 }
 
+export interface Institution {
+  id: string;
+  name: string;
+  code: string; // unique shortcode e.g. "DPS-101"
+  registrationNo?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  currency: string;
+  logoUrl?: string;
+  status: 'active' | 'suspended' | 'trial';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface OperatorInvite {
+  id: string;
+  institutionId: string;
+  institutionName?: string;
+  institutionCode?: string;
+  inviteCode: string; // e.g. "INV-482103"
+  fullName: string;
+  assignedRole: UserRole;
+  permissions?: string[];
+  expiresAt: string;
+  status: 'pending' | 'claimed' | 'expired';
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface User {
   id: string;
+  institutionId?: string;
+  institutionName?: string;
   username: string;
   password?: string;
   name: string;
@@ -40,6 +72,7 @@ export interface User {
   email?: string;
   avatarUrl?: string;
   lastLogin?: string;
+  status?: 'active' | 'invited' | 'deactivated';
 }
 
 export interface SchoolClass {

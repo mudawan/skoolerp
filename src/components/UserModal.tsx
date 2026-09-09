@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useApp } from '../context/AppContext';
 import { User, UserRole, PermissionCategory } from '../types';
 import {
   ALL_PERMISSIONS,
@@ -17,6 +18,7 @@ import {
   Check,
   CheckSquare,
   ChevronDown,
+  Copy,
   Database,
   Eye,
   EyeOff,
@@ -30,6 +32,7 @@ import {
   Receipt,
   RotateCcw,
   Search,
+  Send,
   Settings,
   Shield,
   ShieldCheck,
@@ -69,6 +72,9 @@ export const UserModal: React.FC<UserModalProps> = ({
 
   // Active Tab: 'profile' (Credentials & Account) | 'permissions' (Role & Granular Matrix)
   const [activeTab, setActiveTab] = useState<'profile' | 'permissions'>(initialTab);
+
+  const { currentInstitution, institute, showToast } = useApp();
+  const [copiedNotice, setCopiedNotice] = useState(false);
 
   // Form Fields
   const [username, setUsername] = useState('');
@@ -561,6 +567,44 @@ export const UserModal: React.FC<UserModalProps> = ({
                   </span>
                 </div>
               </div>
+
+              {/* Administrator Credential Notification Helper */}
+              {username && password && (
+                <div className="p-3 bg-teal-50/80 border border-teal-200 rounded-xl flex items-center justify-between gap-3 text-xs text-teal-900">
+                  <div>
+                    <span className="font-bold flex items-center gap-1.5 text-teal-800">
+                      <Send className="w-3.5 h-3.5" />
+                      Notify Operator Directly
+                    </span>
+                    <p className="text-[11px] text-teal-700 mt-0.5">
+                      Since automated emails are not yet enabled, copy these credentials to notify <strong>{name || username}</strong>.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = `School Portal Login Credentials for ${name || username}:
+Workspace: ${currentInstitution?.name || institute.name} (Code: ${currentInstitution?.code || institute.code || 'SYS'})
+Username: @${username}
+Password: ${password}
+Assigned Role: ${selectedRole}
+Login portal: Sign in under School Fee Portal with these credentials.`;
+                      navigator.clipboard.writeText(text);
+                      setCopiedNotice(true);
+                      showToast(`Credentials for ${name || username} copied to clipboard!`, 'success');
+                      setTimeout(() => setCopiedNotice(false), 3000);
+                    }}
+                    className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer ${
+                      copiedNotice
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-teal-700 hover:bg-teal-800 text-white shadow-xs'
+                    }`}
+                  >
+                    {copiedNotice ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedNotice ? 'Copied' : 'Copy Notice'}</span>
+                  </button>
+                </div>
+              )}
 
               {/* Assigned Authorization Profile with Role Preset Dropdown Picker */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
