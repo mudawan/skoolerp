@@ -488,7 +488,7 @@ export const UserModal: React.FC<UserModalProps> = ({
                       type="text"
                       id="input-user-username"
                       required
-                      placeholder="e.g. accountant_lahore"
+                      placeholder="e.g. lead_accountant"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="w-full pl-7 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -507,7 +507,7 @@ export const UserModal: React.FC<UserModalProps> = ({
                     type="text"
                     id="input-user-name"
                     required
-                    placeholder="e.g. Muhammad Kashif"
+                    placeholder="e.g. Staff Member Name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -527,7 +527,7 @@ export const UserModal: React.FC<UserModalProps> = ({
                     <input
                       type="email"
                       id="input-user-email"
-                      placeholder="e.g. kashif@skooleracademy.edu.pk"
+                      placeholder="e.g. staff@school.edu"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"

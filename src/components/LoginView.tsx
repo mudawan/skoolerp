@@ -52,7 +52,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
   // New Institution Form
   const [schoolName, setSchoolName] = useState('');
-  const [schoolCode, setSchoolCode] = useState('');
   const [currency, setCurrency] = useState('PKR');
   const [regNo, setRegNo] = useState('');
   const [schoolEmail, setSchoolEmail] = useState('');
@@ -89,19 +88,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
-  // Auto-generate school code suggestion from school name
   const handleSchoolNameChange = (val: string) => {
     setSchoolName(val);
-    if (!schoolCode || schoolCode.length <= 4) {
-      const words = val.trim().split(/\s+/).filter(Boolean);
-      if (words.length >= 1) {
-        const initials = words
-          .slice(0, 3)
-          .map((w) => w[0].toUpperCase())
-          .join('');
-        setSchoolCode(`${initials}-${Math.floor(10 + Math.random() * 90)}`);
-      }
-    }
   };
 
   // Live validate connection code when typed
@@ -178,7 +166,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     try {
       const res = await registerInstitution({
         schoolName: schoolName.trim(),
-        schoolCode: schoolCode.trim() || undefined,
         currency,
         address: schoolAddress.trim() || undefined,
         phone: schoolPhone.trim() || undefined,
@@ -286,7 +273,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </h1>
             <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
               {authMode === 'register_institution'
-                ? 'Register School ABC with Administrator privileges and invite accountants and staff.'
+                ? 'Register a new school with Administrator privileges and invite accountants and staff.'
                 : authMode === 'connect_existing'
                 ? 'Join an established institution using your staff invite code or school code.'
                 : 'Secure cloud portal for institutional fee billing, collections, and audit governance.'}
@@ -442,7 +429,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     id="login-school-code"
                     value={loginSchoolCode}
                     onChange={(e) => setLoginSchoolCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. BSS-101 (optional)"
+                    placeholder="e.g. SCH-101 (optional)"
                     className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition uppercase font-mono"
                   />
                 </div>
@@ -488,7 +475,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     onClick={() => setAuthMode('register_institution')}
                     className="text-teal-400 hover:text-teal-300 font-semibold underline cursor-pointer"
                   >
-                    Register School ABC
+                    Register New School
                   </button>
                 </p>
                 <p className="text-xs text-slate-400">
@@ -513,7 +500,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
               <div className="bg-teal-950/40 border border-teal-800/60 rounded-2xl p-3.5 text-xs text-teal-200 flex items-start gap-2.5">
                 <Sparkles className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
                 <div>
-                  <strong className="text-white block">Provision School ABC Workspace</strong>
+                  <strong className="text-white block">Provision School Workspace</strong>
                   You will be registered as the root <strong>Admin</strong>. From your workspace you can add accountants, viewers, or generate instant invite codes.
                 </div>
               </div>
@@ -535,25 +522,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="reg-school-name"
                       value={schoolName}
                       onChange={(e) => handleSchoolNameChange(e.target.value)}
-                      placeholder="e.g. Beaconhouse School System or School ABC"
+                      placeholder="e.g. Central Grammar School or Model Academy"
                       required
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
-                      <span>School Code</span>
-                      <span className="text-[10px] text-slate-400 font-mono">Unique ID</span>
-                    </label>
-                    <input
-                      type="text"
-                      id="reg-school-code"
-                      value={schoolCode}
-                      onChange={(e) => setSchoolCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. ABC-01"
-                      required
-                      className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 uppercase font-mono"
                     />
                   </div>
 
@@ -644,7 +615,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="reg-admin-username"
                       value={adminUsername}
                       onChange={(e) => setAdminUsername(e.target.value)}
-                      placeholder="e.g. admin or zainab"
+                      placeholder="e.g. admin or principal"
                       required
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
                     />
@@ -659,7 +630,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="reg-admin-email"
                       value={adminEmail}
                       onChange={(e) => setAdminEmail(e.target.value)}
-                      placeholder="admin@schoolabc.edu"
+                      placeholder="admin@school.edu"
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
                     />
                   </div>
@@ -704,7 +675,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 ) : (
                   <>
                     <Building2 className="w-4 h-4" />
-                    <span>Create School ABC & Access Workspace</span>
+                    <span>Create School & Access Workspace</span>
                   </>
                 )}
               </button>
@@ -753,7 +724,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     id="connect-code-input"
                     value={connectionCode}
                     onChange={(e) => setConnectionCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. INV-849201 or BSS-101"
+                    placeholder="e.g. INV-849201 or SCH-101"
                     required
                     autoFocus
                     className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase font-mono tracking-wider"
@@ -808,7 +779,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="connect-fullname"
                       value={joinFullName}
                       onChange={(e) => setJoinFullName(e.target.value)}
-                      placeholder="e.g. Tariq Mehmood"
+                      placeholder="e.g. Staff Full Name"
                       required
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
@@ -823,7 +794,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="connect-username"
                       value={joinUsername}
                       onChange={(e) => setJoinUsername(e.target.value)}
-                      placeholder="e.g. tariq.accountant"
+                      placeholder="e.g. staff.accountant"
                       required
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
@@ -838,7 +809,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="connect-email"
                       value={joinEmail}
                       onChange={(e) => setJoinEmail(e.target.value)}
-                      placeholder="tariq@school.edu"
+                      placeholder="staff@school.edu"
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>

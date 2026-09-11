@@ -205,12 +205,37 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'Admin password must be at least 6 characters.' });
       }
 
-      // Generate or clean school code
-      let cleanCode = (schoolCode || '').trim().toUpperCase();
+      // Internally generate unique school code (e.g. SCH-102, CMS-482)
+      const cleanWords = schoolName.trim().replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+      let prefix = '';
+      if (cleanWords.length >= 3) {
+        prefix = (cleanWords[0][0] + cleanWords[1][0] + cleanWords[2][0]).toUpperCase();
+      } else if (cleanWords.length === 2) {
+        prefix = (cleanWords[0].substring(0, 2) + cleanWords[1].substring(0, 2)).toUpperCase();
+      } else if (cleanWords.length === 1) {
+        prefix = cleanWords[0].substring(0, 4).toUpperCase();
+      } else {
+        prefix = 'SCH';
+      }
+      if (prefix.length < 3) {
+        prefix = (prefix + 'SCH').substring(0, 3);
+      }
+
+      // Guarantee collision-free uniqueness
+      let cleanCode = '';
+      let attempts = 0;
+      while (attempts < 50) {
+        const randomNum = Math.floor(100 + Math.random() * 900);
+        const candidate = `${prefix}-${randomNum}`;
+        const existing = await dbService.getInstitutionByCode(candidate);
+        if (!existing) {
+          cleanCode = candidate;
+          break;
+        }
+        attempts++;
+      }
       if (!cleanCode) {
-        const words = schoolName.trim().split(/\s+/);
-        const prefix = words.length >= 2 ? (words[0][0] + words[1][0] + (words[2]?.[0] || 'S')).toUpperCase() : schoolName.substring(0, 3).toUpperCase();
-        cleanCode = `${prefix}-${Math.floor(100 + Math.random() * 900)}`;
+        cleanCode = `${prefix}-${Date.now().toString().slice(-4)}`;
       }
 
       const passwordHash = await hashPassword(adminPassword.trim());

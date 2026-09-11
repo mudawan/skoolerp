@@ -302,10 +302,18 @@ export type ActiveTab =
   | 'vouchers'
   | 'collections'
   | 'defaulters'
+  | 'monthEnd'
+  | 'policies'
   | 'transport'
   | 'reports'
   | 'audit'
-  | 'settings';
+  | 'settings'
+  | 'profile'
+  | 'banks'
+  | 'users'
+  | 'appearance'
+  | 'database'
+  | 'cleanup';
 
 export type ThemeColor = 'teal' | 'navy' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'slate';
 export type SidebarTheme = 'dark' | 'light' | 'branded';

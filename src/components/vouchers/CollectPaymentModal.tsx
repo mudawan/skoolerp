@@ -352,7 +352,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. PK-MZB-988471"
+                        placeholder="e.g. TXN-988471"
                         value={refNo}
                         onChange={(e) => setRefNo(e.target.value)}
                         className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"

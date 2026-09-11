@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import {
+  ActiveTab,
   BankAccount,
   FeeTemplate,
   ParticularKind,
@@ -80,12 +81,14 @@ import {
 export interface SettingsViewProps {
   initialSubTab?: 'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database';
   targetMonth?: string;
-  onNavigateToTab?: (tab: 'dashboard' | 'vouchers' | 'collections' | 'defaulters') => void;
+  viewMode?: 'settings' | 'policies';
+  onNavigateToTab?: (tab: ActiveTab) => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
-  initialSubTab = 'profile',
+  initialSubTab,
   targetMonth,
+  viewMode = 'settings',
   onNavigateToTab,
 }) => {
   const {
@@ -141,13 +144,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     showToast,
   } = useApp();
 
-  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(initialSubTab);
+  const defaultSubTab = initialSubTab || (viewMode === 'policies' ? 'policies' : 'profile');
+  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(defaultSubTab);
 
   useEffect(() => {
     if (initialSubTab) {
       setActiveSubTab(initialSubTab);
+    } else if (viewMode === 'policies') {
+      setActiveSubTab('policies');
     }
-  }, [initialSubTab]);
+  }, [initialSubTab, viewMode]);
   const [policyCategoryTab, setPolicyCategoryTab] = useState<'copies' | 'prior' | 'skipped' | 'deletion'>('copies');
   const [selectedPriorRule, setSelectedPriorRule] = useState<PriorMonthVoucherRule>(priorMonthRule);
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
@@ -1839,265 +1845,192 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const totalActiveOverridesCount = activeClassOverridesList.length + activeStudentOverridesList.length;
 
-  type SettingsCategory = 'institution' | 'financial' | 'governance';
-
-  const NAV_CATEGORIES: {
-    id: SettingsCategory;
+  interface NavItem {
+    id: typeof activeSubTab;
+    htmlId: string;
     name: string;
+    shortName: string;
     description: string;
     icon: React.ElementType;
-    items: {
-      id: typeof activeSubTab;
-      htmlId: string;
-      name: string;
-      shortName: string;
-      description: string;
-      icon: React.ElementType;
-      badge?: string | number;
-      badgeVariant?: 'teal' | 'indigo' | 'rose' | 'amber';
-      hasDot?: boolean;
-      hidden?: boolean;
-    }[];
-  }[] = [
+    badge?: string | number;
+    badgeVariant?: 'teal' | 'indigo' | 'rose' | 'amber';
+    hasDot?: boolean;
+    hidden?: boolean;
+  }
+
+  const POLICY_ITEMS: NavItem[] = [
     {
-      id: 'institution',
-      name: 'Institution & Campus',
-      description: 'Campus identity, deposit banks & UI customization',
-      icon: Building2,
-      items: [
-        {
-          id: 'profile',
-          htmlId: 'settings-tab-profile',
-          name: 'Institute Profile',
-          shortName: 'Profile',
-          description: 'Campus name, official logo & contact details',
-          icon: Building2,
-        },
-        {
-          id: 'banks',
-          htmlId: 'settings-tab-banks',
-          name: 'Bank Accounts',
-          shortName: 'Banks',
-          description: 'Deposit bank instructions printed on vouchers',
-          icon: CreditCard,
-          badge: bankAccounts.length > 0 ? `${bankAccounts.length}` : undefined,
-          badgeVariant: 'teal',
-        },
-        {
-          id: 'appearance',
-          htmlId: 'settings-tab-appearance',
-          name: 'Appearance & Themes',
-          shortName: 'Theme',
-          description: 'Color themes, sidebar mode & visual styling',
-          icon: Palette,
-        },
-      ],
-    },
-    {
-      id: 'financial',
-      name: 'Financial Policies',
-      description: 'Voucher rules, surcharges & fee pricing engine',
+      id: 'policies',
+      htmlId: 'settings-tab-policies',
+      name: 'Voucher Policies',
+      shortName: 'Policies',
+      description: 'Due dates, late fees, copy orders & rounding up',
       icon: Sliders,
-      items: [
-        {
-          id: 'policies',
-          htmlId: 'settings-tab-policies',
-          name: 'Voucher Policies',
-          shortName: 'Policies',
-          description: 'Due dates, late fees, copy orders & rounding up',
-          icon: Sliders,
-          hasDot: hasPolicyChanges,
-          badge: roundingEnabled && roundingMultiple > 1 ? `Rs. ${roundingMultiple}` : undefined,
-          badgeVariant: 'indigo',
-        },
-        {
-          id: 'templates',
-          htmlId: 'settings-tab-templates',
-          name: 'Fee Templates',
-          shortName: 'Templates',
-          description: 'Global fee rates, class & student overrides',
-          icon: FileSpreadsheet,
-          badge: totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active` : undefined,
-          badgeVariant: 'teal',
-        },
-      ],
+      hasDot: hasPolicyChanges,
+      badge: roundingEnabled && roundingMultiple > 1 ? `Rs. ${roundingMultiple}` : undefined,
+      badgeVariant: 'indigo',
     },
     {
-      id: 'governance',
-      name: 'Governance & Audit',
-      description: 'RBAC security, period locking & maintenance',
-      icon: ShieldCheck,
-      items: [
-        {
-          id: 'users',
-          htmlId: 'settings-tab-users',
-          name: 'Users & Permissions',
-          shortName: 'Users',
-          description: 'Operator accounts, login access & granular RBAC',
-          icon: Users,
-          badge: users.length > 0 ? `${users.length}` : undefined,
-          badgeVariant: 'teal',
-          hidden: !(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')),
-        },
-        {
-          id: 'monthEnd',
-          htmlId: 'settings-tab-month-end',
-          name: 'Month End Wizard',
-          shortName: 'Month-End',
-          description: 'Monthly reconciliation, defaulter audit & period lock',
-          icon: CalendarCheck,
-          badge: 'Audit Lock',
-          badgeVariant: 'indigo',
-        },
-        {
-          id: 'database',
-          htmlId: 'settings-tab-database',
-          name: 'Database & Backups',
-          shortName: 'Database',
-          description: 'Central storage status, live sync & backup disaster recovery',
-          icon: Server,
-          badge: 'Live Sync',
-          badgeVariant: 'teal',
-        },
-        {
-          id: 'cleanup',
-          htmlId: 'settings-tab-cleanup',
-          name: 'Data Maintenance',
-          shortName: 'Maintenance',
-          description: 'Selective table purge, test data reset & cleanup',
-          icon: Database,
-          badge: 'High Risk',
-          badgeVariant: 'rose',
-          hidden: !(currentUser?.role === 'Admin' || hasPermission('settings.manage')),
-        },
-      ],
+      id: 'templates',
+      htmlId: 'settings-tab-templates',
+      name: 'Fee Templates',
+      shortName: 'Templates',
+      description: 'Global fee rates, class & student overrides',
+      icon: FileSpreadsheet,
+      badge: totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active` : undefined,
+      badgeVariant: 'teal',
     },
   ];
 
-  const currentCategoryObj =
-    NAV_CATEGORIES.find((c) => c.items.some((i) => i.id === activeSubTab)) || NAV_CATEGORIES[0];
-  const currentItemObj =
-    currentCategoryObj.items.find((i) => i.id === activeSubTab) || currentCategoryObj.items[0];
-  const ActiveItemIcon = currentItemObj.icon;
+  const ADMIN_ITEMS: NavItem[] = [
+    {
+      id: 'profile',
+      htmlId: 'settings-tab-profile',
+      name: 'Campus Profile',
+      shortName: 'Profile',
+      description: 'Campus name, official logo & contact details',
+      icon: Building2,
+    },
+    {
+      id: 'banks',
+      htmlId: 'settings-tab-banks',
+      name: 'Bank Accounts',
+      shortName: 'Banks',
+      description: 'Deposit bank instructions printed on vouchers',
+      icon: CreditCard,
+      badge: bankAccounts.length > 0 ? `${bankAccounts.length}` : undefined,
+      badgeVariant: 'teal',
+    },
+    {
+      id: 'users',
+      htmlId: 'settings-tab-users',
+      name: 'Users & Permissions',
+      shortName: 'Users',
+      description: 'Operator accounts, login access & granular RBAC',
+      icon: Users,
+      badge: users.length > 0 ? `${users.length}` : undefined,
+      badgeVariant: 'teal',
+      hidden: !(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')),
+    },
+    {
+      id: 'appearance',
+      htmlId: 'settings-tab-appearance',
+      name: 'Appearance & Theme',
+      shortName: 'Theme',
+      description: 'Color themes, sidebar mode & visual styling',
+      icon: Palette,
+    },
+    {
+      id: 'database',
+      htmlId: 'settings-tab-database',
+      name: 'Database & Backups',
+      shortName: 'Database',
+      description: 'Central storage status, live sync & backup disaster recovery',
+      icon: Server,
+      badge: 'Live Sync',
+      badgeVariant: 'teal',
+    },
+    {
+      id: 'cleanup',
+      htmlId: 'settings-tab-cleanup',
+      name: 'Data Maintenance',
+      shortName: 'Maintenance',
+      description: 'Selective table purge, test data reset & cleanup',
+      icon: Database,
+      badge: 'High Risk',
+      badgeVariant: 'rose',
+      hidden: !(currentUser?.role === 'Admin' || hasPermission('system.cleanup') || hasPermission('settings.manage')),
+    },
+  ];
+
+  const navItems = (viewMode === 'policies' ? POLICY_ITEMS : ADMIN_ITEMS).filter((i) => !i.hidden);
+  const currentItem = navItems.find((i) => i.id === activeSubTab) || navItems[0];
+  const CurrentIcon = currentItem.icon;
 
   return (
     <div className="space-y-6">
-      {/* Unified Compact Settings Header & Domain Category Navigation */}
+      {/* Flattened Compact Navigation Header */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-3.5 sm:p-4 space-y-3">
-        {/* Row 1: Settings Identity & Domain Category Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+        {/* Identity & Current Section Breadcrumb */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/90 flex items-center justify-center text-teal-700 shadow-2xs shrink-0">
-              <Settings className="w-4 h-4" />
+              <CurrentIcon className="w-4 h-4" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
-                  System Settings
+                  {viewMode === 'policies' ? 'Financial Policies' : 'Administration & Settings'}
                 </h2>
                 <span className="text-slate-300">/</span>
                 <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
-                  {currentCategoryObj.name}
+                  {currentItem.name}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 hidden sm:block truncate">
-                {currentCategoryObj.description}
+                {currentItem.description}
               </p>
             </div>
           </div>
+        </div>
 
-          {/* Domain Category Selector: 3 Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/60 self-start sm:self-auto overflow-x-auto max-w-full shrink-0">
-            {NAV_CATEGORIES.map((cat) => {
-              const isCatActive = cat.id === currentCategoryObj.id;
-              const CatIcon = cat.icon;
-              const catHasDot = cat.items.some((i) => i.hasDot);
+        {/* Flat Sub-tabs */}
+        <div className="flex items-center justify-between gap-3 overflow-x-auto pt-0.5">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 max-w-full">
+            {navItems.map((item) => {
+              const isItemActive = activeSubTab === item.id;
+              const ItemIcon = item.icon;
+
+              let activeClasses = 'bg-teal-600 text-white shadow-xs';
+              if (item.id === 'cleanup') {
+                activeClasses = 'bg-rose-600 text-white shadow-xs';
+              }
+
               return (
                 <button
-                  key={cat.id}
-                  id={`settings-category-${cat.id}`}
+                  key={item.id}
+                  id={item.htmlId}
                   type="button"
                   onClick={() => {
-                    const firstVisible = cat.items.find((i) => !i.hidden);
-                    if (firstVisible) {
-                      setActiveSubTab(firstVisible.id);
-                    }
+                    setActiveSubTab(item.id);
+                    onNavigateToTab?.(item.id as ActiveTab);
                   }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0 ${
-                    isCatActive
-                      ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/70'
-                      : 'text-slate-600 hover:text-slate-900'
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer ${
+                    isItemActive
+                      ? activeClasses
+                      : 'bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/70'
                   }`}
                 >
-                  <CatIcon className={`w-3.5 h-3.5 ${isCatActive ? 'text-teal-600' : 'text-slate-400'}`} />
-                  <span>{cat.name}</span>
-                  {catHasDot && (
-                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved policy changes" />
+                  <ItemIcon className={`w-3.5 h-3.5 ${isItemActive ? 'text-white' : 'text-slate-500'}`} />
+                  <span>{item.name}</span>
+                  {item.hasDot && (
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${isItemActive ? 'bg-amber-300' : 'bg-amber-500 animate-pulse'}`} />
+                  )}
+                  {item.badge && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                        isItemActive
+                          ? 'bg-white/20 text-white'
+                          : item.badgeVariant === 'rose'
+                          ? 'bg-rose-100 text-rose-800'
+                          : item.badgeVariant === 'indigo'
+                          ? 'bg-indigo-100 text-indigo-800'
+                          : item.badgeVariant === 'teal'
+                          ? 'bg-teal-100 text-teal-800'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
                   )}
                 </button>
               );
             })}
           </div>
-        </div>
-
-        {/* Row 2: Sub-tabs within Active Category */}
-        <div className="flex items-center justify-between gap-3 overflow-x-auto pt-0.5">
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 max-w-full">
-            {currentCategoryObj.items
-              .filter((item) => !item.hidden)
-              .map((item) => {
-                const isItemActive = activeSubTab === item.id;
-                const ItemIcon = item.icon;
-
-                let activeClasses = 'bg-teal-600 text-white shadow-xs';
-                if (item.id === 'monthEnd') {
-                  activeClasses = 'bg-indigo-600 text-white shadow-xs';
-                } else if (item.id === 'cleanup') {
-                  activeClasses = 'bg-rose-600 text-white shadow-xs';
-                }
-
-                return (
-                  <button
-                    key={item.id}
-                    id={item.htmlId}
-                    type="button"
-                    onClick={() => setActiveSubTab(item.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer ${
-                      isItemActive
-                        ? activeClasses
-                        : 'bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/70'
-                    }`}
-                  >
-                    <ItemIcon className={`w-3.5 h-3.5 ${isItemActive ? 'text-white' : 'text-teal-600'}`} />
-                    <span>{item.name}</span>
-                    {item.hasDot && (
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${isItemActive ? 'bg-amber-300' : 'bg-amber-500 animate-pulse'}`} />
-                    )}
-                    {item.badge && (
-                      <span
-                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
-                          isItemActive
-                            ? 'bg-white/20 text-white'
-                            : item.badgeVariant === 'rose'
-                            ? 'bg-rose-100 text-rose-800'
-                            : item.badgeVariant === 'indigo'
-                            ? 'bg-indigo-100 text-indigo-800'
-                            : item.badgeVariant === 'teal'
-                            ? 'bg-teal-100 text-teal-800'
-                            : 'bg-slate-200 text-slate-700'
-                        }`}
-                      >
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-          </div>
 
           <div className="hidden lg:flex items-center gap-2 text-xs text-slate-400 shrink-0">
             <span className="text-[11px] font-medium truncate max-w-xs">
-              {currentItemObj.description}
+              {currentItem.description}
             </span>
           </div>
         </div>
@@ -3550,7 +3483,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Meezan Bank Limited"
+                  placeholder="e.g. Commercial Bank Limited"
                   value={bankFormData.bankName}
                   onChange={(e) => setBankFormData({ ...bankFormData, bankName: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
@@ -3562,7 +3495,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Skooler Model Academy Fee Account"
+                  placeholder="e.g. Main Fee Collection Account"
                   value={bankFormData.title}
                   onChange={(e) => setBankFormData({ ...bankFormData, title: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
@@ -3585,7 +3518,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block font-bold mb-1">Branch Code / Name</label>
                 <input
                   type="text"
-                  placeholder="0102 (F-7 Markaz Branch)"
+                  placeholder="0102 (Main Branch)"
                   value={bankFormData.branchCode}
                   onChange={(e) => setBankFormData({ ...bankFormData, branchCode: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"

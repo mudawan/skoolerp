@@ -88,7 +88,10 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
         <div className="flex overflow-x-auto space-x-1 py-2 no-scrollbar">
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeTab === item.id;
+            const isActive =
+              activeTab === item.id ||
+              (item.id === 'settings' &&
+                ['profile', 'banks', 'users', 'appearance', 'database', 'cleanup'].includes(activeTab));
             return (
               <button
                 key={item.id}

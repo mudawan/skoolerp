@@ -12,11 +12,11 @@ import { TransportView } from './components/TransportView';
 import { ReportsView } from './components/ReportsView';
 import { AuditTrailView } from './components/AuditTrailView';
 import { SettingsView } from './components/SettingsView';
+import { MonthEndWizardView } from './components/MonthEndWizardView';
 import { LoginView } from './components/LoginView';
 import { MonthPicker } from './components/MonthPicker';
 import { GlobalStudentSearch } from './components/GlobalStudentSearch';
 import { DatabaseStatusBadge } from './components/DatabaseStatusBadge';
-import { DomainSubNav } from './components/DomainSubNav';
 import { ActiveTab } from './types';
 import { THEME_COLOR_PRESETS } from './utils/themeConfig';
 import { getMonthPickerWindow, mergeWithDataMonths } from './utils/feeMath';
@@ -46,10 +46,11 @@ function MainApp() {
   >('profile');
   const [settingsTargetMonth, setSettingsTargetMonth] = useState<string | undefined>(undefined);
 
+  const [monthEndInitialMonth, setMonthEndInitialMonth] = useState<string | undefined>(undefined);
+
   const handleOpenMonthEndWizard = (month?: string) => {
-    setSettingsInitialTab('monthEnd');
-    setSettingsTargetMonth(month || activeMonth);
-    setActiveTab('settings');
+    setMonthEndInitialMonth(month || activeMonth);
+    setActiveTab('monthEnd');
   };
 
   const handleNavigateToLedger = (studentId: string) => {
@@ -74,6 +75,20 @@ function MainApp() {
         return hasPermission('fees.collect') || hasPermission('fees.view');
       case 'defaulters':
         return hasPermission('defaulters.view') || hasPermission('fees.view');
+      case 'monthEnd':
+        return (
+          hasPermission('defaulters.manage') ||
+          hasPermission('defaulters.view') ||
+          hasPermission('fees.view') ||
+          hasPermission('settings.manage')
+        );
+      case 'policies':
+        return (
+          hasPermission('settings.view') ||
+          hasPermission('settings.manage') ||
+          hasPermission('fees.manage') ||
+          hasPermission('fees.view')
+        );
       case 'transport':
         return hasPermission('transport.view');
       case 'reports':
@@ -81,12 +96,30 @@ function MainApp() {
       case 'audit':
         return hasPermission('audit.view');
       case 'settings':
+      case 'profile':
+        return hasPermission('settings.view') || hasPermission('settings.manage');
+      case 'banks':
         return (
           hasPermission('settings.view') ||
           hasPermission('settings.manage') ||
-          hasPermission('users.manage') ||
-          hasPermission('system.cleanup')
+          hasPermission('fees.manage')
         );
+      case 'users':
+        return (
+          currentUser?.role === 'Admin' ||
+          hasPermission('users.manage') ||
+          hasPermission('settings.manage')
+        );
+      case 'appearance':
+        return hasPermission('settings.view') || hasPermission('settings.manage');
+      case 'database':
+        return (
+          currentUser?.role === 'Admin' ||
+          hasPermission('database.manage') ||
+          hasPermission('settings.manage')
+        );
+      case 'cleanup':
+        return currentUser?.role === 'Admin' || hasPermission('system.cleanup');
       default:
         return true;
     }
@@ -100,9 +133,17 @@ function MainApp() {
     'vouchers',
     'collections',
     'defaulters',
+    'monthEnd',
+    'policies',
     'transport',
     'reports',
     'audit',
+    'profile',
+    'banks',
+    'users',
+    'appearance',
+    'database',
+    'cleanup',
     'settings',
   ];
 
@@ -288,9 +329,6 @@ function MainApp() {
             </div>
           ) : (
             <>
-              {/* Contextual Domain Sub-Navigation Hub */}
-              <DomainSubNav activeTab={activeTab} setActiveTab={setActiveTab} />
-
               {activeTab === 'dashboard' && (
                 <DashboardView
                   setActiveTab={setActiveTab}
@@ -303,6 +341,21 @@ function MainApp() {
               {activeTab === 'vouchers' && <VouchersView />}
               {activeTab === 'collections' && <CollectionsView />}
               {activeTab === 'defaulters' && <DefaultersView />}
+              {activeTab === 'monthEnd' && (
+                <MonthEndWizardView
+                  initialMonth={monthEndInitialMonth || activeMonth}
+                  setActiveTab={setActiveTab}
+                />
+              )}
+              {activeTab === 'policies' && (
+                <SettingsView
+                  viewMode="policies"
+                  initialSubTab="policies"
+                  onNavigateToTab={(tab) => {
+                    setActiveTab(tab);
+                  }}
+                />
+              )}
               {activeTab === 'transport' && <TransportView />}
               {activeTab === 'reports' && (
                 <ReportsView
@@ -313,9 +366,20 @@ function MainApp() {
                 />
               )}
               {activeTab === 'audit' && <AuditTrailView />}
-              {activeTab === 'settings' && (
+              {(activeTab === 'settings' ||
+                activeTab === 'profile' ||
+                activeTab === 'banks' ||
+                activeTab === 'users' ||
+                activeTab === 'appearance' ||
+                activeTab === 'database' ||
+                activeTab === 'cleanup') && (
                 <SettingsView
-                  initialSubTab={settingsInitialTab}
+                  viewMode="settings"
+                  initialSubTab={
+                    activeTab === 'settings'
+                      ? settingsInitialTab
+                      : (activeTab as any)
+                  }
                   targetMonth={settingsTargetMonth}
                   onNavigateToTab={(tab) => {
                     setActiveTab(tab);

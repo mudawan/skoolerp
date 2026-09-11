@@ -298,7 +298,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               value={profileData.name}
               disabled={!hasPermission('settings.manage')}
               onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
-              placeholder="e.g. Cambridge High School"
+              placeholder="e.g. Model High School"
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
             />
           </div>
@@ -322,7 +322,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               value={profileData.address}
               disabled={!hasPermission('settings.manage')}
               onChange={(e) => setProfileData({ ...profileData, address: e.target.value })}
-              placeholder="e.g. Sector F-8/4, Education Enclave, Islamabad"
+              placeholder="e.g. Main Campus, Education Complex, City"
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
             />
           </div>

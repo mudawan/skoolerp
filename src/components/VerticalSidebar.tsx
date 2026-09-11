@@ -11,21 +11,27 @@ import {
   Building2,
   Bus,
   Calendar,
+  CalendarCheck,
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  Database,
   FileText,
   FolderKanban,
   History,
+  Landmark,
   LayoutDashboard,
   LogOut,
+  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Receipt,
   Settings,
   Shield,
+  Sliders,
   UserCheck,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -176,10 +182,30 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         },
         {
           id: 'defaulters',
-          label: 'Defaulters & Close',
+          label: 'Defaulters & Arrears',
           icon: AlertTriangle,
           badge: monthDefaulters.length > 0 ? monthDefaulters.length : undefined,
           permission: () => hasPermission('defaulters.view') || hasPermission('fees.view'),
+        },
+        {
+          id: 'monthEnd',
+          label: 'Month End Wizard',
+          icon: CalendarCheck,
+          permission: () =>
+            hasPermission('defaulters.manage') ||
+            hasPermission('defaulters.view') ||
+            hasPermission('fees.view') ||
+            hasPermission('settings.manage'),
+        },
+        {
+          id: 'policies',
+          label: 'Financial Policies',
+          icon: Sliders,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('fees.manage') ||
+            hasPermission('fees.view'),
         },
       ],
     },
@@ -203,17 +229,52 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
     },
     {
       id: 'system',
-      label: 'Administration',
+      label: 'Administration & Settings',
       items: [
         {
-          id: 'settings',
-          label: 'Settings',
-          icon: Settings,
+          id: 'profile',
+          label: 'Campus Profile',
+          icon: Building2,
+          permission: () => hasPermission('settings.view') || hasPermission('settings.manage'),
+        },
+        {
+          id: 'banks',
+          label: 'Bank Accounts',
+          icon: Landmark,
           permission: () =>
             hasPermission('settings.view') ||
             hasPermission('settings.manage') ||
+            hasPermission('fees.manage'),
+        },
+        {
+          id: 'users',
+          label: 'Users & Permissions',
+          icon: UserCheck,
+          permission: () =>
+            currentUser?.role === 'Admin' ||
             hasPermission('users.manage') ||
-            hasPermission('system.cleanup'),
+            hasPermission('settings.manage'),
+        },
+        {
+          id: 'appearance',
+          label: 'Appearance & Theme',
+          icon: Palette,
+          permission: () => hasPermission('settings.view') || hasPermission('settings.manage'),
+        },
+        {
+          id: 'database',
+          label: 'Database & Backups',
+          icon: Database,
+          permission: () =>
+            currentUser?.role === 'Admin' ||
+            hasPermission('database.manage') ||
+            hasPermission('settings.manage'),
+        },
+        {
+          id: 'cleanup',
+          label: 'Data Maintenance',
+          icon: Wrench,
+          permission: () => currentUser?.role === 'Admin' || hasPermission('system.cleanup'),
         },
       ],
     },
@@ -424,7 +485,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                 <div className="space-y-1">
                   {section.items.map((item) => {
                     const Icon = item.icon;
-                    const isActive = activeTab === item.id;
+                    const isActive = activeTab === item.id || (activeTab === 'settings' && item.id === 'profile');
 
                     return (
                       <button

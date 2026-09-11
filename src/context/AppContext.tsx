@@ -371,7 +371,6 @@ interface AppContextType {
   isMonthLocked: (month: string) => boolean;
 
   // System Utility & Granular Cleanup
-  resetToDemoData: () => void;
   cleanupDatabaseTables: (options: DataCleanupOptions) => CleanupResult;
 
   // Audit Trail & Activity Logs
@@ -433,6 +432,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [invites, setInvites] = useState<OperatorInvite[]>([]);
 
+  // Anonymous / unauthenticated guest placeholder for pre-login state
+  const ANONYMOUS_USER: User = {
+    id: 'usr-guest',
+    username: 'guest',
+    name: 'Guest User',
+    role: 'Viewer',
+    permissions: [],
+  };
+
   // Stored Users in Database / Local Storage
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_users`);
@@ -440,18 +448,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const parsed: User[] = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Reconcile seeded users ensuring they have valid hashes
-          return parsed.map((u) => {
-            if (!u.password || !u.password.startsWith('pbkdf2$')) {
-              const seeded = SEEDED_USERS.find(
-                (s) => s.id === u.id || s.username.toLowerCase() === u.username?.toLowerCase()
-              );
-              if (seeded) {
-                return { ...u, password: seeded.password };
-              }
-            }
-            return u;
-          });
+          // Filter out legacy demo mock users if any
+          const realUsers = parsed.filter(
+            (u) =>
+              !(
+                (u.id === 'usr-admin' && u.username === 'admin' && (u.email === 'admin@school.edu' || u.email?.includes('skooler'))) ||
+                (u.id === 'usr-accountant' && u.username === 'accountant') ||
+                (u.id === 'usr-viewer' && u.username === 'viewer')
+              )
+          );
+          if (realUsers.length > 0) {
+            return realUsers;
+          }
         }
       } catch {
         // ignore JSON parse errors and fallback
@@ -463,7 +471,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
-    return !!session;
+    if (!session) return false;
+    try {
+      const parsed = JSON.parse(session);
+      // Invalidate legacy demo account sessions
+      if (
+        (parsed?.id === 'usr-admin' && parsed?.username === 'admin' && parsed?.email === 'admin@school.edu') ||
+        (parsed?.id === 'usr-accountant' && parsed?.username === 'accountant') ||
+        (parsed?.id === 'usr-viewer' && parsed?.username === 'viewer')
+      ) {
+        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+        return false;
+      }
+      return !!parsed?.id;
+    } catch {
+      return false;
+    }
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
@@ -471,8 +494,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (session) {
       try {
         const parsed = JSON.parse(session);
+        if (
+          (parsed?.id === 'usr-admin' && parsed?.username === 'admin' && parsed?.email === 'admin@school.edu') ||
+          (parsed?.id === 'usr-accountant' && parsed?.username === 'accountant') ||
+          (parsed?.id === 'usr-viewer' && parsed?.username === 'viewer')
+        ) {
+          return ANONYMOUS_USER;
+        }
         const savedUsers = localStorage.getItem(`${STORAGE_KEY}_users`);
-        const userList: User[] = savedUsers ? JSON.parse(savedUsers) : SEEDED_USERS;
+        const userList: User[] = savedUsers ? JSON.parse(savedUsers) : [];
         const found = userList.find((u) => u.id === parsed.id || u.username.toLowerCase() === parsed.username?.toLowerCase());
         if (found) return found;
         return parsed;
@@ -480,7 +510,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // ignore
       }
     }
-    return SEEDED_USERS[0]; // Default fallback
+    return ANONYMOUS_USER;
   });
 
   const [activeMonth, setActiveMonth] = useState<string>(getCurrentMonthString());
@@ -869,12 +899,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [institute, setInstitute] = useState<InstituteProfile>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_institute`);
-    return saved ? JSON.parse(saved) : INITIAL_INSTITUTE;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed?.name === 'Skooler Model Academy' || parsed?.name === 'Model Educational Academy') {
+          return INITIAL_INSTITUTE;
+        }
+        return parsed;
+      } catch {
+        // ignore
+      }
+    }
+    return INITIAL_INSTITUTE;
   });
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_banks`);
-    return saved ? JSON.parse(saved) : INITIAL_BANK_ACCOUNTS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const isLegacyDemo = parsed.some(
+            (b) => b.id === 'bank-1' && (b.accountNumber === '0102-0103984758' || b.bankName?.includes('Meezan') || b.bankName?.includes('Commercial Bank Limited'))
+          );
+          if (!isLegacyDemo) {
+            return parsed;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return INITIAL_BANK_ACCOUNTS;
   });
 
   // Sidebar state
@@ -1264,12 +1320,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ]);
 
   useEffect(() => {
-    if (!users.some((u) => u.id === currentUser.id)) {
-      const fallback = users.find((u) => u.role === 'Admin') || SEEDED_USERS[0];
-      setCurrentUser(fallback);
-      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(fallback));
+    if (isAuthenticated && users.length > 0 && !users.some((u) => u.id === currentUser.id)) {
+      const fallback = users.find((u) => u.role === 'Admin') || users[0];
+      if (fallback) {
+        setCurrentUser(fallback);
+        localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(fallback));
+      }
     }
-  }, [users, currentUser]);
+  }, [users, currentUser, isAuthenticated]);
 
   // Multi-Tenant Institutional Workspaces & Operator Auth
   const registerInstitution = async (params: {
@@ -1527,36 +1585,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     let passwordValid = await verifyPassword(password, matchedUser.password);
     
-    // Resilient fallback for seeded demo accounts or legacy unhashed passwords
-    if (!passwordValid) {
-      const isSeededDemoAccount =
-        matchedUser.id === 'usr-admin' ||
-        matchedUser.username.toLowerCase() === 'admin' ||
-        matchedUser.id === 'usr-accountant' ||
-        matchedUser.username.toLowerCase() === 'accountant' ||
-        matchedUser.id === 'usr-viewer' ||
-        matchedUser.username.toLowerCase() === 'viewer';
-
-      if (isSeededDemoAccount && (password === 'Demo@1234' || password === 'admin' || password === 'admin123')) {
-        passwordValid = true;
-        try {
-          const newHash = await hashPassword(password === 'Demo@1234' ? 'Demo@1234' : password);
-          const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
-          setUsers(updatedUsers);
-          localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(updatedUsers));
-        } catch {
-          // ignore error
-        }
-      } else if (matchedUser.password && !matchedUser.password.startsWith('pbkdf2$') && matchedUser.password === password) {
-        passwordValid = true;
-        try {
-          const newHash = await hashPassword(password);
-          const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
-          setUsers(updatedUsers);
-          localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(updatedUsers));
-        } catch {
-          // ignore error
-        }
+    // Resilient fallback for legacy unhashed passwords that automatically upgrades to salted PBKDF2 hash
+    if (!passwordValid && matchedUser.password && !matchedUser.password.startsWith('pbkdf2$') && matchedUser.password === password) {
+      passwordValid = true;
+      try {
+        const newHash = await hashPassword(password);
+        const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
+        setUsers(updatedUsers);
+        localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(updatedUsers));
+      } catch {
+        // ignore error
       }
     }
 
@@ -4777,27 +4815,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setBankAccounts((prev) => prev.map((b) => ({ ...b, isDefault: b.id === id })));
   };
 
-  // Reset Demo Data
-  const resetToDemoData = () => {
-    localStorage.clear();
-    const synced = reconcileFamiliesAndStudents(INITIAL_FAMILIES, INITIAL_STUDENTS);
-    setClasses(INITIAL_CLASSES);
-    setStudents(synced.students);
-    setFamilies(synced.families);
-    setBuses(INITIAL_BUSES);
-    setStops(INITIAL_STOPS);
-    setTemplates(INITIAL_GLOBAL_TEMPLATES);
-    setVouchers(INITIAL_VOUCHERS);
-    setCollections(INITIAL_COLLECTIONS);
-    setTransactions(INITIAL_TRANSACTIONS);
-    setInstitute(INITIAL_INSTITUTE);
-    setBankAccounts(INITIAL_BANK_ACCOUNTS);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setStudentAccountHistory(INITIAL_STUDENT_ACCOUNT_HISTORY);
-    setLockedMonths([]);
-    setActiveMonth(getCurrentMonthString());
-  };
-
   // Selection-based database cleanup with cascading integrity awareness
   const cleanupDatabaseTables = (options: DataCleanupOptions): CleanupResult => {
     const clearedTables: string[] = [];
@@ -5091,7 +5108,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lockMonth,
         unlockMonth,
         isMonthLocked,
-        resetToDemoData,
         cleanupDatabaseTables,
         auditLogs,
         logAuditEvent,

@@ -205,7 +205,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 if (onOpenMonthEndWizard) {
                   onOpenMonthEndWizard(activeMonth);
                 } else {
-                  setActiveTab('settings');
+                  setActiveTab('monthEnd');
                 }
               }}
               title="Open Month End Reconciliation & Defaulter Wizard"
@@ -264,7 +264,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 if (onOpenMonthEndWizard) {
                   onOpenMonthEndWizard(prevMonthStr);
                 } else {
-                  setActiveTab('settings');
+                  setActiveTab('monthEnd');
                 }
               }}
               className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-xl transition shadow-xs cursor-pointer whitespace-nowrap flex items-center gap-1.5"

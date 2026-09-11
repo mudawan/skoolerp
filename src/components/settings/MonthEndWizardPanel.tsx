@@ -1119,7 +1119,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                   rows={2}
                   value={closureNotes}
                   onChange={(e) => setClosureNotes(e.target.value)}
-                  placeholder="e.g., Reconciled against cashier drawer and Meezan bank statement. Reconciled by Bursar."
+                  placeholder="e.g., Reconciled against cashier drawer and bank statement. Reconciled by Bursar."
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>

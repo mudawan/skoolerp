@@ -418,9 +418,10 @@ class DatabaseService {
           created_by VARCHAR(64),
           last_login_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          CONSTRAINT uq_institution_username UNIQUE (institution_id, LOWER(username))
+          updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_institution_username ON users (institution_id, LOWER(username));
 
         CREATE TABLE IF NOT EXISTS operator_invites (
           id VARCHAR(64) PRIMARY KEY,

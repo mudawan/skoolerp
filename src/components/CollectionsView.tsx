@@ -778,7 +778,7 @@ export const CollectionsView: React.FC = () => {
           sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankTransfer,PK-BANK-${1001 + i}\n`;
         });
       } else {
-        sampleContent += `REG-1001,8000,500,${todayStr},BankTransfer,PK-MZB-9811\nREG-1002,3200,0,${todayStr},Cash,DESK-402\nREG-1003,4500,0,${todayStr},Online,EP-9021\n`;
+        sampleContent += `REG-1001,8000,500,${todayStr},BankTransfer,TXN-9811\nREG-1002,3200,0,${todayStr},Cash,DESK-402\nREG-1003,4500,0,${todayStr},Online,ONL-9021\n`;
       }
     }
 
@@ -1935,7 +1935,7 @@ export const CollectionsView: React.FC = () => {
                           <input
                             type="text"
                             disabled={!selectedVoucher}
-                            placeholder="e.g. PK-MZB-981120"
+                            placeholder="e.g. TXN-981120"
                             value={directRef}
                             onChange={(e) => setDirectRef(e.target.value)}
                             className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100"

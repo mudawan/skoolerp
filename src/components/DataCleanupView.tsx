@@ -20,7 +20,6 @@ import {
   Receipt,
   RotateCcw,
   ShieldAlert,
-  Sparkles,
   Trash2,
   Users,
   X,
@@ -71,13 +70,11 @@ export const DataCleanupView: React.FC = () => {
     currentUser,
     hasPermission,
     cleanupDatabaseTables,
-    resetToDemoData,
     showToast,
   } = useApp();
 
   const [selectedTables, setSelectedTables] = useState<TableSelectionState>(INITIAL_SELECTION);
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
-  const [showDemoResetModal, setShowDemoResetModal] = useState<boolean>(false);
   const [hasAcknowledgedRisk, setHasAcknowledgedRisk] = useState<boolean>(false);
   const [confirmationPhrase, setConfirmationPhrase] = useState<string>('');
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -87,10 +84,8 @@ export const DataCleanupView: React.FC = () => {
       setShowConfirmModal(false);
       setHasAcknowledgedRisk(false);
       setConfirmationPhrase('');
-    } else if (showDemoResetModal) {
-      setShowDemoResetModal(false);
     }
-  }, (showConfirmModal || showDemoResetModal) && !isExecuting, 1);
+  }, showConfirmModal && !isExecuting, 1);
 
   // Security Gate: Check if user has admin privileges
   const isAdmin = currentUser?.role === 'Admin' || hasPermission('settings.manage');
@@ -380,13 +375,6 @@ export const DataCleanupView: React.FC = () => {
     }
   };
 
-  // Restore Demo Data
-  const handleConfirmRestoreDemo = () => {
-    resetToDemoData();
-    showToast('Database restored to clean default seed demo data.', 'success', 5000);
-    setShowDemoResetModal(false);
-  };
-
   // Security Check Guard
   if (!isAdmin) {
     return (
@@ -422,15 +410,6 @@ export const DataCleanupView: React.FC = () => {
               Select specific collections below to execute a targeted reset with full cascading integrity awareness.
             </p>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowDemoResetModal(true)}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-xl text-xs font-bold transition cursor-pointer self-start md:self-auto shrink-0 shadow-xs"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            Restore Demo Data Seed
-          </button>
         </div>
       </div>
 
@@ -772,66 +751,6 @@ export const DataCleanupView: React.FC = () => {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 {isExecuting ? 'Purging...' : `Execute Reset (${selectedCount})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Restore Demo Data Modal (Compact) */}
-      {showDemoResetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
-            <div className="px-3.5 py-2.5 border-b border-teal-100 flex items-center justify-between bg-teal-50/70">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center font-bold shrink-0">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-tight">Restore Sample Demo Data?</h3>
-                  <p className="text-[10px] text-slate-500 leading-tight">Seed Database Initialization</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                id="btn-close-demo-modal"
-                onClick={() => setShowDemoResetModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-teal-100/50 transition cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-3.5 space-y-2.5 text-xs text-slate-600">
-              <p className="text-[11px]">
-                This will re-initialize your system with complete sample demo data:
-              </p>
-              <ul className="list-disc pl-4 space-y-0.5 text-slate-700 font-medium text-[11px]">
-                <li>Sample student roster with multiple classes</li>
-                <li>Families, guardian links, and transport fleet</li>
-                <li>Standard 9-item fee particulars roster</li>
-                <li>Pre-generated demo vouchers and collections</li>
-              </ul>
-              <div className="p-2 bg-amber-50 rounded-lg border border-amber-200/80 text-amber-900 text-[10px] font-medium leading-relaxed">
-                Note: All existing custom data will be replaced by the seed template.
-              </div>
-            </div>
-            <div className="px-3.5 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                id="btn-demo-cancel"
-                onClick={() => setShowDemoResetModal(false)}
-                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200/80 rounded-lg transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                id="btn-demo-restore"
-                onClick={handleConfirmRestoreDemo}
-                className="px-3 py-1 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-2xs transition flex items-center gap-1.5 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Restore Sample Data
               </button>
             </div>
           </div>
