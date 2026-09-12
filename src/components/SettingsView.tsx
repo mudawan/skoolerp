@@ -60,6 +60,7 @@ import {
   GraduationCap,
   GripVertical,
   KeyRound,
+  Landmark,
   ListFilter,
   MapPin,
   Palette,
@@ -74,7 +75,9 @@ import {
   Server,
   Trash2,
   Upload,
+  UserCheck,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
 
@@ -1850,8 +1853,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     htmlId: string;
     name: string;
     shortName: string;
+    title: string;
     description: string;
     icon: React.ElementType;
+    iconColor?: string;
     badge?: string | number;
     badgeVariant?: 'teal' | 'indigo' | 'rose' | 'amber';
     hasDot?: boolean;
@@ -1864,8 +1869,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-policies',
       name: 'Voucher Policies',
       shortName: 'Policies',
-      description: 'Due dates, late fees, copy orders & rounding up',
+      title: 'Voucher Billing Policies',
+      description: 'Configure voucher issue dates, payment due dates, copy layout orders, late surcharges, and fee rounding rules.',
       icon: Sliders,
+      iconColor: 'text-teal-600',
       hasDot: hasPolicyChanges,
       badge: roundingEnabled && roundingMultiple > 1 ? `Rs. ${roundingMultiple}` : undefined,
       badgeVariant: 'indigo',
@@ -1875,8 +1882,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-templates',
       name: 'Fee Templates',
       shortName: 'Templates',
-      description: 'Global fee rates, class & student overrides',
+      title: 'Fee Templates & Multi-Tier Pricing',
+      description: 'Configure default fee structures, class-wise rates, and individual student concessions.',
       icon: FileSpreadsheet,
+      iconColor: 'text-teal-600',
       badge: totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active` : undefined,
       badgeVariant: 'teal',
     },
@@ -1888,16 +1897,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-profile',
       name: 'Campus Profile',
       shortName: 'Profile',
-      description: 'Campus name, official logo & contact details',
+      title: 'Campus Profile & Institution Identity',
+      description: 'Configure campus name, registration details, official crest/logo, and voucher contact details.',
       icon: Building2,
+      iconColor: 'text-teal-600',
     },
     {
       id: 'banks',
       htmlId: 'settings-tab-banks',
       name: 'Bank Accounts',
       shortName: 'Banks',
-      description: 'Deposit bank instructions printed on vouchers',
-      icon: CreditCard,
+      title: 'Bank Accounts & Deposit Instructions',
+      description: 'Manage institutional collection accounts, bank branches, and deposit instructions printed on vouchers.',
+      icon: Landmark,
+      iconColor: 'text-teal-600',
       badge: bankAccounts.length > 0 ? `${bankAccounts.length}` : undefined,
       badgeVariant: 'teal',
     },
@@ -1906,8 +1919,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-users',
       name: 'Users & Permissions',
       shortName: 'Users',
-      description: 'Operator accounts, login access & granular RBAC',
-      icon: Users,
+      title: 'User Accounts & Role Permissions',
+      description: 'Manage staff operator accounts, system access credentials, and granular role-based permissions.',
+      icon: UserCheck,
+      iconColor: 'text-teal-600',
       badge: users.length > 0 ? `${users.length}` : undefined,
       badgeVariant: 'teal',
       hidden: !(currentUser?.role === 'Admin' || hasPermission('users.manage') || hasPermission('settings.manage')),
@@ -1917,16 +1932,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-appearance',
       name: 'Appearance & Theme',
       shortName: 'Theme',
-      description: 'Color themes, sidebar mode & visual styling',
+      title: 'Appearance & Interface Themes',
+      description: 'Customize primary accent color, sidebar navigation styles, and visual display preferences.',
       icon: Palette,
+      iconColor: 'text-teal-600',
     },
     {
       id: 'database',
       htmlId: 'settings-tab-database',
       name: 'Database & Backups',
       shortName: 'Database',
-      description: 'Central storage status, live sync & backup disaster recovery',
+      title: 'Database & Disaster Recovery Backups',
+      description: 'Central database connectivity, live cloud synchronization, and full snapshot backup & restore.',
       icon: Server,
+      iconColor: 'text-teal-600',
       badge: 'Live Sync',
       badgeVariant: 'teal',
     },
@@ -1935,8 +1954,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       htmlId: 'settings-tab-cleanup',
       name: 'Data Maintenance',
       shortName: 'Maintenance',
-      description: 'Selective table purge, test data reset & cleanup',
-      icon: Database,
+      title: 'Data Maintenance & System Cleanup',
+      description: 'Selective database record cleanup, batch sample data reset, and administrative maintenance utilities.',
+      icon: Wrench,
+      iconColor: 'text-rose-600',
       badge: 'High Risk',
       badgeVariant: 'rose',
       hidden: !(currentUser?.role === 'Admin' || hasPermission('system.cleanup') || hasPermission('settings.manage')),
@@ -1947,92 +1968,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const currentItem = navItems.find((i) => i.id === activeSubTab) || navItems[0];
   const CurrentIcon = currentItem.icon;
 
+  const getHeaderBadge = () => {
+    switch (activeSubTab) {
+      case 'profile':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">
+            <Building2 className="w-3.5 h-3.5 text-teal-600" />
+            {institute.name || 'Campus Profile'}
+          </span>
+        );
+      case 'banks':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">
+            <Landmark className="w-3.5 h-3.5 text-teal-600" />
+            {bankAccounts.length} Registered {bankAccounts.length === 1 ? 'Account' : 'Accounts'}
+          </span>
+        );
+      case 'users':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">
+            <UserCheck className="w-3.5 h-3.5 text-teal-600" />
+            {users.length} Active {users.length === 1 ? 'User' : 'Users'}
+          </span>
+        );
+      case 'appearance':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 capitalize">
+            <Palette className="w-3.5 h-3.5 text-teal-600" />
+            {themeConfig.themeColor} Theme • {themeConfig.sidebarTheme} Sidebar
+          </span>
+        );
+      case 'database':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200/80">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            Live Sync Connected
+          </span>
+        );
+      case 'cleanup':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-200/80">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+            Administrative Safety Zone
+          </span>
+        );
+      case 'policies':
+        return (
+          <div className="flex items-center gap-2">
+            {hasPolicyChanges && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Unsaved Policy Changes
+              </span>
+            )}
+            {roundingEnabled && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200/80">
+                Rounding (Rs. {roundingMultiple})
+              </span>
+            )}
+          </div>
+        );
+      case 'templates':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200/80">
+            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+            {totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active Overrides` : 'Default Rates'}
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Flattened Compact Navigation Header */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-3.5 sm:p-4 space-y-3">
-        {/* Identity & Current Section Breadcrumb */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/90 flex items-center justify-center text-teal-700 shadow-2xs shrink-0">
-              <CurrentIcon className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
-                  {viewMode === 'policies' ? 'Financial Policies' : 'Administration & Settings'}
-                </h2>
-                <span className="text-slate-300">/</span>
-                <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
-                  {currentItem.name}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 hidden sm:block truncate">
-                {currentItem.description}
-              </p>
-            </div>
-          </div>
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <CurrentIcon className={`w-6 h-6 ${currentItem.iconColor || 'text-teal-600'} shrink-0`} />
+            {currentItem.title}
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">
+            {currentItem.description}
+          </p>
         </div>
 
-        {/* Flat Sub-tabs */}
-        <div className="flex items-center justify-between gap-3 overflow-x-auto pt-0.5">
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 max-w-full">
-            {navItems.map((item) => {
-              const isItemActive = activeSubTab === item.id;
-              const ItemIcon = item.icon;
-
-              let activeClasses = 'bg-teal-600 text-white shadow-xs';
-              if (item.id === 'cleanup') {
-                activeClasses = 'bg-rose-600 text-white shadow-xs';
-              }
-
-              return (
-                <button
-                  key={item.id}
-                  id={item.htmlId}
-                  type="button"
-                  onClick={() => {
-                    setActiveSubTab(item.id);
-                    onNavigateToTab?.(item.id as ActiveTab);
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer ${
-                    isItemActive
-                      ? activeClasses
-                      : 'bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/70'
-                  }`}
-                >
-                  <ItemIcon className={`w-3.5 h-3.5 ${isItemActive ? 'text-white' : 'text-slate-500'}`} />
-                  <span>{item.name}</span>
-                  {item.hasDot && (
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${isItemActive ? 'bg-amber-300' : 'bg-amber-500 animate-pulse'}`} />
-                  )}
-                  {item.badge && (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
-                        isItemActive
-                          ? 'bg-white/20 text-white'
-                          : item.badgeVariant === 'rose'
-                          ? 'bg-rose-100 text-rose-800'
-                          : item.badgeVariant === 'indigo'
-                          ? 'bg-indigo-100 text-indigo-800'
-                          : item.badgeVariant === 'teal'
-                          ? 'bg-teal-100 text-teal-800'
-                          : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="hidden lg:flex items-center gap-2 text-xs text-slate-400 shrink-0">
-            <span className="text-[11px] font-medium truncate max-w-xs">
-              {currentItem.description}
-            </span>
-          </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {getHeaderBadge()}
         </div>
       </div>
 

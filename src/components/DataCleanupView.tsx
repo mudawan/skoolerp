@@ -392,24 +392,13 @@ export const DataCleanupView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-rose-950 via-slate-900 to-slate-950 p-6 rounded-2xl text-white shadow-md border border-rose-900/40 relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-80 h-full bg-rose-600/10 blur-3xl pointer-events-none" />
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5 max-w-2xl">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-300 text-[11px] font-bold">
-              <ShieldAlert className="w-3.5 h-3.5" />
-              Administrative Data Maintenance Utility
-            </div>
-            <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              <Database className="w-5 h-5 text-rose-400" />
-              Selection-Based Database Reset & Table Purge
-            </h2>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Quickly reset or purge individual data tables for testing, staging, or academic year renewal.
-              Select specific collections below to execute a targeted reset with full cascading integrity awareness.
-            </p>
-          </div>
+      {/* Informational Advisory Banner */}
+      <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="text-xs text-amber-900 leading-relaxed">
+          <span className="font-bold">Targeted Table Reset: </span>
+          Select specific data collections below to execute a targeted table purge for staging, testing, or academic renewal.
+          All purge operations evaluate cascading referential integrity and maintain audit accountability.
         </div>
       </div>
 
