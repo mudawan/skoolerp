@@ -381,7 +381,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-            {hasPermission('manage_students') && (
+            {hasPermission('students.manage') && (
               <button
                 type="button"
                 id="btn-open-change-status-modal"

@@ -54,10 +54,15 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
   const [isCreatingInvite, setIsCreatingInvite] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
+  // Deliberately does NOT check hasPermission('settings.manage') — that is
+  // a distinct, lower-stakes permission and must never be treated as
+  // equivalent to user-management access (this was the exact privilege
+  // escalation the settings.manage -> users.manage alias caused, and
+  // removing the alias from isPermissionAllowed() alone isn't enough if a
+  // component re-implements the same shortcut locally).
   const canManageUsers =
     currentUser?.role === 'Admin' ||
-    hasPermission('users.manage') ||
-    hasPermission('settings.manage');
+    hasPermission('users.manage');
 
   const activeSchoolName = currentInstitution?.name || institute.name || 'School Workspace';
   const activeSchoolCode = currentInstitution?.code || institute.code || 'SYS';
@@ -572,7 +577,7 @@ To activate your account:
                   </label>
                   <input
                     type="text"
-                    placeholder="Leave blank to auto-generate (e.g. INV-123456)"
+                    placeholder="Leave blank to auto-generate (e.g. INV-7K4QF-M2XHD)"
                     value={customInviteCode}
                     onChange={(e) => setCustomInviteCode(e.target.value.toUpperCase())}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase font-mono"

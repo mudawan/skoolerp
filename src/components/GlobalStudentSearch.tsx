@@ -555,7 +555,7 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
           onClose={() => setProfileStudent(null)}
           onEdit={(st) => {
             setProfileStudent(null);
-            if (hasPermission('students.edit')) {
+            if (hasPermission('students.manage')) {
               setEditingStudent(st);
             } else {
               showToast('You do not have permission to edit students.', 'warning');

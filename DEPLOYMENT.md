@@ -12,21 +12,26 @@ Requirements: Docker and Docker Compose installed.
 
 In this setup, `REQUIRE_POSTGRES=true` is enabled by default with PostgreSQL 16 Alpine and an isolated data volume.
 
-1. **Start the application and PostgreSQL database**:
+1. **Create your environment file and set a database password**:
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `.env` and set `POSTGRES_PASSWORD` to a strong, unique value. This is required — `docker compose up` will refuse to start the `app` and `db` services if it's left blank.
+2. **Start the application and PostgreSQL database**:
    ```bash
    docker compose up -d
    ```
-2. **Verify running containers**:
+3. **Verify running containers**:
    ```bash
    docker compose ps
    ```
-3. **Verify Database Health & Connection Pool**:
+4. **Verify Database Health & Connection Pool**:
    ```bash
    curl -s http://localhost:3000/api/health | jq .
    ```
    You will receive the PostgreSQL engine confirmation, latency probe (`database.latencyMs`), and connection pool metrics (`database.pool`).
 
-4. **Access the application**:
+5. **Access the application**:
    Open `http://localhost:3000` (or `http://YOUR_SERVER_IP:3000`).
 
 ### Docker Management Commands:
@@ -82,6 +87,14 @@ ExecStart=/usr/bin/npm start
 Restart=on-failure
 Environment=PORT=3000
 Environment=NODE_ENV=production
+# This setup puts Nginx in front of the app (see Step 4 below), so set
+# this to true — it tells Express to read the real client IP from the
+# X-Forwarded-For header Nginx sets, rather than seeing every request as
+# coming from Nginx's own local address. Without it, IP-based rate
+# limiting effectively can't distinguish between users. Only set this
+# when a reverse proxy you control is actually in front of the app —
+# never on a directly internet-facing deployment.
+Environment=TRUST_PROXY=true
 # Uncomment if using external PostgreSQL:
 # Environment=DATABASE_URL="postgres://postgres:password@localhost:5432/school_db"
 
@@ -127,8 +140,12 @@ Backups are saved to `./backups/` with automated 30-day rotation.
 
 ---
 
-## Default Login Credentials
+## First-Time Login / Account Setup
 
-- **Role**: Accountant / Fee Collection Officer
-- **Username**: `accountant`
-- **Password**: `admin123`
+This is a production release with **no seeded demo accounts** — there is no default username/password. On first run:
+
+1. Open `http://localhost:3000` (or your server's address) and choose **Create Institution / Register**.
+2. This calls `POST /api/auth/register-institution`, which creates your institution and its first **Admin** account in one step — you set the username and password at that point.
+3. Once logged in as Admin, invite additional operators (Accountant, Viewer, etc.) from **Settings → Users & Permissions**. Each invite generates a one-time code that the invited person uses at the **Join Institution** screen to set up their own account.
+
+There is no way to log in before completing step 1 — attempting a login before any institution has been registered will correctly return "User not found."

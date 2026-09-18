@@ -204,7 +204,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           permission: () =>
             hasPermission('settings.view') ||
             hasPermission('settings.manage') ||
-            hasPermission('fees.manage') ||
+            hasPermission('fees.edit') ||
             hasPermission('fees.view'),
         },
       ],
@@ -244,16 +244,17 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           permission: () =>
             hasPermission('settings.view') ||
             hasPermission('settings.manage') ||
-            hasPermission('fees.manage'),
+            hasPermission('fees.edit'),
         },
         {
           id: 'users',
           label: 'Users & Permissions',
           icon: UserCheck,
+          // Deliberately does NOT accept 'settings.manage' — see App.tsx's
+          // matching route guard for why.
           permission: () =>
             currentUser?.role === 'Admin' ||
-            hasPermission('users.manage') ||
-            hasPermission('settings.manage'),
+            hasPermission('users.manage'),
         },
         {
           id: 'appearance',
@@ -265,10 +266,11 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           id: 'database',
           label: 'Database & Backups',
           icon: Database,
+          // Deliberately does NOT accept 'settings.manage' — backup/restore
+          // is gated by the distinct 'system.backup' permission.
           permission: () =>
             currentUser?.role === 'Admin' ||
-            hasPermission('database.manage') ||
-            hasPermission('settings.manage'),
+            hasPermission('system.backup'),
         },
         {
           id: 'cleanup',

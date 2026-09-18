@@ -160,30 +160,36 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 /** Hashes a plaintext password into the storable `pbkdf2$iterations$salt$hash` format. */
 export const hashPassword = async (plainPassword: string): Promise<string> => {
-  const salt = new Uint8Array(SALT_BYTES);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(salt);
-  } else {
-    for (let i = 0; i < SALT_BYTES; i++) {
-      salt[i] = Math.floor(Math.random() * 256);
-    }
+  if (!globalThis.crypto?.getRandomValues) {
+    // Do not silently fall back to Math.random() for salt generation —
+    // Math.random() is not cryptographically secure and a predictable salt
+    // undermines the entire point of salting. Fail loudly instead; this
+    // should never actually happen on the supported Node.js runtime.
+    throw new Error(
+      'hashPassword: crypto.getRandomValues is not available in this environment. Refusing to generate a password salt insecurely.'
+    );
   }
+  const salt = new Uint8Array(SALT_BYTES);
+  globalThis.crypto.getRandomValues(salt);
   const derived = await pbkdf2Derive(plainPassword, salt, PBKDF2_ITERATIONS);
   return `${FORMAT_TAG}$${PBKDF2_ITERATIONS}$${bytesToHex(salt)}$${bytesToHex(derived)}`;
 };
 
-/** Verifies a plaintext password against a stored `pbkdf2$...` hash or legacy password. */
+/** Verifies a plaintext password against a stored `pbkdf2$...` hash. */
 export const verifyPassword = async (input: string, stored?: string): Promise<boolean> => {
   if (!stored) return false;
-  
-  // Direct legacy plaintext match (or demo match)
-  if (stored === input || (!stored.startsWith('pbkdf2$') && stored === input)) {
-    return true;
-  }
 
   const parts = stored.split('$');
   if (parts.length !== 4 || parts[0] !== FORMAT_TAG) {
-    return stored === input;
+    // Reject anything that isn't in our pbkdf2$iterations$salt$hash format.
+    // There is no legitimate write path in this codebase that stores
+    // anything else in password_hash (createUser/register-institution/
+    // updateUser all call hashPassword() first) — so a value in any other
+    // shape indicates corrupted/tampered data, not a "legacy" password.
+    // Previously this fell back to a raw `stored === input` comparison,
+    // which would have silently accepted a plaintext-stored password and
+    // done so with a non-constant-time comparison. Do not reintroduce that.
+    return false;
   }
 
   const [, iterationsStr, saltHex, hashHex] = parts;
@@ -192,7 +198,7 @@ export const verifyPassword = async (input: string, stored?: string): Promise<bo
   const salt = hexToBytes(saltHex);
   const expected = hexToBytes(hashHex);
   if (salt.length !== SALT_BYTES || expected.length === 0) return false;
-  
+
   try {
     const derived = await pbkdf2Derive(input, salt, iterations);
     return timingSafeEqual(derived, expected);

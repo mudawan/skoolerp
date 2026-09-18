@@ -86,7 +86,7 @@ function MainApp() {
         return (
           hasPermission('settings.view') ||
           hasPermission('settings.manage') ||
-          hasPermission('fees.manage') ||
+          hasPermission('fees.edit') ||
           hasPermission('fees.view')
         );
       case 'transport':
@@ -102,22 +102,19 @@ function MainApp() {
         return (
           hasPermission('settings.view') ||
           hasPermission('settings.manage') ||
-          hasPermission('fees.manage')
+          hasPermission('fees.edit')
         );
       case 'users':
-        return (
-          currentUser?.role === 'Admin' ||
-          hasPermission('users.manage') ||
-          hasPermission('settings.manage')
-        );
+        // Deliberately does NOT accept 'settings.manage' — that permission
+        // must never grant access to user/permission management (this was
+        // the exact settings.manage -> users.manage privilege escalation).
+        return currentUser?.role === 'Admin' || hasPermission('users.manage');
       case 'appearance':
         return hasPermission('settings.view') || hasPermission('settings.manage');
       case 'database':
-        return (
-          currentUser?.role === 'Admin' ||
-          hasPermission('database.manage') ||
-          hasPermission('settings.manage')
-        );
+        // Deliberately does NOT accept 'settings.manage' — backup/restore
+        // is a distinct, higher-risk capability gated by 'system.backup'.
+        return currentUser?.role === 'Admin' || hasPermission('system.backup');
       case 'cleanup':
         return currentUser?.role === 'Admin' || hasPermission('system.cleanup');
       default:

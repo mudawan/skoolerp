@@ -117,7 +117,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
       if (quickFilter === 'fines' && log.actionType !== 'fine_modification') return false;
       if (quickFilter === 'bulk' && log.actionType !== 'bulk_collection') return false;
       if (quickFilter === 'reversals' && log.actionType !== 'collection_reversal' && log.actionType !== 'carry_forward') return false;
-      if (quickFilter === 'security' && log.actionType !== 'operator_security' && log.actionType !== 'system_cleanup') return false;
+      if (quickFilter === 'security' && log.actionType !== 'operator_security' && log.actionType !== 'system_cleanup' && log.actionType !== 'system_restore') return false;
 
       // Dropdown filters
       if (selectedActionType !== 'all' && log.actionType !== selectedActionType) return false;
@@ -351,6 +351,12 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           icon: <Activity className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />,
           label: 'System Cleanup',
           badgeClass: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700',
+        };
+      case 'system_restore':
+        return {
+          icon: <RefreshCw className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />,
+          label: 'Database Restored From Backup',
+          badgeClass: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
         };
       default:
         return {
@@ -671,6 +677,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
               <option value="voucher_deletion">Voucher Deletion</option>
               <option value="operator_security">Operator Security</option>
               <option value="system_cleanup">System Cleanup</option>
+              <option value="system_restore">Database Restored From Backup</option>
             </select>
           </div>
 

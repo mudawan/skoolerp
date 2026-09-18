@@ -5,7 +5,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgres://postgres:postgrespassword@db:5432/school_db
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - copy .env.example to .env and set a strong value}@db:5432/${POSTGRES_DB:-school_db}
       - REQUIRE_POSTGRES=true
       - DB_POOL_MAX=20
       - DB_POOL_MIN=4
@@ -17,15 +17,21 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
-      POSTGRES_DB: school_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - copy .env.example to .env and set a strong value}
+      POSTGRES_DB: ${POSTGRES_DB:-school_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Postgres is intentionally NOT published to the host here. The `app`
+    # service reaches it over the internal compose network at db:5432, and
+    # that's all production needs. If you need direct psql access for local
+    # debugging, uncomment the line below — bind to loopback only
+    # (127.0.0.1), never 0.0.0.0, so it can't be reached from outside this
+    # machine:
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d school_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-school_db}"]
       interval: 5s
       timeout: 5s
       retries: 5

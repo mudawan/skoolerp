@@ -701,7 +701,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 <UserPlus className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
                 <div>
                   <strong className="text-white block">Connect to an Existing School</strong>
-                  Enter the <strong>Invite Code</strong> (e.g. <code>INV-849201</code>) issued by your administrator, or your institution's School Code.
+                  Enter the <strong>Invite Code</strong> (e.g. <code>INV-7K4QF-M2XHD</code>) issued by your administrator, or your institution's School Code.
                 </div>
               </div>
 
@@ -724,7 +724,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                     id="connect-code-input"
                     value={connectionCode}
                     onChange={(e) => setConnectionCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. INV-849201 or SCH-101"
+                    placeholder="e.g. INV-7K4QF-M2XHD or SCH-101"
                     required
                     autoFocus
                     className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase font-mono tracking-wider"

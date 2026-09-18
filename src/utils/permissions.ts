@@ -348,6 +348,15 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
     categoryLabel: 'Database Maintenance',
     riskLevel: 'high',
   },
+  {
+    id: 'system.backup',
+    code: 'system.backup',
+    name: 'Export & Restore Database Backups',
+    description: 'Download full institutional data backups and restore the database from a backup file.',
+    category: 'system',
+    categoryLabel: 'Database Maintenance',
+    riskLevel: 'high',
+  },
 ];
 
 export const ALL_PERMISSION_CODES = ALL_PERMISSIONS.map((p) => p.code);
@@ -511,6 +520,14 @@ export function isPermissionAllowed(
     return true;
   }
 
+  // NOTE: 'fees.manage' is not a currently assignable permission code (it
+  // does not appear in ALL_PERMISSION_CODES / the permission picker UI). It
+  // used to be referenced directly by several hasPermission() call sites,
+  // which have since been corrected to check 'fees.edit' directly. These two
+  // aliases are kept only for backward compatibility with any user record
+  // that may already have the literal string 'fees.manage' stored in its
+  // permissions array from before that fix — do not use 'fees.manage' in any
+  // new code.
   if (permission === 'fees.edit' && (userPerms.includes('fees.generate') || userPerms.includes('fees.manage'))) {
     return true;
   }
@@ -526,11 +543,8 @@ export function isPermissionAllowed(
     return true;
   }
 
+  // See 'fees.manage' backward-compatibility note above.
   if (permission === 'defaulters.manage' && (userPerms.includes('fees.generate') || userPerms.includes('fees.manage'))) {
-    return true;
-  }
-
-  if (permission === 'users.manage' && userPerms.includes('settings.manage')) {
     return true;
   }
 

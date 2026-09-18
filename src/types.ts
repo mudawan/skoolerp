@@ -50,7 +50,7 @@ export interface OperatorInvite {
   institutionId: string;
   institutionName?: string;
   institutionCode?: string;
-  inviteCode: string; // e.g. "INV-482103"
+  inviteCode: string; // e.g. "INV-7K4QF-M2XHD"
   fullName: string;
   assignedRole: UserRole;
   permissions?: string[];
@@ -347,6 +347,7 @@ export interface CleanupResult {
   success: boolean;
   clearedTables: string[];
   recordsClearedCount: number;
+  error?: string;
 }
 
 export interface PaymentReceiptData {
@@ -372,8 +373,13 @@ export type AuditActionType =
   | 'carry_forward'
   | 'month_closure'
   | 'student_discount'
+  | 'student_created'
+  | 'student_updated'
+  | 'student_deletion'
   | 'operator_security'
-  | 'system_cleanup';
+  | 'system_cleanup'
+  | 'system_restore'
+  | 'settings_change';
 
 export interface AuditLogEntry {
   id: string;

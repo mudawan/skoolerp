@@ -84,9 +84,15 @@ import {
   apiGetMe,
   apiCreateInvite,
   apiListInvites,
+  apiCreateUser,
+  apiUpdateUser,
+  apiDeleteUser,
   apiGenerateVouchers,
   apiReceiveCollection,
   apiCarryForwardVoucher,
+  apiVoucherBatchUpdate,
+  syncSimpleEntityCollectionNow,
+  subscribeSyncFailures,
 } from '../services/apiSync';
 
 export interface DownstreamConflict {
@@ -136,7 +142,7 @@ interface AppContextType {
   addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string; credentialsSummary?: { username: string; password?: string; institutionCode?: string; role: string } }>;
   updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   updateUserPermissions: (id: string, permissions: string[], role?: UserRole) => Promise<{ success: boolean; error?: string }>;
-  deleteUser: (id: string) => { success: boolean; error?: string };
+  deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Active Month
   activeMonth: string;
@@ -371,7 +377,7 @@ interface AppContextType {
   isMonthLocked: (month: string) => boolean;
 
   // System Utility & Granular Cleanup
-  cleanupDatabaseTables: (options: DataCleanupOptions) => CleanupResult;
+  cleanupDatabaseTables: (options: DataCleanupOptions) => Promise<CleanupResult>;
 
   // Audit Trail & Activity Logs
   auditLogs: AuditLogEntry[];
@@ -406,6 +412,21 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 const STORAGE_KEY = 'skooler_app_data_v1';
+
+// Friendly display names for the background sync-failure toast (see the
+// subscribeSyncFailures effect below), keyed by the same collection names
+// used in SIMPLE_ENTITY_ENDPOINTS in apiSync.ts.
+const SYNC_ENTITY_LABELS: Record<string, string> = {
+  students: 'Students',
+  classes: 'Classes & Sections',
+  families: 'Families & Guardians',
+  buses: 'Buses Fleet Directory',
+  stops: 'Bus Stops & Fare Rates',
+  transportAssignments: 'Student Transport Assignments',
+  templates: 'Fee Particular Templates',
+  bankAccounts: 'Bank Accounts',
+  lockedMonths: 'Month Lock/Unlock',
+};
 
 /**
  * Reconciles and guarantees strict 1:1 bidirectional consistency between
@@ -1642,7 +1663,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (plainPassword.length < MIN_PASSWORD_LENGTH) {
       return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
     }
-    const hashedPassword = await hashPassword(plainPassword);
 
     const defaultRolePerms = ROLE_PRESET_PERMISSIONS[userData.role] || ROLE_PRESET_PERMISSIONS.Viewer;
     const finalPermissions =
@@ -1650,23 +1670,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? userData.permissions
         : defaultRolePerms;
 
-    const newUser: User = {
-      ...userData,
-      id: `usr-${Date.now()}`,
+    // Send the plain password to the server — it hashes it itself (same as
+    // login/registration). Hashing it here too would double-hash it against
+    // what the server's own hashPassword() produces.
+    const res = await apiCreateUser({
       username: userData.username.trim(),
       name: userData.name.trim() || userData.username.trim(),
-      password: hashedPassword,
+      email: userData.email,
+      password: plainPassword,
+      role: userData.role,
       permissions: finalPermissions,
-    };
+    });
 
-    setUsers((prev) => [...prev, newUser]);
+    if (!res.success || !res.user) {
+      return { success: false, error: res.error || 'Failed to create user.' };
+    }
+
+    // The server is the source of truth for the created record — use its
+    // response (real id, normalized username, etc.) rather than fabricating
+    // a local-only object.
+    setUsers((prev) => [...prev, res.user!]);
     return {
       success: true,
       credentialsSummary: {
-        username: newUser.username,
+        username: res.user.username,
         password: plainPassword,
         institutionCode: currentInstitution?.code || institute?.code || '',
-        role: newUser.role,
+        role: res.user.role,
       },
     };
   };
@@ -1679,18 +1709,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (exists) return { success: false, error: 'Username is already taken by another user.' };
     }
 
-    let finalUpdates: Partial<User> = { ...updates };
     if (updates.password !== undefined) {
       const plainPassword = updates.password.trim();
       if (plainPassword.length < MIN_PASSWORD_LENGTH) {
         return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
       }
-      finalUpdates.password = await hashPassword(plainPassword);
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...finalUpdates } : u)));
+    // Plain password (if any) goes straight to the server — see addUser's
+    // comment on why it must not be hashed client-side first.
+    const res = await apiUpdateUser(id, {
+      username: updates.username?.trim().toLowerCase(),
+      name: updates.name,
+      email: updates.email,
+      role: updates.role,
+      permissions: updates.permissions,
+      status: updates.status,
+      password: updates.password?.trim(),
+    });
+
+    if (!res.success) {
+      return { success: false, error: res.error || 'Failed to update user.' };
+    }
+
+    // Prefer the server's confirmed record (e.g. normalized username) over
+    // the client's own guess at what changed; never store the raw
+    // plaintext password locally either way.
+    const { password: _pw, ...safeUpdates } = updates;
+    const confirmedUpdates = res.user ? { ...safeUpdates, ...res.user } : safeUpdates;
+    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...confirmedUpdates } : u)));
     if (currentUser.id === id) {
-      const updatedCurrent = { ...currentUser, ...finalUpdates };
+      const updatedCurrent = { ...currentUser, ...confirmedUpdates };
       setCurrentUser(updatedCurrent);
       if (isAuthenticated) {
         localStorage.setItem(
@@ -1734,12 +1783,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return result;
   };
 
-  const deleteUser = (id: string) => {
+  const deleteUser = async (id: string): Promise<{ success: boolean; error?: string }> => {
     if (users.length <= 1) {
       return { success: false, error: 'Cannot delete the only remaining user in the system.' };
     }
     if (currentUser.id === id) {
       return { success: false, error: 'Cannot delete the currently logged in active user.' };
+    }
+    const res = await apiDeleteUser(id);
+    if (!res.success) {
+      return { success: false, error: res.error || 'Failed to delete user.' };
     }
     setUsers((prev) => prev.filter((u) => u.id !== id));
     return { success: true };
@@ -3023,6 +3076,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
       setVouchers((prev) => [...prev, returnedVoucher]);
+      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
+        reportFinancialSyncFailure('Admission voucher creation', err);
+      });
       return { success: true, voucher: returnedVoucher };
     }
 
@@ -3074,6 +3130,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
     setVouchers((prev) => [...prev, returnedVoucher]);
+    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
+      reportFinancialSyncFailure('Admission voucher creation', err);
+    });
     return { success: true, voucher: returnedVoucher };
   };
 
@@ -3330,7 +3389,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         targetMonth,
       }));
       apiGenerateVouchers(newVouchers, carriedPriorList).catch((err) => {
-        console.error('[API] Background voucher generation sync notice:', err);
+        reportFinancialSyncFailure('Voucher generation', err);
       });
 
       const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
@@ -3414,6 +3473,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setVouchers((prev) => prev.map((v) => (v.id === voucherId ? updatedVoucher : v)));
+
+    apiVoucherBatchUpdate({ voucherUpserts: [updatedVoucher] }).catch((err) => {
+      reportFinancialSyncFailure('Voucher edit', err);
+    });
 
     // Audit Logging: Fine modifications and voucher line item adjustments
     const student = students.find((s) => s.id === voucher.studentId);
@@ -3594,7 +3657,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       collectionNotes: notes || `Payment for Voucher ${voucher.voucherNo}`,
       date,
     }).catch((err) => {
-      console.error('[API] Background collection receipt sync notice:', err);
+      reportFinancialSyncFailure('Fee payment collection', err);
     });
 
     // Audit Logging: Fine adjustment at payment collection and collection receipt event
@@ -3873,7 +3936,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
 
-      // Phase 3: Transactional server-side API call for bulk collection
+      // Transactional server-side API call for bulk collection. This is the
+      // ONLY network write for this batch — it atomically recomputes each
+      // voucher's amountPaid/status server-side and inserts the matching
+      // transactions/collection row. A second apiVoucherBatchUpdate call
+      // used to fire here as well, duplicating every transaction/collection
+      // row and double-incrementing amountPaid; do not reintroduce it.
       apiReceiveCollection({
         payments: newTxns.map((t) => ({
           voucherId: t.voucherId,
@@ -3888,7 +3956,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: primaryCollectionDate,
         isBulkImport: true,
       }).catch((err) => {
-        console.error('[API] Background bulk collection sync notice:', err);
+        reportFinancialSyncFailure(`Bulk CSV payment collection (${successCount} rows)`, err);
       });
 
       // Audit Logging: Bulk CSV Collection
@@ -4136,7 +4204,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addLateFine,
       customFineAmount,
     }).catch((err) => {
-      console.error('[API] Background carry-forward sync notice:', err);
+      reportFinancialSyncFailure('Balance carry-forward', err);
+    });
+
+    // Also persist the full recalculated chain for this student — covers
+    // cases the single-pair carry-forward endpoint above doesn't handle:
+    // auto-creating a destination Admission voucher for pre-billing months,
+    // and any downstream vouchers recalculateVouchersSequence touched.
+    apiVoucherBatchUpdate({
+      voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
+    }).catch((err) => {
+      reportFinancialSyncFailure('Carry-forward chain recalculation', err);
     });
 
     // Audit Logging: Carry forward operation
@@ -4257,6 +4335,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
+
+    apiVoucherBatchUpdate({
+      voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
+    }).catch((err) => {
+      reportFinancialSyncFailure('Carry-forward undo', err);
+    });
 
     const student = students.find((s) => s.id === voucher.studentId);
     logAuditEvent({
@@ -4470,8 +4554,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
+    const voucherTxnIds = voucherTxns.map((t) => t.id);
+    let collectionUpdatesForApi: { id: string; totalAmount: number; transactionCount: number }[] = [];
+    let deleteCollectionIdsForApi: string[] = [];
+
     if (voucherTxns.length > 0 && force) {
-      const colIds = [...new Set(voucherTxns.map((t) => t.collectionId))];
+      const colIds: string[] = Array.from(new Set<string>(voucherTxns.map((t) => t.collectionId)));
       // Compute the surviving transaction set ONCE from this snapshot, then
       // derive both the transaction removal and the collection recompute from
       // that same result so they can never disagree under concurrent/queued
@@ -4484,6 +4572,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       keptTxns.forEach((t) => {
         collectionTotals.set(t.collectionId, (collectionTotals.get(t.collectionId) || 0) + t.amount);
         collectionCounts.set(t.collectionId, (collectionCounts.get(t.collectionId) || 0) + 1);
+      });
+
+      colIds.forEach((cid) => {
+        const count = collectionCounts.get(cid) || 0;
+        if (count > 0) {
+          collectionUpdatesForApi.push({ id: cid, totalAmount: collectionTotals.get(cid) || 0, transactionCount: count });
+        } else {
+          deleteCollectionIdsForApi.push(cid);
+        }
       });
 
       setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
@@ -4504,12 +4601,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    let recalculatedRemaining: FeeVoucher[] = [];
     setVouchers((prev) => {
       let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
       if (effectiveMode === 'auto-heal') {
         remaining = recalculateVouchersSequence(remaining, affectedStudentIds);
       }
+      recalculatedRemaining = remaining;
       return remaining;
+    });
+
+    // Persist: the client already computed the final result above (deletion
+    // cascade, transaction/collection recompute, auto-heal recalculation —
+    // all logic that depends on rounding/policy settings that only ever
+    // live client-side). This just ships that computed result to be
+    // persisted atomically; see apiVoucherBatchUpdate's server-side comment.
+    apiVoucherBatchUpdate({
+      voucherUpserts:
+        effectiveMode === 'auto-heal' ? recalculatedRemaining.filter((v) => affectedStudentIds.includes(v.studentId)) : [],
+      deleteVoucherIds: idsToDelete,
+      deleteTransactionIds: voucherTxnIds,
+      collectionUpdates: collectionUpdatesForApi,
+      deleteCollectionIds: deleteCollectionIdsForApi,
+    }).catch((err) => {
+      reportFinancialSyncFailure('Voucher deletion', err);
     });
 
     const student = students.find((s) => s.id === target.studentId);
@@ -4585,8 +4700,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
+    const voucherTxnIds = voucherTxns.map((t) => t.id);
+    let collectionUpdatesForApi: { id: string; totalAmount: number; transactionCount: number }[] = [];
+    let deleteCollectionIdsForApi: string[] = [];
+
     if (voucherTxns.length > 0 && force) {
-      const colIds = [...new Set(voucherTxns.map((t) => t.collectionId))];
+      const colIds: string[] = Array.from(new Set<string>(voucherTxns.map((t) => t.collectionId)));
       // Compute the surviving transaction set ONCE from this snapshot, then
       // derive both the transaction removal and the collection recompute from
       // that same result so they can never disagree under concurrent/queued
@@ -4599,6 +4718,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       keptTxns.forEach((t) => {
         collectionTotals.set(t.collectionId, (collectionTotals.get(t.collectionId) || 0) + t.amount);
         collectionCounts.set(t.collectionId, (collectionCounts.get(t.collectionId) || 0) + 1);
+      });
+
+      colIds.forEach((cid) => {
+        const count = collectionCounts.get(cid) || 0;
+        if (count > 0) {
+          collectionUpdatesForApi.push({ id: cid, totalAmount: collectionTotals.get(cid) || 0, transactionCount: count });
+        } else {
+          deleteCollectionIdsForApi.push(cid);
+        }
       });
 
       setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
@@ -4619,12 +4747,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    let recalculatedRemaining: FeeVoucher[] = [];
     setVouchers((prev) => {
       let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
       if (effectiveMode === 'auto-heal') {
         remaining = recalculateVouchersSequence(remaining, affectedStudentIds);
       }
+      recalculatedRemaining = remaining;
       return remaining;
+    });
+
+    apiVoucherBatchUpdate({
+      voucherUpserts:
+        effectiveMode === 'auto-heal' ? recalculatedRemaining.filter((v) => affectedStudentIds.includes(v.studentId)) : [],
+      deleteVoucherIds: idsToDelete,
+      deleteTransactionIds: voucherTxnIds,
+      collectionUpdates: collectionUpdatesForApi,
+      deleteCollectionIds: deleteCollectionIdsForApi,
+    }).catch((err) => {
+      reportFinancialSyncFailure('Bulk voucher deletion', err);
     });
 
     logAuditEvent({
@@ -4650,6 +4791,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const colTxns = transactions.filter((t) => t.collectionId === id);
     if (colTxns.length === 0) {
       setCollections((prev) => prev.filter((c) => c.id !== id));
+      apiVoucherBatchUpdate({ deleteCollectionIds: [id] }).catch((err) => {
+        reportFinancialSyncFailure('Collection deletion', err);
+      });
       return;
     }
 
@@ -4672,6 +4816,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransactions((prev) => prev.filter((t) => t.collectionId !== id));
 
     // Recalculate vouchers with payment deduction and fine reversal
+    let recalculatedVouchers: FeeVoucher[] = [];
     setVouchers((prev) => {
       let updatedVouchers = prev.map((v) => {
         const deduct = deductions.get(v.id) || 0;
@@ -4740,7 +4885,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updatedVouchers = recalculateVouchersSequence(updatedVouchers, Array.from(affectedStudentIds));
       }
 
+      recalculatedVouchers = updatedVouchers;
       return updatedVouchers;
+    });
+
+    // Persist: delete the collection + its transactions, and upsert every
+    // voucher belonging to an affected student (recalculateVouchersSequence
+    // can touch a student's whole voucher chain, not just the directly
+    // deducted voucher, via the prevBalance cascade — sending the student's
+    // full chain is simplest and safe given per-student voucher counts are
+    // naturally small).
+    apiVoucherBatchUpdate({
+      voucherUpserts: recalculatedVouchers.filter((v) => affectedStudentIds.has(v.studentId)),
+      deleteTransactionIds: colTxns.map((t) => t.id),
+      deleteCollectionIds: [id],
+    }).catch((err) => {
+      reportFinancialSyncFailure('Collection deletion', err);
     });
 
     // Audit Logging: Collection deletion and reversals
@@ -4816,9 +4976,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Selection-based database cleanup with cascading integrity awareness
-  const cleanupDatabaseTables = (options: DataCleanupOptions): CleanupResult => {
+  const cleanupDatabaseTables = async (options: DataCleanupOptions): Promise<CleanupResult> => {
     const clearedTables: string[] = [];
     let recordsClearedCount = 0;
+    // Collects human-readable descriptions of anything that failed to
+    // actually persist server-side, so we never report a destructive
+    // operation as "successful" when it silently didn't happen.
+    const persistenceFailures: string[] = [];
+
+    // Track the final ("after cleanup") value of every table that a
+    // simple-entity server endpoint exists for, alongside the existing
+    // setState calls, so we can await real persistence for each one below
+    // instead of just wiping local/localStorage state and hoping a later
+    // background sync happens to catch up.
+    let studentsAfter = students;
+    let studentsTouched = false;
+    let classesAfter = classes;
+    let classesTouched = false;
+    let familiesAfter = families;
+    let familiesTouched = false;
+    let templatesAfter = templates;
+    let templatesTouched = false;
+    let transportAssignmentsAfter = transportAssignments;
+    let transportAssignmentsTouched = false;
+    let stopsAfter = stops;
+    let stopsTouched = false;
+    let busesAfter = buses;
+    let busesTouched = false;
+    let bankAccountsAfter = bankAccounts;
+    let bankAccountsTouched = false;
+    let secondaryUsersToDelete: User[] = [];
 
     // 1. Students
     if (options.students) {
@@ -4835,6 +5022,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Clear student fee template overrides
       setTemplates((prev) => prev.filter((t) => !t.studentId));
       clearedTables.push(`Students & Profiles (${students.length} records)`);
+
+      studentsAfter = [];
+      studentsTouched = true;
+      transportAssignmentsAfter = [];
+      transportAssignmentsTouched = true;
+      templatesAfter = templatesAfter.filter((t) => !t.studentId);
+      templatesTouched = true;
     }
 
     // 2. Fee Vouchers
@@ -4866,6 +5060,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Clear class fee template overrides
       setTemplates((prev) => prev.filter((t) => !t.classId));
       clearedTables.push(`Classes & Sections (${classes.length} records)`);
+
+      classesAfter = [];
+      classesTouched = true;
+      templatesAfter = templatesAfter.filter((t) => !t.classId);
+      templatesTouched = true;
     }
 
     // 5. Families
@@ -4876,8 +5075,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Remove familyId links from students if students were not already wiped
       if (!options.students) {
         setStudents((prev) => prev.map((s) => ({ ...s, familyId: undefined })));
+        studentsAfter = studentsAfter.map((s) => ({ ...s, familyId: undefined }));
+        studentsTouched = true;
       }
       clearedTables.push(`Families & Guardians (${families.length} records)`);
+
+      familiesAfter = [];
+      familiesTouched = true;
     }
 
     // 6. Fee Templates & Overrides
@@ -4887,6 +5091,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTemplates(INITIAL_GLOBAL_TEMPLATES);
       localStorage.setItem(`${STORAGE_KEY}_templates`, JSON.stringify(INITIAL_GLOBAL_TEMPLATES));
       clearedTables.push(`Fee Particular Templates (Reset to standard 9-item baseline)`);
+
+      templatesAfter = INITIAL_GLOBAL_TEMPLATES;
+      templatesTouched = true;
     }
 
     // 7. Granular Transport Cleanup & Complete Transport Wipe
@@ -4900,6 +5107,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!isFullTransportWipe) {
         clearedTables.push(`Student Transport Assignments (${transportAssignments.length} records)`);
       }
+
+      transportAssignmentsAfter = [];
+      transportAssignmentsTouched = true;
     }
 
     // 7b. Bus Stops & Monthly Fare Rates
@@ -4910,6 +5120,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!isFullTransportWipe) {
         clearedTables.push(`Bus Stops & Fare Rates (${stops.length} stops)`);
       }
+
+      stopsAfter = [];
+      stopsTouched = true;
     }
 
     // 7c. Buses Fleet Directory
@@ -4920,6 +5133,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!isFullTransportWipe) {
         clearedTables.push(`Buses Fleet Directory (${buses.length} buses)`);
       }
+
+      busesAfter = [];
+      busesTouched = true;
     }
 
     if (isFullTransportWipe) {
@@ -4933,6 +5149,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBankAccounts([]);
       localStorage.setItem(`${STORAGE_KEY}_banks`, JSON.stringify([]));
       clearedTables.push(`Bank Accounts (${bankAccounts.length} accounts)`);
+
+      bankAccountsAfter = [];
+      bankAccountsTouched = true;
     }
 
     // 9. Secondary Users (keep currently logged-in user safe)
@@ -4943,6 +5162,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUsers(preserved);
       localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(preserved));
       clearedTables.push(`Secondary Users (${secondaryUsers.length} users removed, current session preserved)`);
+
+      secondaryUsersToDelete = secondaryUsers;
+    }
+
+    // --- Await real server-side persistence for every table touched above ---
+    // Local/localStorage state is cleared optimistically for a responsive
+    // UI, but "success" is not reported to the caller until every affected
+    // table has been confirmed persisted (or deleted) on the server. Any
+    // failure here means the corresponding local change will be reverted
+    // by the reconciliation step further down, rather than silently
+    // reappearing, unexplained, on the next refresh.
+    const syncJobs: Promise<unknown>[] = [];
+
+    const trackSync = (label: string, touched: boolean, collectionName: string, nextValue: any[]) => {
+      if (!touched) return;
+      syncJobs.push(
+        syncSimpleEntityCollectionNow(collectionName, nextValue).then(({ failedIds }) => {
+          if (failedIds.length > 0) {
+            persistenceFailures.push(`${label} (${failedIds.length} record(s) could not be persisted)`);
+          }
+        })
+      );
+    };
+
+    trackSync('Students & Profiles', studentsTouched, 'students', studentsAfter);
+    trackSync('Classes & Sections', classesTouched, 'classes', classesAfter);
+    trackSync('Families & Guardians', familiesTouched, 'families', familiesAfter);
+    trackSync('Fee Particular Templates', templatesTouched, 'templates', templatesAfter);
+    trackSync('Student Transport Assignments', transportAssignmentsTouched, 'transportAssignments', transportAssignmentsAfter);
+    trackSync('Bus Stops & Fare Rates', stopsTouched, 'stops', stopsAfter);
+    trackSync('Buses Fleet Directory', busesTouched, 'buses', busesAfter);
+    trackSync('Bank Accounts', bankAccountsTouched, 'bankAccounts', bankAccountsAfter);
+
+    if (secondaryUsersToDelete.length > 0) {
+      syncJobs.push(
+        (async () => {
+          const results = await Promise.all(secondaryUsersToDelete.map((u) => apiDeleteUser(u.id)));
+          const failedCount = results.filter((r) => !r.success).length;
+          if (failedCount > 0) {
+            persistenceFailures.push(`Secondary Users (${failedCount} could not be deleted)`);
+          }
+        })()
+      );
+    }
+
+    // Vouchers/collections/transactions are deliberately excluded from the
+    // generic diff-and-sync mechanism (see apiSync.ts) so that routine
+    // payment collection can never accidentally bypass the transactional
+    // write path. That means a wipe here needs an explicit, awaited
+    // persistence call too, or the data would only disappear locally and
+    // reappear on the next refresh.
+    if (options.vouchers || options.collections) {
+      syncJobs.push(
+        apiVoucherBatchUpdate({
+          deleteVoucherIds: options.vouchers ? vouchers.map((v) => v.id) : [],
+          deleteTransactionIds: options.collections ? transactions.map((t) => t.id) : [],
+          deleteCollectionIds: options.collections ? collections.map((c) => c.id) : [],
+        }).catch((err) => {
+          reportFinancialSyncFailure('Data cleanup', err);
+          persistenceFailures.push('Fee Vouchers / Collections & Transactions');
+        })
+      );
+    }
+
+    await Promise.all(syncJobs);
+
+    if (persistenceFailures.length > 0) {
+      // Some deletions didn't actually reach the database — pull the true
+      // server state back down rather than leaving the UI showing data
+      // that, in reality, was never removed.
+      const fresh = await fetchServerState();
+      if (fresh?.success && fresh.data) {
+        applyServerState(fresh.data);
+      }
+      return {
+        success: false,
+        clearedTables: [],
+        recordsClearedCount: 0,
+        error: `Cleanup did not fully complete — the following could not be persisted: ${persistenceFailures.join('; ')}. No changes were kept.`,
+      };
     }
 
     logAuditEvent({
@@ -4986,6 +5285,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     []
   );
+
+  const reportFinancialSyncFailure = useCallback(
+    (actionLabel: string, err: any) => {
+      console.error(`[API] ${actionLabel} failed to save:`, err);
+      showToast(
+        `${actionLabel} failed to save — the change shown may not be saved. Reloading the latest saved data now; please retry if needed.`,
+        'error',
+        8000
+      );
+      // The optimistic local update for this action did not actually
+      // persist server-side. Reconcile local state with the server's real,
+      // saved state rather than leaving the UI silently showing data that
+      // was never written — this is the only safe recovery once a
+      // fire-and-forget financial write has failed.
+      fetchServerState()
+        .then((res) => {
+          if (res?.success && res.data) {
+            applyServerState(res.data);
+          }
+        })
+        .catch(() => {
+          // If reconciliation itself fails, the error toast above already
+          // told the user the action wasn't saved; nothing further we can
+          // safely do without risking papering over a real outage.
+        });
+    },
+    [showToast, applyServerState]
+  );
+
+  // Surface background persistence failures for the generic simple-entity
+  // sync layer (students/classes/families/buses/stops/transportAssignments/
+  // templates/bankAccounts). Routine edits to these tables are persisted by
+  // a debounced background sync (see queueDatabaseSync in apiSync.ts) with
+  // no caller left waiting for the result, so a rejected create/update/
+  // delete there previously surfaced only as a console.warn — the user saw
+  // no error and the UI silently drifted from the server's real state until
+  // an unrelated refresh happened to overwrite it. This reuses the same
+  // toast + reconcile-from-server pattern already used for financial writes.
+  useEffect(() => {
+    const unsubscribe = subscribeSyncFailures(({ collection, failedIds }) => {
+      const label = SYNC_ENTITY_LABELS[collection] || collection;
+      reportFinancialSyncFailure(
+        `${label} (${failedIds.length} record${failedIds.length === 1 ? '' : 's'})`,
+        new Error(`Failed to sync ${failedIds.length} ${collection} record(s): ${failedIds.join(', ')}`)
+      );
+    });
+    return unsubscribe;
+  }, [reportFinancialSyncFailure]);
 
   return (
     <AppContext.Provider

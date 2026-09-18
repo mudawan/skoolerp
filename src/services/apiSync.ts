@@ -62,7 +62,34 @@ let dbPoolStats: any = undefined;
 
 let statusListeners: ((status: DbStatus) => void)[] = [];
 let remoteUpdateListeners: ((data: any) => void)[] = [];
+let syncFailureListeners: ((info: SyncFailureInfo) => void)[] = [];
 let eventSource: EventSource | null = null;
+
+export interface SyncFailureInfo {
+  collection: string;
+  failedIds: string[];
+}
+
+/**
+ * Subscribe to background persistence failures from the debounced
+ * simple-entity sync (queueDatabaseSync). Unlike the explicit, awaited
+ * financial mutation paths (see reportFinancialSyncFailure in
+ * AppContext.tsx), routine edits to students/classes/families/etc. are
+ * queued and synced in the background with no caller left waiting for the
+ * result — so without this, a rejected create/update/delete here was only
+ * ever visible in the browser console. Returns an unsubscribe function.
+ */
+export function subscribeSyncFailures(callback: (info: SyncFailureInfo) => void): () => void {
+  syncFailureListeners.push(callback);
+  return () => {
+    syncFailureListeners = syncFailureListeners.filter((l) => l !== callback);
+  };
+}
+
+function notifySyncFailure(collection: string, failedIds: string[]) {
+  if (failedIds.length === 0) return;
+  syncFailureListeners.forEach((l) => l({ collection, failedIds }));
+}
 
 function notifyStatus() {
   const s: DbStatus = {
@@ -142,28 +169,113 @@ export async function checkBackendHealth(): Promise<ApiHealthResponse | null> {
 }
 
 /**
- * Fetches authoritative database state from the server for the active institution
+ * Fetches authoritative database state from the server for the active
+ * institution. Internally calls the per-entity REST endpoints in parallel
+ * and assembles them into the same flat shape AppContext's
+ * applyServerState() already expects — this means the three call sites
+ * (initial load, post-register, post-login) and the SSE/poll-triggered
+ * refresh mechanism all keep working unmodified.
  */
 export async function fetchServerState(instId?: string): Promise<ApiStateResponse | null> {
   const targetId = instId || activeInstitutionId;
   if (!targetId) return null;
 
-  try {
-    const res = await fetch(`/api/state?institutionId=${encodeURIComponent(targetId)}`, {
-      headers: {
-        'x-institution-id': targetId,
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data: ApiStateResponse = await res.json();
-    if (data.success && data.data) {
-      isConnected = true;
-      currentEngine = data.engine;
-      if (data.revision) currentRevision = data.revision;
-      notifyStatus();
-      return data;
+  const headers = { 'x-institution-id': targetId };
+  const safeJson = async (p: Promise<Response>, fallback: any) => {
+    try {
+      const res = await p;
+      if (!res.ok) return fallback;
+      return await res.json();
+    } catch {
+      return fallback;
     }
-    return null;
+  };
+
+  try {
+    const [
+      classesRes,
+      familiesRes,
+      studentsRes,
+      busesRes,
+      stopsRes,
+      assignmentsRes,
+      templatesRes,
+      vouchersRes,
+      collectionsRes,
+      transactionsRes,
+      bankAccountsRes,
+      auditLogsRes,
+      historyRes,
+      lockedMonthsRes,
+      meRes,
+      usersRes,
+    ] = await Promise.all([
+      safeJson(fetch('/api/classes', { headers }), { items: [] }),
+      safeJson(fetch('/api/families', { headers }), { items: [] }),
+      // Students: fetch a large page so components that still expect the
+      // full roster in memory keep working. GlobalStudentSearch bypasses
+      // this entirely and queries /api/students?q=... directly instead.
+      safeJson(fetch('/api/students?pageSize=5000', { headers }), { students: [] }),
+      safeJson(fetch('/api/transport/buses', { headers }), { items: [] }),
+      safeJson(fetch('/api/transport/stops', { headers }), { items: [] }),
+      safeJson(fetch('/api/transport/assignments', { headers }), { items: [] }),
+      safeJson(fetch('/api/fee-templates', { headers }), { items: [] }),
+      safeJson(fetch('/api/vouchers?pageSize=10000', { headers }), { vouchers: [] }),
+      safeJson(fetch('/api/collections?pageSize=10000', { headers }), { collections: [] }),
+      safeJson(fetch('/api/transactions?pageSize=10000', { headers }), { transactions: [] }),
+      safeJson(fetch('/api/bank-accounts', { headers }), { items: [] }),
+      safeJson(fetch('/api/audit-logs?pageSize=2000', { headers }), { logs: [] }),
+      safeJson(fetch('/api/student-account-history?pageSize=5000', { headers }), { entries: [] }),
+      safeJson(fetch('/api/locked-months', { headers }), { months: [] }),
+      safeJson(fetch('/api/auth/me', { headers }), {}),
+      // Users list requires users.manage; a caller without it gets a 403,
+      // which safeJson turns into {} — applyServerState only overwrites
+      // `users` when the array is non-empty, so this degrades gracefully.
+      safeJson(fetch('/api/users', { headers }), {}),
+    ]);
+
+    const institution = meRes?.institution;
+    const studentList = studentsRes.students || [];
+
+    const data: any = {
+      users: usersRes.users || [],
+      classes: classesRes.items || [],
+      students: studentList,
+      // memberStudentIds is derived server-side from students.familyId — the
+      // relational schema doesn't store it redundantly on the family row.
+      families: (familiesRes.items || []).map((f: any) => ({
+        ...f,
+        memberStudentIds: studentList.filter((s: any) => s.familyId === f.id).map((s: any) => s.id),
+      })),
+      buses: busesRes.items || [],
+      stops: stopsRes.items || [],
+      transportAssignments: assignmentsRes.items || [],
+      templates: templatesRes.items || [],
+      vouchers: vouchersRes.vouchers || [],
+      collections: collectionsRes.collections || [],
+      transactions: transactionsRes.transactions || [],
+      bankAccounts: bankAccountsRes.items || [],
+      auditLogs: auditLogsRes.logs || [],
+      studentAccountHistory: historyRes.entries || [],
+      lockedMonths: lockedMonthsRes.months || [],
+    };
+
+    if (institution) {
+      data.institute = {
+        name: institution.name || '',
+        logoUrl: institution.logo_url || institution.logoUrl || '',
+        address: institution.address || '',
+        phone: institution.phone || '',
+        email: institution.email || '',
+        website: institution.website || '',
+        regNo: institution.registration_no || institution.regNo || '',
+      };
+    }
+
+    isConnected = true;
+    currentEngine = currentEngine || 'sqlite';
+    notifyStatus();
+    return { success: true, engine: currentEngine, revision: currentRevision, institutionId: targetId, data };
   } catch (err) {
     console.warn('[Sync] Could not reach backend API state:', err);
     isConnected = false;
@@ -172,8 +284,284 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
   }
 }
 
+// --- Per-collection diff-and-sync (replaces the old generic /api/sync) ---
+//
+// AppContext's persistence effect still computes and passes the FULL current
+// value of every collection on every change (unchanged from before — see
+// the useEffect that calls queueDatabaseSync near the top of AppContext.tsx).
+// Rather than requiring changes to that effect or to the ~60 mutator
+// functions that feed it, queueDatabaseSync() below diffs each collection
+// against the last-synced snapshot and fires targeted REST calls only for
+// what actually changed (create/update/delete), against the real per-entity
+// endpoints — never a bulk "replace everything" call.
+//
+// Vouchers, collections, and transactions are deliberately NOT synced here:
+// they go through the dedicated transactional endpoints
+// (apiGenerateVouchers / apiReceiveCollection / apiCarryForwardVoucher),
+// which is what actually keeps runVoucherTransaction's concurrency
+// guarantees intact. `users` and `auditLogs` are also excluded — user
+// management has its own endpoints, and audit logs are server-generated
+// only.
+const SIMPLE_ENTITY_ENDPOINTS: Record<string, string> = {
+  classes: '/api/classes',
+  families: '/api/families',
+  buses: '/api/transport/buses',
+  stops: '/api/transport/stops',
+  transportAssignments: '/api/transport/assignments',
+  templates: '/api/fee-templates',
+  bankAccounts: '/api/bank-accounts',
+  students: '/api/students',
+};
+
+// Fields to strip before diffing/sending `families` and `students`, since
+// they're server-derived/not real columns and would otherwise cause every
+// item to look "changed" every cycle (families.memberStudentIds is derived
+// from students.familyId; students carries denormalized display-only
+// fields on some responses).
+const STRIP_BEFORE_SYNC: Record<string, string[]> = {
+  families: ['memberStudentIds'],
+};
+
+let lastSyncedSnapshots: Record<string, Map<string, string>> = {};
+// Permanently-failed ids (e.g. a 409 duplicate) are parked here so we don't
+// retry something that will never succeed by retrying identically forever.
+// Cleared automatically once the item is edited (its serialized form
+// changes) or removed from the collection.
+let permanentlyFailedIds: Record<string, Map<string, string>> = {};
+
+function stripFields(collectionName: string, item: any): any {
+  const strip = STRIP_BEFORE_SYNC[collectionName];
+  if (!strip) return item;
+  const copy = { ...item };
+  for (const f of strip) delete copy[f];
+  return copy;
+}
+
+async function diffAndSyncSimpleCollection(
+  collectionName: string,
+  endpoint: string,
+  items: any[]
+): Promise<{ failedIds: string[] }> {
+  const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
+  const nextMap = new Map<string, string>();
+  const failedMap = permanentlyFailedIds[collectionName] || new Map<string, string>();
+  const currentIds = new Set<string>();
+  const failedIds: string[] = [];
+
+  for (const rawItem of items) {
+    if (!rawItem?.id) continue;
+    const item = stripFields(collectionName, rawItem);
+    currentIds.add(item.id);
+    const serialized = JSON.stringify(item);
+
+    if (failedMap.get(item.id) === serialized) {
+      // Unchanged since it last permanently failed (e.g. still the same
+      // duplicate B-Form No.) — don't retry an operation that will fail
+      // identically forever.
+      nextMap.set(item.id, serialized);
+      continue;
+    }
+
+    if (prevMap.get(item.id) === serialized) {
+      nextMap.set(item.id, serialized);
+      continue;
+    }
+
+    const isNew = !prevMap.has(item.id);
+    try {
+      const res = await fetch(isNew ? endpoint : `${endpoint}/${item.id}`, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      });
+      if (res.status >= 400 && res.status < 500) {
+        // Permanent failure (validation error, duplicate, not found, etc.)
+        // — record it and stop retrying until the item itself changes.
+        const body = await res.json().catch(() => ({}));
+        console.warn(`[Sync] ${collectionName}/${item.id} rejected (${res.status}):`, body?.error || res.statusText);
+        failedMap.set(item.id, serialized);
+        nextMap.set(item.id, serialized);
+        failedIds.push(item.id);
+        continue;
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      failedMap.delete(item.id);
+      nextMap.set(item.id, serialized);
+    } catch (err) {
+      console.warn(`[Sync] Failed to persist ${collectionName}/${item.id}, will retry:`, err);
+      // Leave it out of nextMap so it's retried on the next sync cycle.
+      failedIds.push(item.id);
+    }
+  }
+
+  for (const [id, serialized] of prevMap.entries()) {
+    if (!currentIds.has(id)) {
+      try {
+        const res = await fetch(`${endpoint}/${id}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+        failedMap.delete(id);
+      } catch (err) {
+        console.warn(`[Sync] Failed to delete ${collectionName}/${id}, will retry:`, err);
+        nextMap.set(id, serialized); // keep tracking so we retry the delete next cycle
+        failedIds.push(id);
+      }
+    }
+  }
+
+  lastSyncedSnapshots[collectionName] = nextMap;
+  permanentlyFailedIds[collectionName] = failedMap;
+  return { failedIds };
+}
+
 /**
- * Queues state to be synced with the backend database for the active institution
+ * Immediately (not debounced) diffs-and-syncs a single simple-entity
+ * collection against the server and reports which ids, if any, failed to
+ * persist (create/update rejected, or delete failed/was forbidden).
+ *
+ * Used by flows — like the Data Cleanup tool — that must know whether a
+ * mutation actually reached the database before telling the user it
+ * succeeded, rather than relying on the debounced background sync in
+ * queueDatabaseSync(), which never reports failures back to its caller.
+ */
+export async function syncSimpleEntityCollectionNow(
+  collectionName: keyof typeof SIMPLE_ENTITY_ENDPOINTS,
+  items: any[]
+): Promise<{ failedIds: string[] }> {
+  const endpoint = SIMPLE_ENTITY_ENDPOINTS[collectionName];
+  if (!endpoint) return { failedIds: [] };
+  return diffAndSyncSimpleCollection(collectionName, endpoint, items);
+}
+
+async function diffAppendOnlyCollection(collectionName: string, endpoint: string, items: any[]) {
+  const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
+  const nextMap = new Map<string, string>(prevMap);
+
+  for (const item of items) {
+    if (!item?.id || prevMap.has(item.id)) continue;
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      });
+      if (res.ok) {
+        nextMap.set(item.id, '1');
+      } else {
+        console.warn(`[Sync] Failed to append ${collectionName}/${item.id}: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.warn(`[Sync] Failed to append ${collectionName}/${item.id}:`, err);
+    }
+  }
+
+  lastSyncedSnapshots[collectionName] = nextMap;
+}
+
+/**
+ * Syncs month-lock/unlock state against the server, reporting which
+ * months failed to persist instead of silently marking them as synced.
+ *
+ * Previously this marked every month in `nextMap` unconditionally before
+ * even attempting the request, and never checked `res.ok` — so a locked
+ * month that was rejected server-side (permission edge case, transient
+ * error) was recorded locally as "locked" forever, with no retry and no
+ * indication to the user that the server never actually enforced the
+ * lock. Month locks exist specifically to prevent further edits to a
+ * closed accounting period, so a lock that silently didn't take is a
+ * real integrity gap, not just a cosmetic one — this now only carries a
+ * month forward as synced once the server has actually confirmed it.
+ */
+async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[] }> {
+  const prevSet = lastSyncedSnapshots['lockedMonths'] || new Map<string, string>();
+  const nextMap = new Map<string, string>();
+  const currentSet = new Set(months);
+  const failedIds: string[] = [];
+
+  for (const month of months) {
+    if (prevSet.has(month)) {
+      // Already confirmed locked as of the last successful sync.
+      nextMap.set(month, '1');
+      continue;
+    }
+    try {
+      const res = await fetch('/api/locked-months', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month }),
+      });
+      if (res.ok) {
+        nextMap.set(month, '1');
+      } else {
+        console.warn(`[Sync] Failed to lock month ${month}: HTTP ${res.status}`);
+        failedIds.push(`lock:${month}`);
+        // Deliberately not added to nextMap, so this is retried on the
+        // next sync cycle instead of being treated as locked.
+      }
+    } catch (err) {
+      console.warn(`[Sync] Failed to lock month ${month}:`, err);
+      failedIds.push(`lock:${month}`);
+    }
+  }
+
+  for (const month of prevSet.keys()) {
+    if (!currentSet.has(month)) {
+      try {
+        const res = await fetch(`/api/locked-months/${encodeURIComponent(month)}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 404) {
+          console.warn(`[Sync] Failed to unlock month ${month}: HTTP ${res.status}`);
+          failedIds.push(`unlock:${month}`);
+          // Keep tracking it as locked so the unlock is retried next
+          // cycle, and so the local UI doesn't show it as unlocked while
+          // the server still has it locked.
+          nextMap.set(month, '1');
+        }
+      } catch (err) {
+        console.warn(`[Sync] Failed to unlock month ${month}:`, err);
+        failedIds.push(`unlock:${month}`);
+        nextMap.set(month, '1');
+      }
+    }
+  }
+
+  lastSyncedSnapshots['lockedMonths'] = nextMap;
+  return { failedIds };
+}
+
+async function syncInstituteProfile(institute: any) {
+  const serialized = JSON.stringify(institute);
+  const prevMap = lastSyncedSnapshots['institute'] || new Map<string, string>();
+  if (prevMap.get('_') === serialized) return;
+
+  try {
+    const res = await fetch('/api/institute', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: institute.name,
+        logoUrl: institute.logoUrl,
+        address: institute.address,
+        phone: institute.phone,
+        email: institute.email,
+        website: institute.website,
+        registrationNo: institute.regNo,
+      }),
+    });
+    if (res.ok) {
+      lastSyncedSnapshots['institute'] = new Map([['_', serialized]]);
+    } else {
+      console.warn(`[Sync] Failed to update institute profile: HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn('[Sync] Failed to update institute profile:', err);
+  }
+}
+
+/**
+ * Queues state to be synced with the backend database for the active
+ * institution. See the diff-and-sync functions above for how this maps
+ * onto the real per-entity REST endpoints.
  */
 export function queueDatabaseSync(payload: any, instId?: string, delayMs = 250): void {
   const targetId = instId || activeInstitutionId;
@@ -188,33 +576,39 @@ export function queueDatabaseSync(payload: any, instId?: string, delayMs = 250):
   syncTimeout = setTimeout(async () => {
     if (Object.keys(pendingState).length === 0) return;
 
-    const toSend = { ...pendingState, _clientId: CLIENT_ID, institutionId: targetId };
+    const toSend = pendingState;
     pendingState = {};
     isSyncing = true;
     notifyStatus();
 
     try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-client-id': CLIENT_ID,
-          'x-institution-id': targetId,
-        },
-        body: JSON.stringify(toSend),
-      });
+      const jobs: Promise<unknown>[] = [];
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const result = await res.json();
-      if (result.success) {
-        isConnected = true;
+      for (const [collectionName, endpoint] of Object.entries(SIMPLE_ENTITY_ENDPOINTS)) {
+        if (Array.isArray(toSend[collectionName])) {
+          jobs.push(
+            diffAndSyncSimpleCollection(collectionName, endpoint, toSend[collectionName]).then(
+              ({ failedIds }) => notifySyncFailure(collectionName, failedIds)
+            )
+          );
+        }
       }
+      if (Array.isArray(toSend.studentAccountHistory)) {
+        jobs.push(diffAppendOnlyCollection('studentAccountHistory', '/api/student-account-history', toSend.studentAccountHistory));
+      }
+      if (Array.isArray(toSend.lockedMonths)) {
+        jobs.push(
+          diffLockedMonths(toSend.lockedMonths).then(({ failedIds }) => notifySyncFailure('lockedMonths', failedIds))
+        );
+      }
+      if (toSend.institute) {
+        jobs.push(syncInstituteProfile(toSend.institute));
+      }
+
+      await Promise.all(jobs);
+      isConnected = true;
     } catch (err) {
       console.warn('[Sync] Background sync to database encountered error:', err);
-      // Re-queue failed items if not superseded
-      pendingState = { ...toSend, ...pendingState };
-      delete pendingState._clientId;
-      delete pendingState.institutionId;
       isConnected = false;
     } finally {
       isSyncing = false;
@@ -476,6 +870,55 @@ export async function apiCreateInvite(
   }
 }
 
+export async function apiCreateUser(
+  params: { username: string; name: string; email?: string; password: string; role: string; permissions: string[] }
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-institution-id': instId },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: 'Failed to create user' };
+  }
+}
+
+export async function apiUpdateUser(
+  id: string,
+  updates: Partial<{ username: string; name: string; email: string; role: string; permissions: string[]; status: string; password: string }>
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch(`/api/users/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-institution-id': instId },
+      body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: 'Failed to update user' };
+  }
+}
+
+export async function apiDeleteUser(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch(`/api/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'x-institution-id': instId },
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: 'Failed to delete user' };
+  }
+}
+
 export async function apiListInvites(
   institutionId: string
 ): Promise<{ success: boolean; invites?: OperatorInvite[]; error?: string }> {
@@ -590,6 +1033,40 @@ export async function apiCarryForwardVoucher(params: {
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/carry-forward', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': CLIENT_ID,
+        'x-institution-id': instId,
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network request failed' };
+  }
+}
+
+/**
+ * Persists a targeted set of voucher/transaction/collection changes the
+ * client has already computed (voucher deletion with cascade/auto-heal,
+ * collection-reversal fine undo, etc.) — see the server-side handler's
+ * comment for why the client owns this business logic rather than the
+ * server re-deriving it.
+ */
+export async function apiVoucherBatchUpdate(params: {
+  voucherUpserts?: any[];
+  deleteVoucherIds?: string[];
+  deleteTransactionIds?: string[];
+  newTransactions?: any[];
+  newCollections?: any[];
+  collectionUpdates?: { id: string; totalAmount: number; transactionCount: number }[];
+  deleteCollectionIds?: string[];
+}): Promise<{ success: boolean; revision?: number; error?: string }> {
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch('/api/vouchers/batch-update', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

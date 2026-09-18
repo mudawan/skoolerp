@@ -138,7 +138,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
   const canEdit =
     !readOnly &&
     (hasPermission('fees.collect') ||
-      hasPermission('fees.manage') ||
+      hasPermission('fees.edit') ||
       hasPermission('settings.manage') ||
       hasPermission('fees.generate'));
 
