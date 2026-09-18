@@ -83,6 +83,7 @@ function MainApp() {
           hasPermission('settings.manage')
         );
       case 'policies':
+      case 'templates':
         return (
           hasPermission('settings.view') ||
           hasPermission('settings.manage') ||
@@ -132,6 +133,7 @@ function MainApp() {
     'defaulters',
     'monthEnd',
     'policies',
+    'templates',
     'transport',
     'reports',
     'audit',
@@ -344,10 +346,10 @@ function MainApp() {
                   setActiveTab={setActiveTab}
                 />
               )}
-              {activeTab === 'policies' && (
+              {(activeTab === 'policies' || activeTab === 'templates') && (
                 <SettingsView
                   viewMode="policies"
-                  initialSubTab="policies"
+                  initialSubTab={activeTab}
                   onNavigateToTab={(tab) => {
                     setActiveTab(tab);
                   }}

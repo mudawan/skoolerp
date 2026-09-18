@@ -1843,196 +1843,77 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setShowBankModal(false);
   };
 
-  const totalActiveOverridesCount = activeClassOverridesList.length + activeStudentOverridesList.length;
-
-  interface NavItem {
-    id: typeof activeSubTab;
-    htmlId: string;
-    name: string;
-    shortName: string;
-    description: string;
+  interface SettingsHeaderConfig {
+    title: string;
+    subtitle: string;
     icon: React.ElementType;
-    badge?: string | number;
-    badgeVariant?: 'teal' | 'indigo' | 'rose' | 'amber';
-    hasDot?: boolean;
-    hidden?: boolean;
+    iconColor?: string;
   }
 
-  const POLICY_ITEMS: NavItem[] = [
-    {
-      id: 'policies',
-      htmlId: 'settings-tab-policies',
-      name: 'Voucher Policies',
-      shortName: 'Policies',
-      description: 'Due dates, late fees, copy orders & rounding up',
-      icon: Sliders,
-      hasDot: hasPolicyChanges,
-      badge: roundingEnabled && roundingMultiple > 1 ? `Rs. ${roundingMultiple}` : undefined,
-      badgeVariant: 'indigo',
-    },
-    {
-      id: 'templates',
-      htmlId: 'settings-tab-templates',
-      name: 'Fee Templates',
-      shortName: 'Templates',
-      description: 'Global fee rates, class & student overrides',
-      icon: FileSpreadsheet,
-      badge: totalActiveOverridesCount > 0 ? `${totalActiveOverridesCount} Active` : undefined,
-      badgeVariant: 'teal',
-    },
-  ];
-
-  const ADMIN_ITEMS: NavItem[] = [
-    {
-      id: 'profile',
-      htmlId: 'settings-tab-profile',
-      name: 'Campus Profile',
-      shortName: 'Profile',
-      description: 'Campus name, official logo & contact details',
+  const SETTINGS_HEADER_CONFIGS: Record<typeof activeSubTab, SettingsHeaderConfig> = {
+    profile: {
+      title: 'Campus Profile & Institution Identity',
+      subtitle: 'Campus name, registration credentials, official crest/logo, and receipt contact details.',
       icon: Building2,
     },
-    {
-      id: 'banks',
-      htmlId: 'settings-tab-banks',
-      name: 'Bank Accounts',
-      shortName: 'Banks',
-      description: 'Deposit bank instructions printed on vouchers',
+    banks: {
+      title: 'Bank Accounts & Deposit Instructions',
+      subtitle: 'Institution deposit accounts, branch codes, IBAN numbers, and student deposit instructions.',
       icon: CreditCard,
-      badge: bankAccounts.length > 0 ? `${bankAccounts.length}` : undefined,
-      badgeVariant: 'teal',
     },
-    {
-      id: 'users',
-      htmlId: 'settings-tab-users',
-      name: 'Users & Permissions',
-      shortName: 'Users',
-      description: 'Operator accounts, login access & granular RBAC',
+    users: {
+      title: 'Users & Permissions Management',
+      subtitle: 'Operator profiles, password credentials, and granular role-based access control.',
       icon: Users,
-      badge: users.length > 0 ? `${users.length}` : undefined,
-      badgeVariant: 'teal',
-      hidden: !(currentUser?.role === 'Admin' || hasPermission('users.manage')),
     },
-    {
-      id: 'appearance',
-      htmlId: 'settings-tab-appearance',
-      name: 'Appearance & Theme',
-      shortName: 'Theme',
-      description: 'Color themes, sidebar mode & visual styling',
+    appearance: {
+      title: 'Appearance & Visual Themes',
+      subtitle: 'Campus UI color palette, dark/light contrast modes, and sidebar orientation.',
       icon: Palette,
     },
-    {
-      id: 'database',
-      htmlId: 'settings-tab-database',
-      name: 'Database & Backups',
-      shortName: 'Database',
-      description: 'Central storage status, live sync & backup disaster recovery',
+    database: {
+      title: 'Database, Backups & Disaster Recovery',
+      subtitle: 'Cloud storage synchronization status, manual snapshot creation, and database restore.',
       icon: Server,
-      badge: 'Live Sync',
-      badgeVariant: 'teal',
     },
-    {
-      id: 'cleanup',
-      htmlId: 'settings-tab-cleanup',
-      name: 'Data Maintenance',
-      shortName: 'Maintenance',
-      description: 'Selective table purge, test data reset & cleanup',
+    cleanup: {
+      title: 'Data Maintenance & System Cleanup',
+      subtitle: 'High-risk data purge utilities, transactional audit resetting, and test record cleanup.',
       icon: Database,
-      badge: 'High Risk',
-      badgeVariant: 'rose',
-      hidden: !(currentUser?.role === 'Admin' || hasPermission('system.cleanup')),
+      iconColor: 'text-rose-600',
     },
-  ];
+    policies: {
+      title: 'Fee Calculation & Voucher Policies',
+      subtitle: 'Default billing due dates, late payment surcharge rates, and downstream voucher recalculation rules.',
+      icon: Sliders,
+    },
+    templates: {
+      title: 'Fee Structure & Particulars Templates',
+      subtitle: 'Standard monthly tuition templates, class-level rate sheets, and individualized student fee overrides.',
+      icon: FileSpreadsheet,
+    },
+    monthEnd: {
+      title: 'Month-End Reconciliation & Closure',
+      subtitle: 'Audit collections, reconcile outstanding fees, apply late fines, and lock accounting periods.',
+      icon: CalendarCheck,
+    },
+  };
 
-  const navItems = (viewMode === 'policies' ? POLICY_ITEMS : ADMIN_ITEMS).filter((i) => !i.hidden);
-  const currentItem = navItems.find((i) => i.id === activeSubTab) || navItems[0];
-  const CurrentIcon = currentItem.icon;
+  const currentHeaderConfig = SETTINGS_HEADER_CONFIGS[activeSubTab] || SETTINGS_HEADER_CONFIGS.profile;
+  const HeaderIcon = currentHeaderConfig.icon;
 
   return (
     <div className="space-y-6">
-      {/* Flattened Compact Navigation Header */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-3.5 sm:p-4 space-y-3">
-        {/* Identity & Current Section Breadcrumb */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200/90 flex items-center justify-center text-teal-700 shadow-2xs shrink-0">
-              <CurrentIcon className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
-                  {viewMode === 'policies' ? 'Financial Policies' : 'Administration & Settings'}
-                </h2>
-                <span className="text-slate-300">/</span>
-                <span className="text-xs font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
-                  {currentItem.name}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 hidden sm:block truncate">
-                {currentItem.description}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Flat Sub-tabs */}
-        <div className="flex items-center justify-between gap-3 overflow-x-auto pt-0.5">
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-0.5 max-w-full">
-            {navItems.map((item) => {
-              const isItemActive = activeSubTab === item.id;
-              const ItemIcon = item.icon;
-
-              let activeClasses = 'bg-teal-600 text-white shadow-xs';
-              if (item.id === 'cleanup') {
-                activeClasses = 'bg-rose-600 text-white shadow-xs';
-              }
-
-              return (
-                <button
-                  key={item.id}
-                  id={item.htmlId}
-                  type="button"
-                  onClick={() => {
-                    setActiveSubTab(item.id);
-                    onNavigateToTab?.(item.id as ActiveTab);
-                  }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 sm:gap-2 shrink-0 cursor-pointer ${
-                    isItemActive
-                      ? activeClasses
-                      : 'bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/70'
-                  }`}
-                >
-                  <ItemIcon className={`w-3.5 h-3.5 ${isItemActive ? 'text-white' : 'text-slate-500'}`} />
-                  <span>{item.name}</span>
-                  {item.hasDot && (
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${isItemActive ? 'bg-amber-300' : 'bg-amber-500 animate-pulse'}`} />
-                  )}
-                  {item.badge && (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
-                        isItemActive
-                          ? 'bg-white/20 text-white'
-                          : item.badgeVariant === 'rose'
-                          ? 'bg-rose-100 text-rose-800'
-                          : item.badgeVariant === 'indigo'
-                          ? 'bg-indigo-100 text-indigo-800'
-                          : item.badgeVariant === 'teal'
-                          ? 'bg-teal-100 text-teal-800'
-                          : 'bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="hidden lg:flex items-center gap-2 text-xs text-slate-400 shrink-0">
-            <span className="text-[11px] font-medium truncate max-w-xs">
-              {currentItem.description}
-            </span>
-          </div>
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <HeaderIcon className={`w-6 h-6 ${currentHeaderConfig.iconColor || 'text-teal-600'}`} />
+            {currentHeaderConfig.title}
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">
+            {currentHeaderConfig.subtitle}
+          </p>
         </div>
       </div>
 

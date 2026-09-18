@@ -16,6 +16,7 @@ import {
   ChevronRight,
   CreditCard,
   Database,
+  FileSpreadsheet,
   FileText,
   FolderKanban,
   History,
@@ -199,8 +200,18 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         },
         {
           id: 'policies',
-          label: 'Financial Policies',
+          label: 'Voucher Policies',
           icon: Sliders,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('fees.edit') ||
+            hasPermission('fees.view'),
+        },
+        {
+          id: 'templates',
+          label: 'Fee Templates',
+          icon: FileSpreadsheet,
           permission: () =>
             hasPermission('settings.view') ||
             hasPermission('settings.manage') ||

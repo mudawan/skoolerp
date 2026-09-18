@@ -304,6 +304,7 @@ export type ActiveTab =
   | 'defaulters'
   | 'monthEnd'
   | 'policies'
+  | 'templates'
   | 'transport'
   | 'reports'
   | 'audit'
