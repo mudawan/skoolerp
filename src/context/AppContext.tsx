@@ -45,6 +45,7 @@ import {
   INITIAL_COLLECTIONS,
   INITIAL_FAMILIES,
   INITIAL_GLOBAL_TEMPLATES,
+  createDefaultGlobalTemplates,
   INITIAL_INSTITUTE,
   INITIAL_STOPS,
   INITIAL_STUDENT_ACCOUNT_HISTORY,
@@ -93,6 +94,8 @@ import {
   apiVoucherBatchUpdate,
   syncSimpleEntityCollectionNow,
   subscribeSyncFailures,
+  initializeSyncSnapshots,
+  resetSyncSnapshots,
 } from '../services/apiSync';
 
 export interface DownstreamConflict {
@@ -363,6 +366,8 @@ interface AppContextType {
   setVoucherDeletionResolution: (policy: VoucherDeletionResolution) => void;
   institute: InstituteProfile;
   updateInstitute: (updates: Partial<InstituteProfile>) => void;
+  sessionTimeoutMinutes: number;
+  setSessionTimeoutMinutes: (minutes: number) => void;
   bankAccounts: BankAccount[];
   addBankAccount: (bank: Omit<BankAccount, 'id'>) => void;
   updateBankAccount: (id: string, updates: Partial<BankAccount>) => void;
@@ -413,6 +418,37 @@ const AppContext = createContext<AppContextType | null>(null);
 
 const STORAGE_KEY = 'skooler_app_data_v1';
 
+// Legacy global cache cleanup:
+// Earlier versions saved full student rosters, classes, and tenant records into
+// un-scoped localStorage keys ('skooler_app_data_v1_students', etc.). In a multi-tenant
+// database architecture, keeping these global keys causes cross-tenant contamination
+// (e.g. 110 old students appearing in a brand new institution with 0 students).
+// We purge all un-scoped entity cache keys so the server database remains authoritative.
+try {
+  const legacyGlobalKeys = [
+    `${STORAGE_KEY}_students`,
+    `${STORAGE_KEY}_classes`,
+    `${STORAGE_KEY}_families`,
+    `${STORAGE_KEY}_buses`,
+    `${STORAGE_KEY}_stops`,
+    `${STORAGE_KEY}_assignments`,
+    `${STORAGE_KEY}_templates`,
+    `${STORAGE_KEY}_vouchers`,
+    `${STORAGE_KEY}_collections`,
+    `${STORAGE_KEY}_transactions`,
+    `${STORAGE_KEY}_banks`,
+    `${STORAGE_KEY}_audit_logs`,
+    `${STORAGE_KEY}_student_account_history`,
+    `${STORAGE_KEY}_locked_months`,
+    `${STORAGE_KEY}_institute`,
+  ];
+  for (const k of legacyGlobalKeys) {
+    localStorage.removeItem(k);
+  }
+} catch {
+  // ignore in SSR or restricted environments
+}
+
 // Friendly display names for the background sync-failure toast (see the
 // subscribeSyncFailures effect below), keyed by the same collection names
 // used in SIMPLE_ENTITY_ENDPOINTS in apiSync.ts.
@@ -436,6 +472,14 @@ const SYNC_ENTITY_LABELS: Record<string, string> = {
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Multi-Tenant Institution State
   const [currentInstitution, setCurrentInstitution] = useState<Institution | null>(() => {
+    // Only restore institution if an active authenticated session exists
+    const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
+    if (!session) {
+      try {
+        localStorage.removeItem(`${STORAGE_KEY}_institution`);
+      } catch {}
+      return null;
+    }
     const saved = localStorage.getItem(`${STORAGE_KEY}_institution`);
     if (saved) {
       try {
@@ -489,8 +533,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return SEEDED_USERS;
   });
 
-  // Authentication State
+  // Authentication State (Option B: Ephemeral Banking Model - invalidated on browser reopen)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const isSessionActive = sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
+      if (!isSessionActive) {
+        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+        return false;
+      }
+    } catch {
+      return false;
+    }
     const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
     if (!session) return false;
     try {
@@ -511,6 +564,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
+    try {
+      const isSessionActive = sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
+      if (!isSessionActive) {
+        return ANONYMOUS_USER;
+      }
+    } catch {
+      return ANONYMOUS_USER;
+    }
     const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
     if (session) {
       try {
@@ -569,6 +630,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setVoucherDeletionResolution = (resolution: VoucherDeletionResolution) => {
     setVoucherDeletionResolutionState(resolution);
     localStorage.setItem(`${STORAGE_KEY}_voucher_deletion_resolution`, resolution);
+  };
+
+  // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings)
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_KEY}_session_timeout_minutes`);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 10;
+  });
+
+  const setSessionTimeoutMinutes = (mins: number) => {
+    const sanitized = Math.max(1, Math.min(180, Number(mins) || 10));
+    setSessionTimeoutMinutesState(sanitized);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(sanitized));
+    } catch {}
+    setInstitute((prev) => ({ ...prev, sessionTimeoutMinutes: sanitized }));
   };
 
   const [defaultLateFeeRate, setDefaultLateFeeRateState] = useState<number>(() => {
@@ -682,36 +766,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // Core domain state
-  const [classes, setClasses] = useState<SchoolClass[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_classes`);
-    return saved ? JSON.parse(saved) : INITIAL_CLASSES;
-  });
+  const [classes, setClasses] = useState<SchoolClass[]>(() => []);
 
-  const [students, setStudents] = useState<Student[]>(() => {
-    const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
-    const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
-    const normalizedStudents: Student[] = rawStudents.map((s) => ({
-      ...s,
-      dob: s.dob ? (normalizeDateToISO(s.dob) || s.dob) : s.dob,
-      admissionDate: s.admissionDate ? (normalizeDateToISO(s.admissionDate) || s.admissionDate) : s.admissionDate,
-    }));
-    const savedFamilies = localStorage.getItem(`${STORAGE_KEY}_families`);
-    const rawFamilies: Family[] = savedFamilies ? JSON.parse(savedFamilies) : INITIAL_FAMILIES;
-    return reconcileFamiliesAndStudents(rawFamilies, normalizedStudents).students;
-  });
+  const [students, setStudents] = useState<Student[]>(() => []);
 
-  const [families, setFamilies] = useState<Family[]>(() => {
-    const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
-    const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
-    const normalizedStudents: Student[] = rawStudents.map((s) => ({
-      ...s,
-      dob: s.dob ? (normalizeDateToISO(s.dob) || s.dob) : s.dob,
-      admissionDate: s.admissionDate ? (normalizeDateToISO(s.admissionDate) || s.admissionDate) : s.admissionDate,
-    }));
-    const savedFamilies = localStorage.getItem(`${STORAGE_KEY}_families`);
-    const rawFamilies: Family[] = savedFamilies ? JSON.parse(savedFamilies) : INITIAL_FAMILIES;
-    return reconcileFamiliesAndStudents(rawFamilies, normalizedStudents).families;
-  });
+  const [families, setFamilies] = useState<Family[]>(() => []);
 
   // Loop-safe sequence counters for auto-generated codes (Reg #, Family #).
   // `useRef` initial values are only applied on the very first render, so these
@@ -753,124 +812,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     familiesRef.current = families;
   }, [families]);
 
-  const [buses, setBuses] = useState<TransportBus[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_buses`);
-    return saved ? JSON.parse(saved) : INITIAL_BUSES;
-  });
+  const [buses, setBuses] = useState<TransportBus[]>(() => []);
 
-  const [stops, setStops] = useState<TransportStop[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_stops`);
-    return saved ? JSON.parse(saved) : INITIAL_STOPS;
-  });
+  const [stops, setStops] = useState<TransportStop[]>(() => []);
 
-  const [transportAssignments, setTransportAssignments] = useState<TransportAssignment[]>(() => {
-    const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
-    const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
-    const studentIdSet = new Set(rawStudents.map((s) => s.id));
+  const [transportAssignments, setTransportAssignments] = useState<TransportAssignment[]>(() => []);
 
-    const saved = localStorage.getItem(`${STORAGE_KEY}_assignments`);
-    const rawAssignments: TransportAssignment[] = saved
-      ? JSON.parse(saved)
-      : [
-          {
-            id: 'asgn-0',
-            studentId: 'stu-102',
-            month: '2026-07',
-            busId: 'bus-1',
-            stopId: 'stop-2',
-            tripType: 'RoundTrip',
-            daysCharged: 31,
-            discount: 200,
-            active: true,
-          },
-          {
-            id: 'asgn-0b',
-            studentId: 'stu-104',
-            month: '2026-07',
-            busId: 'bus-2',
-            stopId: 'stop-4',
-            tripType: 'OneWay',
-            daysCharged: 31,
-            discount: 0,
-            active: true,
-          },
-          {
-            id: 'asgn-1',
-            studentId: 'stu-101',
-            month: '2026-08',
-            busId: 'bus-1',
-            stopId: 'stop-1',
-            tripType: 'RoundTrip',
-            daysCharged: 31,
-            discount: 0,
-            active: true,
-          },
-          {
-            id: 'asgn-2',
-            studentId: 'stu-103',
-            month: '2026-08',
-            busId: 'bus-2',
-            stopId: 'stop-3',
-            tripType: 'RoundTrip',
-            daysCharged: 31,
-            discount: 0,
-            active: true,
-          },
-        ];
-    return rawAssignments.filter((a) => studentIdSet.has(a.studentId));
-  });
+  const [templates, setTemplates] = useState<FeeTemplate[]>(() => INITIAL_GLOBAL_TEMPLATES);
 
-  const [templates, setTemplates] = useState<FeeTemplate[]>(() => {
-    const savedStudents = localStorage.getItem(`${STORAGE_KEY}_students`);
-    const rawStudents: Student[] = savedStudents ? JSON.parse(savedStudents) : INITIAL_STUDENTS;
-    const studentIdSet = new Set(rawStudents.map((s) => s.id));
+  const [vouchers, setVouchers] = useState<FeeVoucher[]>(() => []);
 
-    const saved = localStorage.getItem(`${STORAGE_KEY}_templates`);
-    const rawTpls: FeeTemplate[] = saved ? JSON.parse(saved) : INITIAL_GLOBAL_TEMPLATES;
-    return rawTpls
-      .filter((t) => !t.studentId || studentIdSet.has(t.studentId))
-      .map((t) => {
-        if (
-          t.kind === 'Transport' &&
-          (t.label === 'Transport' ||
-            t.label === 'School Bus Transport Fee' ||
-            /school bus/i.test(t.label) ||
-            /transport charge/i.test(t.label))
-        ) {
-          return { ...t, label: 'Transport Fee' };
-        }
-        return t;
-      });
-  });
-
-  const [vouchers, setVouchers] = useState<FeeVoucher[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_vouchers`);
-    const rawVouchers: FeeVoucher[] = saved ? JSON.parse(saved) : INITIAL_VOUCHERS;
-    return rawVouchers.map((v) => {
-      // Auto-settle vouchers where netDue is 0 or less and status is still Issued
-      const isZeroDue = v.netDue <= 0;
-      const effectiveStatus = isZeroDue && v.status === 'Issued' ? 'Paid' : v.status;
-      return {
-        ...v,
-        status: effectiveStatus,
-        particulars: v.particulars.map((p) => {
-          if (
-            p.kind === 'Transport' ||
-            /transport/i.test(p.label) ||
-            /school bus/i.test(p.label)
-          ) {
-            return { ...p, kind: 'Transport' as const, label: 'Transport Fee' };
-          }
-          return p;
-        }),
-      };
-    });
-  });
-
-  const [collections, setCollections] = useState<FeeCollection[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_collections`);
-    return saved ? JSON.parse(saved) : INITIAL_COLLECTIONS;
-  });
+  const [collections, setCollections] = useState<FeeCollection[]>(() => []);
 
   // Live mirror of the vouchers state, same rationale as studentsRef/familiesRef
   // above: bulkCarryForwardDefaulters() calls carryForwardDefaulter() in a
@@ -885,10 +837,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     vouchersRef.current = vouchers;
   }, [vouchers]);
 
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_transactions`);
-    return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
-  });
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => []);
 
   // Adopt the highest document number already present in the loaded data so
   // the monotonic counters never re-issue a number that exists (e.g. after a
@@ -918,41 +867,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [institute, setInstitute] = useState<InstituteProfile>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_institute`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed?.name === 'Skooler Model Academy' || parsed?.name === 'Model Educational Academy') {
-          return INITIAL_INSTITUTE;
-        }
-        return parsed;
-      } catch {
-        // ignore
-      }
-    }
-    return INITIAL_INSTITUTE;
-  });
+  const [institute, setInstitute] = useState<InstituteProfile>(() => INITIAL_INSTITUTE);
 
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_banks`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const isLegacyDemo = parsed.some(
-            (b) => b.id === 'bank-1' && (b.accountNumber === '0102-0103984758' || b.bankName?.includes('Meezan') || b.bankName?.includes('Commercial Bank Limited'))
-          );
-          if (!isLegacyDemo) {
-            return parsed;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return INITIAL_BANK_ACCOUNTS;
-  });
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => []);
 
   // Sidebar state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
@@ -999,10 +916,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [themeConfig]);
 
   // Audit Trail & Activity Logs
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_audit_logs`);
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => []);
 
   const currentUserRef = useRef<User>(currentUser);
   useEffect(() => {
@@ -1044,18 +958,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   // Student Account History (Chronological Status, Transport & Academic Event Log)
-  const [studentAccountHistory, setStudentAccountHistory] = useState<StudentAccountHistoryEntry[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_student_account_history`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {
-        console.error('Failed to parse student account history', e);
-      }
-    }
-    return INITIAL_STUDENT_ACCOUNT_HISTORY;
-  });
+  const [studentAccountHistory, setStudentAccountHistory] = useState<StudentAccountHistoryEntry[]>(() => []);
 
   const addStudentAccountHistory = useCallback(
     (
@@ -1215,22 +1118,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [students, logAuditEvent]
   );
 
-  const [lockedMonths, setLockedMonths] = useState<string[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_locked_months`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {
-        console.error('Failed to parse locked months', e);
-      }
-    }
-    return [];
-  });
+  const [lockedMonths, setLockedMonths] = useState<string[]>(() => []);
 
   const clearAuditLogs = useCallback(() => {
     setAuditLogs([]);
-    localStorage.removeItem(`${STORAGE_KEY}_audit_logs`);
   }, []);
 
   const isRemoteUpdateRef = useRef(false);
@@ -1239,21 +1130,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!d) return;
     isRemoteUpdateRef.current = true;
     if (Array.isArray(d.users) && d.users.length > 0) setUsers(d.users);
-    if (Array.isArray(d.classes) && d.classes.length > 0) setClasses(d.classes);
-    if (Array.isArray(d.students) && d.students.length > 0) setStudents(d.students);
-    if (Array.isArray(d.families) && d.families.length > 0) setFamilies(d.families);
-    if (Array.isArray(d.buses) && d.buses.length > 0) setBuses(d.buses);
-    if (Array.isArray(d.stops) && d.stops.length > 0) setStops(d.stops);
+    if (Array.isArray(d.classes)) setClasses(d.classes);
+    if (Array.isArray(d.students)) setStudents(d.students);
+    if (Array.isArray(d.families)) setFamilies(d.families);
+    if (Array.isArray(d.buses)) setBuses(d.buses);
+    if (Array.isArray(d.stops)) setStops(d.stops);
     if (Array.isArray(d.transportAssignments)) setTransportAssignments(d.transportAssignments);
-    if (Array.isArray(d.templates) && d.templates.length > 0) setTemplates(d.templates);
+    if (Array.isArray(d.templates)) {
+      setTemplates(d.templates.length > 0 ? d.templates : INITIAL_GLOBAL_TEMPLATES);
+    }
     if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
     if (Array.isArray(d.collections)) setCollections(d.collections);
     if (Array.isArray(d.transactions)) setTransactions(d.transactions);
-    if (Array.isArray(d.bankAccounts) && d.bankAccounts.length > 0) setBankAccounts(d.bankAccounts);
+    if (Array.isArray(d.bankAccounts)) setBankAccounts(d.bankAccounts);
     if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
     if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
     if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
-    if (d.institute && d.institute.name) setInstitute(d.institute);
+    if (d.institute && d.institute.name) {
+      setInstitute(d.institute);
+      if (d.institute.sessionTimeoutMinutes) {
+        const parsed = Number(d.institute.sessionTimeoutMinutes);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
+          setSessionTimeoutMinutesState(parsed);
+          try {
+            localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(parsed));
+          } catch {}
+        }
+      }
+    }
+
+    initializeSyncSnapshots(d);
 
     setTimeout(() => {
       isRemoteUpdateRef.current = false;
@@ -1279,26 +1185,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [applyServerState]);
 
-  // Sync to local storage & database
+  // Sync to centralized tenant database
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(users));
-    localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(classes));
-    localStorage.setItem(`${STORAGE_KEY}_students`, JSON.stringify(students));
-    localStorage.setItem(`${STORAGE_KEY}_families`, JSON.stringify(families));
-    localStorage.setItem(`${STORAGE_KEY}_buses`, JSON.stringify(buses));
-    localStorage.setItem(`${STORAGE_KEY}_stops`, JSON.stringify(stops));
-    localStorage.setItem(`${STORAGE_KEY}_assignments`, JSON.stringify(transportAssignments));
-    localStorage.setItem(`${STORAGE_KEY}_templates`, JSON.stringify(templates));
-    localStorage.setItem(`${STORAGE_KEY}_vouchers`, JSON.stringify(vouchers));
-    localStorage.setItem(`${STORAGE_KEY}_collections`, JSON.stringify(collections));
-    localStorage.setItem(`${STORAGE_KEY}_transactions`, JSON.stringify(transactions));
-    localStorage.setItem(`${STORAGE_KEY}_institute`, JSON.stringify(institute));
-    localStorage.setItem(`${STORAGE_KEY}_banks`, JSON.stringify(bankAccounts));
-    localStorage.setItem(`${STORAGE_KEY}_audit_logs`, JSON.stringify(auditLogs));
-    localStorage.setItem(`${STORAGE_KEY}_student_account_history`, JSON.stringify(studentAccountHistory));
-    localStorage.setItem(`${STORAGE_KEY}_locked_months`, JSON.stringify(lockedMonths));
-
-    if (isRemoteUpdateRef.current) {
+    if (isRemoteUpdateRef.current || !isAuthenticated || !currentInstitution?.id) {
       return;
     }
 
@@ -1338,6 +1227,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     auditLogs,
     studentAccountHistory,
     lockedMonths,
+    isAuthenticated,
+    currentInstitution?.id,
   ]);
 
   useEffect(() => {
@@ -1377,6 +1268,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsAuthenticated(true);
       setActiveInstitutionId(res.institution.id);
 
+      try {
+        sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+      } catch {}
+
       localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
       localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
       localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify([res.user]));
@@ -1403,12 +1298,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBuses([]);
       setStops([]);
       setTransportAssignments([]);
+      const freshTemplates = createDefaultGlobalTemplates(res.institution.id);
+      setTemplates(freshTemplates);
       setVouchers([]);
       setCollections([]);
       setTransactions([]);
+      setBankAccounts([]);
+      setAuditLogs([]);
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setInvites([]);
+
+      resetSyncSnapshots();
+      initializeSyncSnapshots({
+        classes: [],
+        students: [],
+        families: [],
+        buses: [],
+        stops: [],
+        transportAssignments: [],
+        templates: freshTemplates,
+        bankAccounts: [],
+        lockedMonths: [],
+      });
 
       logAuditEvent({
         actionType: 'system_cleanup',
@@ -1438,10 +1350,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: res.error || 'Failed to join institution workspace.' };
       }
 
+      // Reset state for joining operator
+      setClasses([]);
+      setStudents([]);
+      setFamilies([]);
+      setBuses([]);
+      setStops([]);
+      setTransportAssignments([]);
+      setTemplates(INITIAL_GLOBAL_TEMPLATES);
+      setVouchers([]);
+      setCollections([]);
+      setTransactions([]);
+      setBankAccounts([]);
+      setAuditLogs([]);
+      setStudentAccountHistory([]);
+      setLockedMonths([]);
+      setInvites([]);
+      resetSyncSnapshots();
+
       setCurrentInstitution(res.institution);
       setCurrentUser(res.user);
       setIsAuthenticated(true);
       setActiveInstitutionId(res.institution.id);
+
+      try {
+        sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+      } catch {}
 
       localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
       localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
@@ -1515,9 +1449,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentInstitution]);
 
-  // Verify server-side session cookie on initial mount
+  // Verify server-side session cookie on initial mount (Option B: Ephemeral Banking Model)
   useEffect(() => {
     let isMounted = true;
+
+    try {
+      const isSessionActive = sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
+      if (!isSessionActive) {
+        setIsAuthenticated(false);
+        setCurrentUser(ANONYMOUS_USER);
+        setCurrentInstitution(null);
+        setActiveInstitutionId(null);
+        setInstitute(INITIAL_INSTITUTE);
+        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+        localStorage.removeItem(`${STORAGE_KEY}_institution`);
+        return;
+      }
+    } catch {}
+
     apiGetMe().then((me) => {
       if (!isMounted) return;
       if (me.success && me.user) {
@@ -1527,7 +1476,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setCurrentInstitution(me.institution);
           setActiveInstitutionId(me.institution.id);
           localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(me.institution));
+          try {
+            const instSettings = me.institution.settings
+              ? typeof me.institution.settings === 'string'
+                ? JSON.parse(me.institution.settings)
+                : me.institution.settings
+              : {};
+            if (instSettings.sessionTimeoutMinutes) {
+              const parsed = Number(instSettings.sessionTimeoutMinutes);
+              if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
+                setSessionTimeoutMinutesState(parsed);
+                localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(parsed));
+              }
+            }
+          } catch {}
         }
+      } else {
+        // Not authenticated on server: ensure clean unauthenticated state
+        setIsAuthenticated(false);
+        setCurrentUser(ANONYMOUS_USER);
+        setCurrentInstitution(null);
+        setActiveInstitutionId(null);
+        setInstitute(INITIAL_INSTITUTE);
+        setClasses([]);
+        setStudents([]);
+        setFamilies([]);
+        setBuses([]);
+        setStops([]);
+        setTransportAssignments([]);
+        setTemplates(INITIAL_GLOBAL_TEMPLATES);
+        setVouchers([]);
+        setCollections([]);
+        setTransactions([]);
+        setBankAccounts([]);
+        setAuditLogs([]);
+        setStudentAccountHistory([]);
+        setLockedMonths([]);
+        setInvites([]);
+        try {
+          localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+          localStorage.removeItem(`${STORAGE_KEY}_institution`);
+          localStorage.removeItem(`${STORAGE_KEY}_institute`);
+          localStorage.removeItem('quickfees_recent_searched_students');
+        } catch {}
+        resetSyncSnapshots();
       }
     }).catch(() => {});
     return () => {
@@ -1549,10 +1541,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'Please enter your password.' };
     }
 
+    const cleanCode = (institutionCode || '').trim().toUpperCase();
+    if (!cleanCode) {
+      return { success: false, error: 'Please enter your Institution Code.' };
+    }
+
     // Authoritative backend multi-tenant login
     try {
-      const apiRes = await apiLogin(trimmed, password, institutionCode);
+      const apiRes = await apiLogin(trimmed, password, cleanCode);
       if (apiRes.success && apiRes.user) {
+        // Reset in-memory state before loading new tenant records
+        setClasses([]);
+        setStudents([]);
+        setFamilies([]);
+        setBuses([]);
+        setStops([]);
+        setTransportAssignments([]);
+        setTemplates(INITIAL_GLOBAL_TEMPLATES);
+        setVouchers([]);
+        setCollections([]);
+        setTransactions([]);
+        setBankAccounts([]);
+        setAuditLogs([]);
+        setStudentAccountHistory([]);
+        setLockedMonths([]);
+        setInvites([]);
+        resetSyncSnapshots();
+
         setCurrentUser(apiRes.user);
         setIsAuthenticated(true);
         if (apiRes.institution) {
@@ -1577,6 +1592,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             applyServerState(stateRes.data);
           }
         }
+
+        try {
+          sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+        } catch {}
 
         localStorage.setItem(
           `${STORAGE_KEY}_auth_session`,
@@ -1628,6 +1647,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const authedUser: User = { ...matchedUser, lastLogin: new Date().toISOString() };
 
+    try {
+      sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+    } catch {}
+
     setCurrentUser(authedUser);
     setIsAuthenticated(true);
     localStorage.setItem(
@@ -1640,7 +1663,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const logout = () => {
     setIsAuthenticated(false);
-    localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+    setCurrentUser(ANONYMOUS_USER);
+    setCurrentInstitution(null);
+    setActiveInstitutionId(null);
+    setInstitute(INITIAL_INSTITUTE);
+    setClasses([]);
+    setStudents([]);
+    setFamilies([]);
+    setBuses([]);
+    setStops([]);
+    setTransportAssignments([]);
+    setTemplates(INITIAL_GLOBAL_TEMPLATES);
+    setVouchers([]);
+    setCollections([]);
+    setTransactions([]);
+    setBankAccounts([]);
+    setAuditLogs([]);
+    setStudentAccountHistory([]);
+    setLockedMonths([]);
+    setInvites([]);
+
+    try {
+      sessionStorage.removeItem(`${STORAGE_KEY}_browser_session_active`);
+      localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
+      localStorage.removeItem(`${STORAGE_KEY}_institution`);
+      localStorage.removeItem(`${STORAGE_KEY}_institute`);
+      localStorage.removeItem('quickfees_recent_searched_students');
+      localStorage.removeItem('quickfees_last_activity_timestamp');
+    } catch {}
+
+    resetSyncSnapshots();
     apiLogout().catch(() => {});
   };
 
@@ -5445,6 +5497,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setVoucherDefaultCopies,
         institute,
         updateInstitute,
+        sessionTimeoutMinutes,
+        setSessionTimeoutMinutes,
         bankAccounts,
         addBankAccount,
         updateBankAccount,

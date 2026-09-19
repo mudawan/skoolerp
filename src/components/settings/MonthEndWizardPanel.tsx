@@ -28,11 +28,13 @@ import { PaymentMode } from '../../types';
 
 interface MonthEndWizardPanelProps {
   initialMonth?: string;
+  hideHeader?: boolean;
   onNavigateToTab?: (tab: 'dashboard' | 'vouchers' | 'collections' | 'defaulters') => void;
 }
 
 export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   initialMonth,
+  hideHeader = false,
   onNavigateToTab,
 }) => {
   const {
@@ -322,69 +324,120 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
 
   return (
     <div className="space-y-6" id="month-end-wizard-panel">
-      {/* Top Banner: Month Selector & Closure Status */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-200/90 shadow-xs">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
-              <CalendarCheck className="w-6 h-6 text-amber-600" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                  Month-End Closure & Fee Book Lock Wizard
-                </h3>
-                {isLocked ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                    <Lock className="w-3.5 h-3.5" />
-                    Fee Books Locked & Sealed
-                  </span>
-                ) : monthStatus.isClosed ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    All Accounts Settled (Ready to Lock)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                    <Clock className="w-3.5 h-3.5" />
-                    {uncarriedDefaulters.length} Uncarried Defaulter(s)
-                  </span>
-                )}
+      {/* Top Banner / Month Selector & Closure Status */}
+      <div className="bg-white p-5 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs">
+        {!hideHeader ? (
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
+                <CalendarCheck className="w-6 h-6 text-amber-600" />
               </div>
-              <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
-                Reconcile fee collections, audit bank accounts, resolve uncarried defaulters, and permanently lock
-                accounting books before rolling over to the next billing period.
-              </p>
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                    Month-End Closure & Fee Book Lock Wizard
+                  </h3>
+                  {isLocked ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <Lock className="w-3.5 h-3.5" />
+                      Fee Books Locked & Sealed
+                    </span>
+                  ) : monthStatus.isClosed ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      All Accounts Settled (Ready to Lock)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      <Clock className="w-3.5 h-3.5" />
+                      {uncarriedDefaulters.length} Uncarried Defaulter(s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                  Reconcile fee collections, audit bank accounts, resolve uncarried defaulters, and permanently lock
+                  accounting books before rolling over to the next billing period.
+                </p>
+              </div>
+            </div>
+
+            {/* Month Selector Dropdown */}
+            <div className="flex items-center gap-3 shrink-0 self-start lg:self-center bg-slate-50 p-2 rounded-2xl border border-slate-200">
+              <label htmlFor="wizard-month-select" className="text-xs font-bold text-slate-700 pl-1">
+                Target Month:
+              </label>
+              <select
+                id="wizard-month-select"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  setCurrentStep(1);
+                }}
+                className="px-3 py-1.5 bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-xl shadow-2xs focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+              >
+                {availableMonths.map((m) => {
+                  const st = getMonthClosureStatus(m);
+                  const lk = isMonthLocked(m);
+                  const statusBadge = lk ? '🔒 Locked' : st.isClosed ? '✓ Reconciled' : `⚠️ ${st.uncarriedUnpaidCount} Open`;
+                  return (
+                    <option key={m} value={m}>
+                      {formatMonthName(m)} — {statusBadge}
+                    </option>
+                  );
+                })}
+              </select>
             </div>
           </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-xs font-bold text-slate-700">Closure Status:</span>
+              {isLocked ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <Lock className="w-3.5 h-3.5" />
+                  Fee Books Locked & Sealed
+                </span>
+              ) : monthStatus.isClosed ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  All Accounts Settled (Ready to Lock)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  <Clock className="w-3.5 h-3.5" />
+                  {uncarriedDefaulters.length} Uncarried Defaulter(s)
+                </span>
+              )}
+            </div>
 
-          {/* Month Selector Dropdown */}
-          <div className="flex items-center gap-3 shrink-0 self-start lg:self-center bg-slate-50 p-2 rounded-2xl border border-slate-200">
-            <label htmlFor="wizard-month-select" className="text-xs font-bold text-slate-700 pl-1">
-              Target Month:
-            </label>
-            <select
-              id="wizard-month-select"
-              value={selectedMonth}
-              onChange={(e) => {
-                setSelectedMonth(e.target.value);
-                setCurrentStep(1);
-              }}
-              className="px-3 py-1.5 bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-xl shadow-2xs focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-            >
-              {availableMonths.map((m) => {
-                const st = getMonthClosureStatus(m);
-                const lk = isMonthLocked(m);
-                const statusBadge = lk ? '🔒 Locked' : st.isClosed ? '✓ Reconciled' : `⚠️ ${st.uncarriedUnpaidCount} Open`;
-                return (
-                  <option key={m} value={m}>
-                    {formatMonthName(m)} — {statusBadge}
-                  </option>
-                );
-              })}
-            </select>
+            {/* Month Selector Dropdown */}
+            <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto bg-slate-50 p-2 rounded-xl border border-slate-200">
+              <label htmlFor="wizard-month-select" className="text-xs font-bold text-slate-700 pl-1">
+                Target Month:
+              </label>
+              <select
+                id="wizard-month-select"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  setCurrentStep(1);
+                }}
+                className="px-3 py-1.5 bg-white border border-slate-300 text-slate-900 text-xs font-bold rounded-lg shadow-2xs focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
+              >
+                {availableMonths.map((m) => {
+                  const st = getMonthClosureStatus(m);
+                  const lk = isMonthLocked(m);
+                  const statusBadge = lk ? '🔒 Locked' : st.isClosed ? '✓ Reconciled' : `⚠️ ${st.uncarriedUnpaidCount} Open`;
+                  return (
+                    <option key={m} value={m}>
+                      {formatMonthName(m)} — {statusBadge}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Previous Month Not Closed Callout (if viewing active month while prev is open) */}
         {!prevMonthStatus.isClosed && prevMonthStatus.totalVouchers > 0 && selectedMonth !== prevMonthStr && (

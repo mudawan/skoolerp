@@ -108,12 +108,61 @@ function notifyStatus() {
 export function setActiveInstitutionId(id: string | null) {
   if (activeInstitutionId !== id) {
     activeInstitutionId = id;
+    resetSyncSnapshots();
     notifyStatus();
   }
 }
 
 export function getActiveInstitutionId(): string | null {
   return activeInstitutionId;
+}
+
+export function resetSyncSnapshots(): void {
+  lastSyncedSnapshots = {};
+  permanentlyFailedIds = {};
+}
+
+export function initializeSyncSnapshots(data: any): void {
+  if (!data) return;
+  const populate = (collectionName: string, items: any[]) => {
+    if (!Array.isArray(items)) return;
+    const map = new Map<string, string>();
+    for (const rawItem of items) {
+      if (!rawItem?.id) continue;
+      const item = stripFields(collectionName, rawItem);
+      map.set(item.id, JSON.stringify(item));
+    }
+    lastSyncedSnapshots[collectionName] = map;
+  };
+
+  populate('classes', data.classes);
+  populate('families', data.families);
+  populate('students', data.students);
+  populate('buses', data.buses);
+  populate('stops', data.stops);
+  populate('transportAssignments', data.transportAssignments);
+  populate('templates', data.templates);
+  populate('bankAccounts', data.bankAccounts);
+
+  if (Array.isArray(data.studentAccountHistory)) {
+    const histMap = new Map<string, string>();
+    for (const h of data.studentAccountHistory) {
+      if (h?.id) histMap.set(h.id, '1');
+    }
+    lastSyncedSnapshots['studentAccountHistory'] = histMap;
+  }
+
+  if (Array.isArray(data.lockedMonths)) {
+    const lockMap = new Map<string, string>();
+    for (const m of data.lockedMonths) {
+      if (typeof m === 'string') lockMap.set(m, '1');
+    }
+    lastSyncedSnapshots['lockedMonths'] = lockMap;
+  }
+
+  if (data.institute && data.institute.name) {
+    lastSyncedSnapshots['institute'] = new Map([['_', JSON.stringify(data.institute)]]);
+  }
 }
 
 export function subscribeDbStatus(callback: (status: DbStatus) => void): () => void {
@@ -261,6 +310,15 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
     };
 
     if (institution) {
+      let instSettings: any = {};
+      try {
+        if (institution.settings) {
+          instSettings = typeof institution.settings === 'string'
+            ? JSON.parse(institution.settings)
+            : institution.settings;
+        }
+      } catch {}
+
       data.institute = {
         name: institution.name || '',
         logoUrl: institution.logo_url || institution.logoUrl || '',
@@ -269,9 +327,11 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
         email: institution.email || '',
         website: institution.website || '',
         regNo: institution.registration_no || institution.regNo || '',
+        sessionTimeoutMinutes: Number(instSettings?.sessionTimeoutMinutes) || 10,
       };
     }
 
+    initializeSyncSnapshots(data);
     isConnected = true;
     currentEngine = currentEngine || 'sqlite';
     notifyStatus();
@@ -342,6 +402,9 @@ async function diffAndSyncSimpleCollection(
   endpoint: string,
   items: any[]
 ): Promise<{ failedIds: string[] }> {
+  if (!activeInstitutionId) {
+    return { failedIds: [] };
+  }
   const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
   const nextMap = new Map<string, string>();
   const failedMap = permanentlyFailedIds[collectionName] || new Map<string, string>();
@@ -371,7 +434,10 @@ async function diffAndSyncSimpleCollection(
     try {
       const res = await fetch(isNew ? endpoint : `${endpoint}/${item.id}`, {
         method: isNew ? 'POST' : 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
+        },
         body: JSON.stringify(item),
       });
       if (res.status >= 400 && res.status < 500) {
@@ -399,7 +465,10 @@ async function diffAndSyncSimpleCollection(
   for (const [id, serialized] of prevMap.entries()) {
     if (!currentIds.has(id)) {
       try {
-        const res = await fetch(`${endpoint}/${id}`, { method: 'DELETE' });
+        const res = await fetch(`${endpoint}/${id}`, {
+          method: 'DELETE',
+          headers: activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {},
+        });
         if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
         failedMap.delete(id);
       } catch (err) {
@@ -435,6 +504,7 @@ export async function syncSimpleEntityCollectionNow(
 }
 
 async function diffAppendOnlyCollection(collectionName: string, endpoint: string, items: any[]) {
+  if (!activeInstitutionId) return;
   const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
   const nextMap = new Map<string, string>(prevMap);
 
@@ -443,7 +513,10 @@ async function diffAppendOnlyCollection(collectionName: string, endpoint: string
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
+        },
         body: JSON.stringify(item),
       });
       if (res.ok) {
@@ -474,6 +547,7 @@ async function diffAppendOnlyCollection(collectionName: string, endpoint: string
  * month forward as synced once the server has actually confirmed it.
  */
 async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[] }> {
+  if (!activeInstitutionId) return { failedIds: [] };
   const prevSet = lastSyncedSnapshots['lockedMonths'] || new Map<string, string>();
   const nextMap = new Map<string, string>();
   const currentSet = new Set(months);
@@ -488,7 +562,10 @@ async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[]
     try {
       const res = await fetch('/api/locked-months', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
+        },
         body: JSON.stringify({ month }),
       });
       if (res.ok) {
@@ -508,7 +585,10 @@ async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[]
   for (const month of prevSet.keys()) {
     if (!currentSet.has(month)) {
       try {
-        const res = await fetch(`/api/locked-months/${encodeURIComponent(month)}`, { method: 'DELETE' });
+        const res = await fetch(`/api/locked-months/${encodeURIComponent(month)}`, {
+          method: 'DELETE',
+          headers: activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {},
+        });
         if (!res.ok && res.status !== 404) {
           console.warn(`[Sync] Failed to unlock month ${month}: HTTP ${res.status}`);
           failedIds.push(`unlock:${month}`);
@@ -530,6 +610,7 @@ async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[]
 }
 
 async function syncInstituteProfile(institute: any) {
+  if (!activeInstitutionId || !institute || !institute.name) return;
   const serialized = JSON.stringify(institute);
   const prevMap = lastSyncedSnapshots['institute'] || new Map<string, string>();
   if (prevMap.get('_') === serialized) return;
@@ -537,7 +618,10 @@ async function syncInstituteProfile(institute: any) {
   try {
     const res = await fetch('/api/institute', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-institution-id': activeInstitutionId,
+      },
       body: JSON.stringify({
         name: institute.name,
         logoUrl: institute.logoUrl,
@@ -546,6 +630,9 @@ async function syncInstituteProfile(institute: any) {
         email: institute.email,
         website: institute.website,
         registrationNo: institute.regNo,
+        settings: {
+          sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || 10,
+        },
       }),
     });
     if (res.ok) {
@@ -819,6 +906,8 @@ export async function apiGetMe(): Promise<{
 }
 
 export async function apiLogout(): Promise<{ success: boolean }> {
+  setActiveInstitutionId(null);
+  resetSyncSnapshots();
   try {
     const res = await fetch('/api/auth/logout', {
       method: 'POST',

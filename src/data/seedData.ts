@@ -32,6 +32,7 @@ export const INITIAL_INSTITUTE: InstituteProfile = {
   email: '',
   website: '',
   regNo: '',
+  sessionTimeoutMinutes: 10,
 };
 
 // Production Release: Clean, empty bank accounts list. Institutions configure their own banks in Settings.
@@ -43,17 +44,22 @@ export const INITIAL_BUSES: TransportBus[] = [];
 export const INITIAL_STOPS: TransportStop[] = [];
 
 // Production Release: Standard 9-category fee particulars schema with default zero balances.
-export const INITIAL_GLOBAL_TEMPLATES: FeeTemplate[] = [
-  { id: 'tpl-1', kind: 'Tuition', label: 'Tuition Fee', defaultAmount: 0, sortOrder: 1 },
-  { id: 'tpl-2', kind: 'Flex1', label: 'Admission Fee', defaultAmount: 0, sortOrder: 2 },
-  { id: 'tpl-3', kind: 'Flex2', label: 'Registration Fee', defaultAmount: 0, sortOrder: 3 },
-  { id: 'tpl-4', kind: 'Transport', label: 'Transport Fee', defaultAmount: 0, sortOrder: 4 },
-  { id: 'tpl-5', kind: 'Fine', label: 'Fine', defaultAmount: 0, sortOrder: 5 },
-  { id: 'tpl-6', kind: 'Flex3', label: 'Exam Fee', defaultAmount: 0, sortOrder: 6 },
-  { id: 'tpl-7', kind: 'Flex4', label: 'Other', defaultAmount: 0, sortOrder: 7 },
-  { id: 'tpl-8', kind: 'PreviousBalance', label: 'Previous Balance', defaultAmount: 0, sortOrder: 8 },
-  { id: 'tpl-9', kind: 'Discount', label: 'Discount in Fee', defaultAmount: 0, sortOrder: 9 },
-];
+export function createDefaultGlobalTemplates(institutionId?: string): FeeTemplate[] {
+  const prefix = institutionId ? `${institutionId}_` : '';
+  return [
+    { id: `${prefix}tpl_1`, kind: 'Tuition', label: 'Tuition Fee', defaultAmount: 0, sortOrder: 1 },
+    { id: `${prefix}tpl_2`, kind: 'Flex1', label: 'Admission Fee', defaultAmount: 0, sortOrder: 2 },
+    { id: `${prefix}tpl_3`, kind: 'Flex2', label: 'Registration Fee', defaultAmount: 0, sortOrder: 3 },
+    { id: `${prefix}tpl_4`, kind: 'Transport', label: 'Transport Fee', defaultAmount: 0, sortOrder: 4 },
+    { id: `${prefix}tpl_5`, kind: 'Fine', label: 'Fine', defaultAmount: 0, sortOrder: 5 },
+    { id: `${prefix}tpl_6`, kind: 'Flex3', label: 'Exam Fee', defaultAmount: 0, sortOrder: 6 },
+    { id: `${prefix}tpl_7`, kind: 'Flex4', label: 'Other', defaultAmount: 0, sortOrder: 7 },
+    { id: `${prefix}tpl_8`, kind: 'PreviousBalance', label: 'Previous Balance', defaultAmount: 0, sortOrder: 8 },
+    { id: `${prefix}tpl_9`, kind: 'Discount', label: 'Discount in Fee', defaultAmount: 0, sortOrder: 9 },
+  ];
+}
+
+export const INITIAL_GLOBAL_TEMPLATES: FeeTemplate[] = createDefaultGlobalTemplates();
 
 // Production Release: Clean, empty rosters and financial ledgers.
 export const INITIAL_FAMILIES: Family[] = [];

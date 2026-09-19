@@ -3323,12 +3323,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {activeSubTab === 'database' && <DatabaseBackupsPanel />}
 
       {/* Subtab 6: Selection-Based Database Cleanup & Table Reset */}
-      {activeSubTab === 'cleanup' && <DataCleanupView />}
+      {activeSubTab === 'cleanup' && <DataCleanupView hideHeader={true} />}
 
       {/* Subtab 7: Month End Reconciliation & Defaulter Wizard */}
       {activeSubTab === 'monthEnd' && (
         <MonthEndWizardPanel
           initialMonth={targetMonth}
+          hideHeader={true}
           onNavigateToTab={onNavigateToTab}
         />
       )}

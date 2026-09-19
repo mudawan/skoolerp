@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActiveTab } from '../types';
-import { MonthEndWizardPanel } from './settings/MonthEndWizardPanel';
+import { SettingsView } from './SettingsView';
 
 interface MonthEndWizardViewProps {
   initialMonth?: string;
@@ -12,13 +12,14 @@ export const MonthEndWizardView: React.FC<MonthEndWizardViewProps> = ({
   setActiveTab,
 }) => {
   return (
-    <div className="space-y-6">
-      <MonthEndWizardPanel
-        initialMonth={initialMonth}
-        onNavigateToTab={(tab) => {
-          setActiveTab(tab);
-        }}
-      />
-    </div>
+    <SettingsView
+      viewMode="settings"
+      initialSubTab="monthEnd"
+      targetMonth={initialMonth}
+      onNavigateToTab={(tab) => {
+        setActiveTab(tab);
+      }}
+    />
   );
 };
+

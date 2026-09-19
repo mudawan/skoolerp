@@ -40,6 +40,7 @@ export interface Institution {
   email?: string;
   currency: string;
   logoUrl?: string;
+  settings?: any;
   status: 'active' | 'suspended' | 'trial';
   createdAt: string;
   updatedAt?: string;
@@ -266,6 +267,7 @@ export interface InstituteProfile {
   email: string;
   website: string;
   regNo: string;
+  sessionTimeoutMinutes?: number; // Inactivity auto-logout timeout in minutes (Default: 10)
 }
 
 export interface BankAccount {

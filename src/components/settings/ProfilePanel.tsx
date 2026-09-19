@@ -5,11 +5,15 @@ import {
   AlertCircle,
   Building2,
   Check,
+  Clock,
   Copy,
   Globe,
   Image as ImageIcon,
   Link as LinkIcon,
+  Lock,
   Save,
+  ShieldAlert,
+  ShieldCheck,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -75,7 +79,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              School Workspace Code &bull; Share this code with teachers or accountants so they can connect their account
+              School / Institution Code &bull; Share this code with teachers or accountants so they can connect their account
             </p>
           </div>
         </div>
@@ -85,7 +89,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
           onClick={() => {
             navigator.clipboard.writeText(activeSchoolCode);
             setCodeCopied(true);
-            showToast(`School code ${activeSchoolCode} copied to clipboard!`, 'success');
+            showToast(`School / Institution Code ${activeSchoolCode} copied to clipboard!`, 'success');
             setTimeout(() => setCodeCopied(false), 2500);
           }}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer self-start sm:self-auto shrink-0 ${
@@ -366,15 +370,120 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Card 3: Security & Inactivity Session Control (Option B) */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              Security & Inactivity Session Control
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Strict Banking Security (Option B): Sessions do not persist across browser restarts and auto-expire after idle inactivity.
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold shrink-0">
+            <Lock className="w-3.5 h-3.5" />
+            <span>Strict Ephemeral Model</span>
+          </div>
+        </div>
+
+        {/* Quick Presets & Explanation */}
+        <div className="space-y-3">
+          <label className="block font-bold text-slate-700 text-xs">
+            Auto-Logout Inactivity Duration
+          </label>
+
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+            {[
+              { mins: 5, label: '5 Mins', tag: 'High Security' },
+              { mins: 10, label: '10 Mins', tag: 'Default' },
+              { mins: 15, label: '15 Mins', tag: 'Standard' },
+              { mins: 30, label: '30 Mins', tag: 'Extended' },
+              { mins: 60, label: '60 Mins', tag: 'Long' },
+            ].map((preset) => {
+              const isSelected = (profileData.sessionTimeoutMinutes ?? 10) === preset.mins;
+              return (
+                <button
+                  key={preset.mins}
+                  type="button"
+                  id={`btn-timeout-preset-${preset.mins}`}
+                  disabled={!hasPermission('settings.manage')}
+                  onClick={() =>
+                    setProfileData({ ...profileData, sessionTimeoutMinutes: preset.mins })
+                  }
+                  className={`p-3 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                    isSelected
+                      ? 'bg-teal-50 border-teal-500 text-teal-900 ring-2 ring-teal-500/20 shadow-xs'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-xs">{preset.label}</span>
+                    <Clock className={`w-3.5 h-3.5 ${isSelected ? 'text-teal-600' : 'text-slate-400'}`} />
+                  </div>
+                  <span
+                    className={`text-[10px] mt-1.5 font-medium ${
+                      isSelected ? 'text-teal-700' : 'text-slate-500'
+                    }`}
+                  >
+                    {preset.tag}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Custom Minute Input */}
+          <div className="pt-2 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                Or enter custom timeout (1 - 180 minutes):
+              </label>
+              <div className="relative max-w-xs">
+                <input
+                  type="number"
+                  id="input-custom-timeout-minutes"
+                  min={1}
+                  max={180}
+                  value={profileData.sessionTimeoutMinutes ?? 10}
+                  disabled={!hasPermission('settings.manage')}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setProfileData({
+                      ...profileData,
+                      sessionTimeoutMinutes: isNaN(val) ? 10 : Math.max(1, Math.min(180, val)),
+                    });
+                  }}
+                  className="w-full pl-9 pr-14 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900"
+                />
+                <Clock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <span className="absolute right-3 top-2.5 text-[11px] text-slate-500 font-medium">
+                  mins
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 text-[11px] text-slate-600 sm:max-w-xs flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                A 60-second warning countdown with a "Stay Logged In" button will alert the operator before automatic session logout occurs.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {hasPermission('settings.manage') && (
           <div className="flex justify-end pt-4 border-t border-slate-100">
             <button
               type="submit"
+              id="btn-save-profile-security"
               className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              Save Profile & Branding
+              Save Profile & Security Settings
             </button>
           </div>
         )}

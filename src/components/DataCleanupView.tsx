@@ -53,7 +53,11 @@ const INITIAL_SELECTION: TableSelectionState = {
   users: false,
 };
 
-export const DataCleanupView: React.FC = () => {
+export interface DataCleanupViewProps {
+  hideHeader?: boolean;
+}
+
+export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = false }) => {
   const {
     students,
     classes,
@@ -397,25 +401,27 @@ export const DataCleanupView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-rose-950 via-slate-900 to-slate-950 p-6 rounded-2xl text-white shadow-md border border-rose-900/40 relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-80 h-full bg-rose-600/10 blur-3xl pointer-events-none" />
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5 max-w-2xl">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-300 text-[11px] font-bold">
-              <ShieldAlert className="w-3.5 h-3.5" />
-              Administrative Data Maintenance Utility
+      {!hideHeader && (
+        <div className="bg-gradient-to-r from-rose-950 via-slate-900 to-slate-950 p-6 rounded-2xl text-white shadow-md border border-rose-900/40 relative overflow-hidden">
+          <div className="absolute right-0 top-0 w-80 h-full bg-rose-600/10 blur-3xl pointer-events-none" />
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/20 border border-rose-500/40 rounded-full text-rose-300 text-[11px] font-bold">
+                <ShieldAlert className="w-3.5 h-3.5" />
+                Administrative Data Maintenance Utility
+              </div>
+              <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                <Database className="w-5 h-5 text-rose-400" />
+                Selection-Based Database Reset & Table Purge
+              </h2>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Quickly reset or purge individual data tables for testing, staging, or academic year renewal.
+                Select specific collections below to execute a targeted reset with full cascading integrity awareness.
+              </p>
             </div>
-            <h2 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              <Database className="w-5 h-5 text-rose-400" />
-              Selection-Based Database Reset & Table Purge
-            </h2>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Quickly reset or purge individual data tables for testing, staging, or academic year renewal.
-              Select specific collections below to execute a targeted reset with full cascading integrity awareness.
-            </p>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Quick-Select Presets Toolbar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">

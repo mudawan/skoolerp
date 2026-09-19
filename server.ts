@@ -36,11 +36,12 @@ function mintSecureToken(): string {
 }
 
 function setSessionCookie(res: express.Response, token: string) {
+  // Option B: Ephemeral session cookie (no maxAge) so the browser automatically
+  // discards the cookie when the browser session ends / window closes.
   res.cookie(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    maxAge: SESSION_COOKIE_MAX_AGE,
     path: '/',
   });
 }
@@ -460,37 +461,48 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'Admin password must be at least 6 characters.' });
       }
 
-      // Internally generate unique school code (e.g. SCH-102, CMS-482)
-      const cleanWords = schoolName.trim().replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean);
-      let prefix = '';
-      if (cleanWords.length >= 3) {
-        prefix = (cleanWords[0][0] + cleanWords[1][0] + cleanWords[2][0]).toUpperCase();
-      } else if (cleanWords.length === 2) {
-        prefix = (cleanWords[0].substring(0, 2) + cleanWords[1].substring(0, 2)).toUpperCase();
-      } else if (cleanWords.length === 1) {
-        prefix = cleanWords[0].substring(0, 4).toUpperCase();
-      } else {
-        prefix = 'SCH';
-      }
-      if (prefix.length < 3) {
-        prefix = (prefix + 'SCH').substring(0, 3);
-      }
-
-      // Guarantee collision-free uniqueness
+      // Use client-provided unique code if available, otherwise generate
       let cleanCode = '';
-      let attempts = 0;
-      while (attempts < 50) {
-        const randomNum = Math.floor(100 + Math.random() * 900);
-        const candidate = `${prefix}-${randomNum}`;
+      if (schoolCode && typeof schoolCode === 'string' && schoolCode.trim()) {
+        const candidate = schoolCode.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
         const existing = await dbService.getInstitutionByCode(candidate);
         if (!existing) {
           cleanCode = candidate;
-          break;
         }
-        attempts++;
       }
+
       if (!cleanCode) {
-        cleanCode = `${prefix}-${Date.now().toString().slice(-4)}`;
+        // Internally generate unique school code (e.g. SCH-102, CMS-482)
+        const cleanWords = schoolName.trim().replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+        let prefix = '';
+        if (cleanWords.length >= 3) {
+          prefix = (cleanWords[0][0] + cleanWords[1][0] + cleanWords[2][0]).toUpperCase();
+        } else if (cleanWords.length === 2) {
+          prefix = (cleanWords[0].substring(0, 2) + cleanWords[1].substring(0, 2)).toUpperCase();
+        } else if (cleanWords.length === 1) {
+          prefix = cleanWords[0].substring(0, 4).toUpperCase();
+        } else {
+          prefix = 'SCH';
+        }
+        if (prefix.length < 3) {
+          prefix = (prefix + 'SCH').substring(0, 3);
+        }
+
+        // Guarantee collision-free uniqueness
+        let attempts = 0;
+        while (attempts < 50) {
+          const randomNum = Math.floor(100 + Math.random() * 900);
+          const candidate = `${prefix}-${randomNum}`;
+          const existing = await dbService.getInstitutionByCode(candidate);
+          if (!existing) {
+            cleanCode = candidate;
+            break;
+          }
+          attempts++;
+        }
+        if (!cleanCode) {
+          cleanCode = `${prefix}-${Date.now().toString().slice(-4)}`;
+        }
       }
 
       const passwordHash = await hashPassword(adminPassword.trim());
@@ -750,22 +762,32 @@ async function startServer() {
     try {
       const { username, password, institutionCode } = req.body;
       const cleanUsername = (username || '').trim().toLowerCase();
+      const cleanCode = (institutionCode || '').trim().toUpperCase();
 
       if (!cleanUsername || !password) {
         return res.status(400).json({ success: false, error: 'Username and password are required.' });
       }
 
-      let institutionId: string | undefined = undefined;
-      if (institutionCode && institutionCode.trim()) {
-        const inst = await dbService.getInstitutionByCode(institutionCode.trim());
-        if (inst) institutionId = inst.id;
+      if (!cleanCode) {
+        return res.status(400).json({
+          success: false,
+          error: 'Institution Code is required. Please enter your Institution Code to sign in.',
+        });
       }
 
-      const dbUser = await dbService.getUserByUsername(cleanUsername, institutionId);
+      const inst = await dbService.getInstitutionByCode(cleanCode);
+      if (!inst) {
+        return res.status(401).json({
+          success: false,
+          error: `Institution Code '${cleanCode}' was not found. Please verify your Institution Code.`,
+        });
+      }
+
+      const dbUser = await dbService.getUserByUsername(cleanUsername, inst.id);
       if (!dbUser) {
         return res.status(401).json({
           success: false,
-          error: 'User not found. Please verify your username and institution.',
+          error: `User '${cleanUsername}' was not found in institution '${inst.name}'. Please verify your username and institution code.`,
         });
       }
 

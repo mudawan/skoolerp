@@ -584,11 +584,12 @@ export const UserModal: React.FC<UserModalProps> = ({
                     type="button"
                     onClick={() => {
                       const text = `School Portal Login Credentials for ${name || username}:
-Workspace: ${currentInstitution?.name || institute.name} (Code: ${currentInstitution?.code || institute.code || 'SYS'})
+School / Institution: ${currentInstitution?.name || institute.name}
+School / Institution Code: ${currentInstitution?.code || institute.code || 'SYS'}
 Username: @${username}
 Password: ${password}
 Assigned Role: ${selectedRole}
-Login portal: Sign in under School Fee Portal with these credentials.`;
+Login portal: Sign in using this School / Institution Code, username, and password.`;
                       navigator.clipboard.writeText(text);
                       setCopiedNotice(true);
                       showToast(`Credentials for ${name || username} copied to clipboard!`, 'success');

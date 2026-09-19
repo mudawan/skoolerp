@@ -14,6 +14,7 @@ import { AuditTrailView } from './components/AuditTrailView';
 import { SettingsView } from './components/SettingsView';
 import { MonthEndWizardView } from './components/MonthEndWizardView';
 import { LoginView } from './components/LoginView';
+import { SessionInactivityGuard } from './components/SessionInactivityGuard';
 import { MonthPicker } from './components/MonthPicker';
 import { GlobalStudentSearch } from './components/GlobalStudentSearch';
 import { DatabaseStatusBadge } from './components/DatabaseStatusBadge';
@@ -341,9 +342,13 @@ function MainApp() {
               {activeTab === 'collections' && <CollectionsView />}
               {activeTab === 'defaulters' && <DefaultersView />}
               {activeTab === 'monthEnd' && (
-                <MonthEndWizardView
-                  initialMonth={monthEndInitialMonth || activeMonth}
-                  setActiveTab={setActiveTab}
+                <SettingsView
+                  viewMode="settings"
+                  initialSubTab="monthEnd"
+                  targetMonth={monthEndInitialMonth || activeMonth}
+                  onNavigateToTab={(tab) => {
+                    setActiveTab(tab);
+                  }}
                 />
               )}
               {(activeTab === 'policies' || activeTab === 'templates') && (
@@ -389,6 +394,7 @@ function MainApp() {
           )}
         </main>
       </div>
+      <SessionInactivityGuard />
     </div>
   );
 }

@@ -1423,6 +1423,27 @@ class DatabaseService {
           ]
         );
 
+        // Seed standard 9 default fee templates for the new institution
+        const defaultFeeTemplates = [
+          { kind: 'Tuition', label: 'Tuition Fee', defaultAmount: 0, sortOrder: 1 },
+          { kind: 'Flex1', label: 'Admission Fee', defaultAmount: 0, sortOrder: 2 },
+          { kind: 'Flex2', label: 'Registration Fee', defaultAmount: 0, sortOrder: 3 },
+          { kind: 'Transport', label: 'Transport Fee', defaultAmount: 0, sortOrder: 4 },
+          { kind: 'Fine', label: 'Fine', defaultAmount: 0, sortOrder: 5 },
+          { kind: 'Flex3', label: 'Exam Fee', defaultAmount: 0, sortOrder: 6 },
+          { kind: 'Flex4', label: 'Other', defaultAmount: 0, sortOrder: 7 },
+          { kind: 'PreviousBalance', label: 'Previous Balance', defaultAmount: 0, sortOrder: 8 },
+          { kind: 'Discount', label: 'Discount in Fee', defaultAmount: 0, sortOrder: 9 },
+        ];
+        for (const t of defaultFeeTemplates) {
+          const tplId = `${institution.id}_tpl_${t.sortOrder}`;
+          await client.query(
+            `INSERT INTO fee_templates (id, institution_id, kind, label, default_amount, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [tplId, institution.id, t.kind, t.label, t.defaultAmount, t.sortOrder, now, now]
+          );
+        }
+
         await client.query('COMMIT');
         return { success: true, institution, admin };
       } catch (err: any) {
@@ -1475,6 +1496,27 @@ class DatabaseService {
           admin.created_at,
           admin.updated_at
         );
+
+        // Seed standard 9 default fee templates for the new institution
+        const defaultFeeTemplates = [
+          { kind: 'Tuition', label: 'Tuition Fee', defaultAmount: 0, sortOrder: 1 },
+          { kind: 'Flex1', label: 'Admission Fee', defaultAmount: 0, sortOrder: 2 },
+          { kind: 'Flex2', label: 'Registration Fee', defaultAmount: 0, sortOrder: 3 },
+          { kind: 'Transport', label: 'Transport Fee', defaultAmount: 0, sortOrder: 4 },
+          { kind: 'Fine', label: 'Fine', defaultAmount: 0, sortOrder: 5 },
+          { kind: 'Flex3', label: 'Exam Fee', defaultAmount: 0, sortOrder: 6 },
+          { kind: 'Flex4', label: 'Other', defaultAmount: 0, sortOrder: 7 },
+          { kind: 'PreviousBalance', label: 'Previous Balance', defaultAmount: 0, sortOrder: 8 },
+          { kind: 'Discount', label: 'Discount in Fee', defaultAmount: 0, sortOrder: 9 },
+        ];
+        const tplStmt = this.sqliteDb.prepare(`
+          INSERT INTO fee_templates (id, institution_id, kind, label, default_amount, sort_order, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const t of defaultFeeTemplates) {
+          const tplId = `${institution.id}_tpl_${t.sortOrder}`;
+          tplStmt.run(tplId, institution.id, t.kind, t.label, t.defaultAmount, t.sortOrder, now, now);
+        }
 
         this.sqliteDb.exec('COMMIT;');
         return { success: true, institution, admin };
@@ -2740,12 +2782,23 @@ class DatabaseService {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = institutionId || 'default';
-    const id: string = obj.id || `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+    let id: string = obj.id || `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
-    const values = cfg.fields.map((f) => serializeFieldValue(this.engine, f, obj[f.field]));
-    const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
 
     if (this.engine === 'postgres' && this.pgPool) {
+      if (obj.id) {
+        const existing = await this.pgPool.query(`SELECT id, institution_id FROM ${cfg.table} WHERE id = $1`, [obj.id]);
+        if (existing.rows.length > 0) {
+          if (existing.rows[0].institution_id === tenantId) {
+            return this.updateSimpleEntity(cfg, tenantId, obj.id, obj);
+          } else {
+            // ID already taken by another tenant - generate unique ID for this tenant
+            id = `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+          }
+        }
+      }
+      const values = cfg.fields.map((f) => serializeFieldValue(this.engine, f, obj[f.field]));
+      const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       await this.pgPool.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`, [
         id,
@@ -2755,6 +2808,19 @@ class DatabaseService {
         now,
       ]);
     } else if (this.sqliteDb) {
+      if (obj.id) {
+        const existing = this.sqliteDb.prepare(`SELECT id, institution_id FROM ${cfg.table} WHERE id = ?`).get(obj.id) as any;
+        if (existing) {
+          if (existing.institution_id === tenantId) {
+            return this.updateSimpleEntity(cfg, tenantId, obj.id, obj);
+          } else {
+            // ID already taken by another tenant - generate unique ID for this tenant
+            id = `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+          }
+        }
+      }
+      const values = cfg.fields.map((f) => serializeFieldValue(this.engine, f, obj[f.field]));
+      const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
       const placeholders = cols.map(() => '?').join(', ');
       const stmt = this.sqliteDb.prepare(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`);
       stmt.run(id, tenantId, ...values, now, now);
