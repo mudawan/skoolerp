@@ -268,6 +268,7 @@ export interface InstituteProfile {
   website: string;
   regNo: string;
   sessionTimeoutMinutes?: number; // Inactivity auto-logout timeout in minutes (Default: 10)
+  settings?: Record<string, any>;
 }
 
 export interface BankAccount {

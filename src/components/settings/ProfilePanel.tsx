@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { InstituteProfile } from '../../types';
+import { DeleteInstitutionModal } from './DeleteInstitutionModal';
 import {
   AlertCircle,
+  AlertTriangle,
   Building2,
   Check,
   Clock,
@@ -57,14 +59,16 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
     handleSaveProfile,
   } = props;
 
-  const { hasPermission, currentInstitution, institute, showToast } = useApp();
+  const { hasPermission, currentInstitution, institute, showToast, currentUser } = useApp();
   const [codeCopied, setCodeCopied] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   const activeSchoolCode = currentInstitution?.code || institute.code || 'SYS';
   const activeSchoolName = currentInstitution?.name || institute.name || 'School Workspace';
 
   return (
-    <form onSubmit={handleSaveProfile} className="space-y-6">
+    <>
+      <form onSubmit={handleSaveProfile} className="space-y-6">
       {/* Workspace Institution Code Banner */}
       <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white p-5 rounded-2xl border border-slate-700 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
@@ -489,5 +493,79 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
         )}
       </div>
     </form>
+
+    {/* Danger Zone: Delete Institution Profile & All Data */}
+    <div
+      id="section-danger-zone-institution"
+      className="bg-white rounded-2xl border border-rose-200 shadow-xs overflow-hidden mt-6"
+    >
+      <div className="p-4 sm:p-5 bg-rose-50/70 border-b border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-rose-100 border border-rose-300 text-rose-700 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-rose-950">Danger Zone: Delete Institution Profile & All Data</h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-200 text-rose-800">
+                Admin Gated
+              </span>
+            </div>
+            <p className="text-xs text-rose-700 mt-0.5">
+              Permanently delete this institution profile, academic rosters, financial records, users, and all associated tenant data from the server.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          id="btn-trigger-delete-institution"
+          disabled={currentUser.role !== 'Admin'}
+          onClick={() => setIsDeleteModalOpen(true)}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
+            currentUser.role === 'Admin'
+              ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer'
+              : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+          }`}
+          title={
+            currentUser.role !== 'Admin'
+              ? 'Restricted: Only an Administrator for this institution can delete the profile and data.'
+              : 'Permanently delete institution and all server data'
+          }
+        >
+          <Trash2 className="w-4 h-4" />
+          Delete Institution & All Data...
+        </button>
+      </div>
+
+      <div className="p-4 sm:p-5 bg-white text-xs space-y-2.5 text-slate-600">
+        <div className="flex items-start gap-2.5">
+          <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <div className="leading-relaxed">
+            <strong className="font-semibold text-slate-800">Warning: Irreversible and Permanent.</strong>{' '}
+            This operation completely wipes all tenant records from the central server, including all students, fee vouchers, payment ledgers, transport configurations, operator logins, and administrator credentials. This cannot be undone.
+          </div>
+        </div>
+
+        {currentUser.role !== 'Admin' ? (
+          <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-xs">
+            <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              You are signed in as <strong>{currentUser.role}</strong>. Only an <strong>Admin</strong> user for this institution can execute permanent deletion.
+            </span>
+          </div>
+        ) : (
+          <div className="text-[11px] text-slate-500 font-medium">
+            Authorized administrator session detected: <span className="font-semibold text-slate-700">{currentUser.name} ({currentUser.username})</span>.
+          </div>
+        )}
+      </div>
+    </div>
+
+    <DeleteInstitutionModal
+      isOpen={isDeleteModalOpen}
+      onClose={() => setIsDeleteModalOpen(false)}
+    />
+  </>
   );
 };

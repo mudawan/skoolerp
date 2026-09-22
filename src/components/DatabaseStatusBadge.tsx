@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Database, CheckCircle2, RefreshCw, AlertCircle, Users } from 'lucide-react';
+import { RefreshCw, WifiOff } from 'lucide-react';
 import { subscribeDbStatus, checkBackendHealth, DbStatus } from '../services/apiSync';
 
 export const DatabaseStatusBadge: React.FC = () => {
   const [status, setStatus] = useState<DbStatus>({
     isConnected: true,
     isSyncing: false,
-    engine: 'sqlite',
+    engine: 'postgres',
     revision: 1,
     activePeers: 1,
   });
@@ -31,54 +31,57 @@ export const DatabaseStatusBadge: React.FC = () => {
     };
   }, []);
 
+  const isOnline = status.isConnected;
+  const isSyncing = status.isSyncing;
+
   return (
     <div
       id="database-status-indicator"
-      className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-        status.isSyncing
-          ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
-          : status.isConnected
-          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
-          : 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors select-none ${
+        isSyncing
+          ? 'bg-amber-50 text-amber-800 border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60'
+          : isOnline
+          ? 'bg-emerald-50 text-emerald-800 border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60'
+          : 'bg-rose-50 text-rose-800 border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60'
       }`}
       title={
-        status.isSyncing
-          ? 'Synchronizing state with database...'
-          : status.isConnected
-          ? `Connected to ${status.engine.toUpperCase()} database (rev ${status.revision})${
-              status.latencyMs !== undefined ? ` • ${status.latencyMs}ms latency` : ''
-            }${
-              status.pool ? ` • Pool: ${status.pool.idleCount} idle / ${status.pool.totalCount} active` : ''
-            }. ${
-              status.activePeers > 1 ? `${status.activePeers} concurrent sessions active.` : 'Single session.'
-            }`
-          : 'Database connection offline. Changes stored in cache.'
+        isSyncing
+          ? 'Saving changes to PostgreSQL server...'
+          : isOnline
+          ? 'Connected to PostgreSQL • All records saved in real time'
+          : 'PostgreSQL Offline • Check network connection. Modifications and financial actions are paused until reconnected.'
       }
     >
-      <div className="flex items-center gap-1.5">
-        <Database className="w-3.5 h-3.5 shrink-0" />
-        <span className="capitalize">{status.engine}</span>
-        {status.latencyMs !== undefined && (
-          <span className="text-[10px] opacity-75 font-mono">
-            {status.latencyMs}ms
-          </span>
+      <span className="relative flex h-2 w-2 shrink-0">
+        {isSyncing ? (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+        ) : isOnline ? (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40" />
+        ) : (
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
         )}
-      </div>
+        <span
+          className={`relative inline-flex rounded-full h-2 w-2 ${
+            isSyncing
+              ? 'bg-amber-500'
+              : isOnline
+              ? 'bg-emerald-500'
+              : 'bg-rose-500'
+          }`}
+        />
+      </span>
 
-      {status.activePeers > 1 && (
-        <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-900/60 rounded-full text-emerald-800 dark:text-emerald-200">
-          <Users className="w-2.5 h-2.5" />
-          {status.activePeers}
-        </span>
+      <span className="text-[11px] font-semibold tracking-tight">
+        {isSyncing ? 'Syncing...' : isOnline ? 'Online' : 'Offline'}
+      </span>
+
+      {isSyncing && (
+        <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600 shrink-0" />
       )}
-
-      {status.isSyncing ? (
-        <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
-      ) : status.isConnected ? (
-        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-      ) : (
-        <AlertCircle className="w-3 h-3 text-rose-600" />
+      {!isOnline && !isSyncing && (
+        <WifiOff className="w-3 h-3 text-rose-600 shrink-0" />
       )}
     </div>
   );
 };
+

@@ -1,62 +1,40 @@
 import { apiNextDocumentNumber } from '../services/apiSync';
 
 // Monotonic, per `prefix:year` document counters (vouchers, collections,
-// transactions). Counters are NEVER decreased: deleting a voucher/collection/
-// transaction does not reopen its number for reuse, producing stable
-// checkbook-style gaps that auditors can reconcile against. Each counter is
-// persisted independently of the data arrays, so it survives deletions and
-// reloads.
+// transactions).
 //
-// In Phase 3, this is backed by PostgreSQL server sequences via /api/sequences/next
-// for high-concurrency multi-tenant safety, with local synchronous sequence store
-// acting as instant zero-latency fallback and offline cache.
+// Document numbers are server-authoritative in PostgreSQL via the
+// `system_sequences` table and `/api/sequences/next` endpoint.
 //
-// Design note (server migration): the sequence logic is kept behind the
-// `SequenceStore` interface below, so the storage backend is a single,
-// swappable adapter. During development the app uses localStorage (no server);
-// when it moves to a server-side database, only the default adapter needs to
-// change (e.g. to a `fetch` to a DB sequence endpoint that atomically
-// increments per prefix:year). The public API used by AppContext is unchanged,
-// so no call sites are touched on that migration.
-//
-// Synchronous guard: numbers are minted by mutating a module-level map and
-// writing straight back through the store, entirely outside React's batched
-// async state updates. This guarantees uniqueness even when several documents
-// are created inside one synchronous loop (e.g. a bulk carry-forward or CSV
-// import calling generate/collect repeatedly). For a true multi-device,
-// concurrent guarantee once a backend exists, the store's `next` should
-// perform an atomic increment on the server (e.g. a SQL `UPDATE ... RETURNING`
-// or a Redis INCR), which removes any read-modify-write race.
+// Client-side disk caching (localStorage) has been completely removed to
+// prevent multi-operator collisions and dirty local sequence states.
+// Any fallback sequence generation operates strictly in ephemeral memory.
 
 export interface SequenceStore {
   read(): Record<string, number>;
   write(map: Record<string, number>): void;
 }
 
-const SEQ_STORAGE_KEY = 'skooler_app_sequences_v1';
+// Purge any legacy sequence cache from browser localStorage
+try {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('skooler_app_sequences_v1');
+  }
+} catch {}
 
-const localStorageStore: SequenceStore = {
+let memoryMap: Record<string, number> = {};
+
+const inMemoryStore: SequenceStore = {
   read() {
-    try {
-      const raw = localStorage.getItem(SEQ_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
+    return memoryMap;
   },
   write(map) {
-    try {
-      localStorage.setItem(SEQ_STORAGE_KEY, JSON.stringify(map));
-    } catch {
-      // Ignore storage failures (private mode / quota). The in-memory counter
-      // still guarantees uniqueness for this session.
-    }
+    memoryMap = { ...map };
   },
 };
 
-// The active backend. Swap this (plus `next`/`reconcile` below if the server
-// needs atomic increments) when moving to a server-side database.
-let store: SequenceStore = localStorageStore;
+// The active backend is strictly in-memory (no localStorage persistence)
+let store: SequenceStore = inMemoryStore;
 
 let seqCache: Record<string, number> | null = null;
 
@@ -74,27 +52,9 @@ function seqKey(prefix: string, year: string): string {
   return `${prefix}:${year}`;
 }
 
-// Re-read the store and adopt any higher value committed by another
-// session since our last read, keeping this counter monotonic.
-function mergeFor(prefix: string, year: string) {
-  const k = seqKey(prefix, year);
-  try {
-    const disk = store.read();
-    const diskVal = disk[k] || 0;
-    const cur = seqCache && seqCache[k] ? seqCache[k] : 0;
-    if (diskVal > cur) {
-      if (!seqCache) seqCache = {};
-      seqCache[k] = diskVal;
-    }
-  } catch {
-    // ignore
-  }
-}
-
-// Return the next monotonic sequence number for a `prefix:year` series.
+// Return the next monotonic sequence number for a `prefix:year` series (in-memory only).
 export function nextNumber(prefix: string, year: string): number {
   if (!seqCache) load();
-  mergeFor(prefix, year);
   const k = seqKey(prefix, year);
   const next = (seqCache![k] || 0) + 1;
   seqCache![k] = next;
@@ -102,8 +62,8 @@ export function nextNumber(prefix: string, year: string): number {
   return next;
 }
 
-// Adopt the highest number already present in the live data, so restored
-// backups / imported records with higher numbers are never re-issued.
+// Adopt the highest number already present in the live database state.
+// Operates purely in-memory with zero disk/localStorage caching.
 export function reconcileSequence(entries: { prefix: string; year: string; number: number }[]): void {
   if (!seqCache) load();
   let changed = false;
@@ -133,7 +93,7 @@ export async function fetchAtomicServerDocumentNumber(
 ): Promise<string> {
   const remoteNo = await apiNextDocumentNumber(prefix, year, digits);
   if (remoteNo) {
-    // Extract the counter portion to reconcile the local fallback cache
+    // Extract the counter portion to reconcile the in-memory counter
     const match = remoteNo.match(/-(\d+)$/);
     if (match) {
       reconcileSequence([{ prefix, year, number: parseInt(match[1], 10) }]);

@@ -1,30 +1,20 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useApp } from '../context/AppContext';
-import { ConfirmModal } from './ConfirmModal';
 import { MonthPicker } from './MonthPicker';
 import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
 import {
   Building2,
-  LogOut,
-  RefreshCw,
-  Shield,
-  UserCheck,
 } from 'lucide-react';
 
 export const HeaderBar: React.FC = () => {
   const {
-    currentUser,
     activeMonth,
     setActiveMonth,
     beforeMonthChange,
     vouchers,
     institute,
-    currentInstitution,
     getMonthClosureStatus,
     themeConfig,
-    logout,
-    hasPermission,
-    showToast,
   } = useApp();
 
   // `pickerWindowMonths` covers a reasonable +/- window around today, merged
@@ -90,79 +80,6 @@ export const HeaderBar: React.FC = () => {
               idPrefix="headerbar-month-picker"
               align="right"
             />
-          </div>
-
-          {/* Active Institution Badge */}
-          <div
-            id="header-institution-badge"
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 border border-slate-700/80 text-xs text-slate-300"
-            title={`Workspace: ${currentInstitution?.name || institute.name} (${currentInstitution?.code || institute.code || 'SYS'})`}
-          >
-            <Building2 className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-            <span className="font-semibold text-white truncate max-w-[140px]">
-              {currentInstitution?.name || institute.name}
-            </span>
-            <span className="font-mono text-[10px] text-teal-400 bg-teal-950/80 px-1.5 py-0.2 rounded border border-teal-800/80 uppercase tracking-wider">
-              {currentInstitution?.code || institute.code || 'SYS'}
-            </span>
-          </div>
-
-          {/* Integrated User Profile, Role Badge & Logout Chip */}
-          <div
-            id="header-user-profile-card"
-            className="flex items-center gap-2.5 bg-slate-800/90 border border-slate-700/80 rounded-xl pl-2.5 pr-1.5 py-1.5 shadow-sm"
-          >
-            {/* User Avatar / Status */}
-            <div className="relative flex items-center justify-center w-7 h-7 rounded-lg bg-slate-700/80 border border-slate-600/60 text-emerald-400 shrink-0">
-              <UserCheck className="w-4 h-4" />
-              <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-slate-800" />
-            </div>
-
-            {/* Name & Username */}
-            <div className="flex flex-col text-left leading-tight min-w-0">
-              <span className="truncate max-w-[120px] font-semibold text-slate-200 text-xs">
-                {currentUser.name}
-              </span>
-              <span className="text-[10px] text-slate-400 truncate max-w-[120px]">
-                @{currentUser.username}
-              </span>
-            </div>
-
-            {/* Integrated Role Badge */}
-            <div
-              id="header-role-badge"
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold uppercase tracking-wider border ${
-                currentUser.role === 'Admin'
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                  : currentUser.role === 'Accountant'
-                  ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
-                  : currentUser.role === 'Custom'
-                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                  : 'bg-slate-700/50 text-slate-300 border-slate-600/50'
-              }`}
-              title={`Role: ${currentUser.role} (${currentUser.permissions?.length || 0} active permissions)`}
-            >
-              <Shield className="w-3 h-3 shrink-0" />
-              <span>{currentUser.role}</span>
-            </div>
-
-            {/* Divider */}
-            <div className="h-4 w-px bg-slate-700/80 mx-0.5" />
-
-            {/* Logout Button */}
-            <button
-              type="button"
-              id="header-logout-btn"
-              onClick={() => {
-                logout();
-              }}
-              title="Sign Out of Session"
-              aria-label="Sign Out"
-              className="flex items-center gap-1 px-2 py-1 bg-slate-700/80 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium transition cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </button>
           </div>
         </div>
       </div>

@@ -53,7 +53,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
   const [dbStatus, setDbStatus] = useState<DbStatus>({
     isConnected: true,
     isSyncing: false,
-    engine: 'sqlite',
+    engine: 'postgres',
     revision: 1,
     activePeers: 1,
   });
@@ -295,7 +295,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
               {formatUptime(healthInfo.uptime)}
             </div>
             <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-              {dbStatus.engine === 'postgres' ? 'Cloud Run / PostgreSQL' : 'Local SQLite Storage'}
+              {dbStatus.engine === 'postgres' ? 'Cloud Run / PostgreSQL' : 'PostgreSQL Database'}
             </div>
           </div>
         </div>

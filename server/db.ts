@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 
 export interface DbInstitution {
@@ -69,7 +68,7 @@ export interface DatabaseState {
   institution?: DbInstitution;
 }
 
-export type DbEngineType = 'postgres' | 'sqlite';
+export type DbEngineType = 'postgres';
 
 export interface DbHealthDetails {
   healthy: boolean;
@@ -201,11 +200,8 @@ function assertAllowedSimpleTable(table: string) {
   }
 }
 
-function serializeFieldValue(engine: DbEngineType, spec: EntityFieldSpec, value: any): any {
-  if (spec.type === 'boolean') {
-    if (engine === 'sqlite') return value ? 1 : 0;
-    return !!value;
-  }
+function serializeFieldValue(spec: EntityFieldSpec, value: any): any {
+  if (spec.type === 'boolean') return !!value;
   if (spec.type === 'json') return JSON.stringify(value ?? null);
   if (spec.type === 'number') return value === undefined || value === null || value === '' ? 0 : Number(value);
   return value === undefined ? null : value;
@@ -316,74 +312,37 @@ export const BANK_ACCOUNT_ENTITY_CONFIG: SimpleEntityConfig = {
 };
 
 class DatabaseService {
-  private engine: DbEngineType = 'sqlite';
-  private sqliteDb: DatabaseSync | null = null;
+  private engine: DbEngineType = 'postgres';
   private pgPool: pg.Pool | null = null;
   private isInitialized = false;
-  private isStrictPostgres = false;
   private revisions: Map<string, { revision: number; lastModified: string }> = new Map();
   private globalRevision: number = 1;
 
-  // node:sqlite's DatabaseSync is a single, synchronous, process-shared
-  // connection. Two overlapping `BEGIN [IMMEDIATE] TRANSACTION` calls on it
-  // (which can happen because our handlers are async and can interleave at
-  // await boundaries even in a single Node.js process) throw a "cannot start
-  // a transaction within a transaction" error rather than blocking. This
-  // queue serializes every SQLite write-transaction in this process
-  // (saveCollection, sequence generation, runVoucherTransaction) so they
-  // always run one at a time, in submission order, instead of racing.
-  // NOTE: this only serializes within a single process. It is not a
-  // substitute for the real, cross-process-safe row-level locking used on
-  // the Postgres path (see runVoucherTransaction) — SQLite is the
-  // development-only fallback engine (production requires
-  // REQUIRE_POSTGRES=true), so process-level serialization is sufficient
-  // for it.
-  private sqliteWriteQueue: Promise<any> = Promise.resolve();
-  private withSqliteWriteLock<T>(fn: () => T | Promise<T>): Promise<T> {
-    const run = this.sqliteWriteQueue.then(fn, fn);
-    this.sqliteWriteQueue = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
-
   constructor() {
-    const databaseUrl = process.env.DATABASE_URL;
-    const requirePostgresEnv = process.env.REQUIRE_POSTGRES === 'true' || process.env.STRICT_POSTGRES === 'true';
-    this.isStrictPostgres = requirePostgresEnv;
+    const host = process.env.POSTGRES_HOST || '127.0.0.1';
+    const port = process.env.POSTGRES_PORT || '5432';
+    const user = process.env.POSTGRES_USER || 'postgres';
+    const password = process.env.POSTGRES_PASSWORD ? `:${process.env.POSTGRES_PASSWORD}` : '';
+    const dbName = process.env.POSTGRES_DB || 'school_db';
+    const defaultUrl = `postgres://${user}${password}@${host}:${port}/${dbName}`;
+    const databaseUrl = process.env.DATABASE_URL || defaultUrl;
 
-    if (databaseUrl && databaseUrl.trim().startsWith('postgres')) {
-      try {
-        this.pgPool = new pg.Pool({
-          connectionString: databaseUrl.trim(),
-          max: parseInt(process.env.DB_POOL_MAX || '15', 10),
-          min: parseInt(process.env.DB_POOL_MIN || '2', 10),
-          idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 8000,
-        });
+    try {
+      this.pgPool = new pg.Pool({
+        connectionString: databaseUrl.trim(),
+        max: parseInt(process.env.DB_POOL_MAX || '15', 10),
+        min: parseInt(process.env.DB_POOL_MIN || '2', 10),
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 8000,
+      });
 
-        this.pgPool.on('error', (err) => {
-          console.error('[DB] Unexpected PostgreSQL pool client error:', err.message);
-        });
+      this.pgPool.on('error', (err) => {
+        console.error('[DB] Unexpected PostgreSQL pool client error:', err.message);
+      });
 
-        this.engine = 'postgres';
-        console.log('[DB] Configured PostgreSQL database engine from DATABASE_URL with connection pool.');
-      } catch (err: any) {
-        if (this.isStrictPostgres) {
-          console.error('[DB FATAL] Failed to initialize PostgreSQL pool in strict mode:', err);
-          throw new Error(`[DB STRICT] PostgreSQL configuration failure: ${err?.message || err}`);
-        }
-        console.warn('[DB] Failed to initialize PostgreSQL pool, falling back to embedded SQLite:', err);
-        this.engine = 'sqlite';
-      }
-    } else {
-      if (this.isStrictPostgres) {
-        console.error('[DB FATAL] DATABASE_URL missing or invalid while STRICT_POSTGRES / REQUIRE_POSTGRES is enabled.');
-        throw new Error('[DB STRICT] PostgreSQL is required by configuration, but DATABASE_URL is not provided.');
-      }
-      this.engine = 'sqlite';
-      console.log('[DB] No DATABASE_URL provided. Initializing local embedded SQLite database for development.');
+      console.log('[DB] Configured PostgreSQL database engine (PostgreSQL is the single authoritative database).');
+    } catch (err: any) {
+      console.error('[DB FATAL] Failed to configure PostgreSQL connection pool:', err);
     }
   }
 
@@ -392,7 +351,7 @@ class DatabaseService {
   }
 
   public isStrictMode(): boolean {
-    return this.isStrictPostgres;
+    return true;
   }
 
   public getPoolStats() {
@@ -409,7 +368,7 @@ class DatabaseService {
    */
   public async ping(): Promise<DbHealthDetails> {
     const start = Date.now();
-    if (this.engine === 'postgres' && this.pgPool) {
+    if (this.pgPool) {
       try {
         const client = await this.pgPool.connect();
         try {
@@ -420,7 +379,7 @@ class DatabaseService {
             engine: 'postgres',
             latencyMs,
             pool: this.getPoolStats() || undefined,
-            strictPostgres: this.isStrictPostgres,
+            strictPostgres: true,
           };
         } finally {
           client.release();
@@ -431,37 +390,18 @@ class DatabaseService {
           engine: 'postgres',
           latencyMs: Date.now() - start,
           pool: this.getPoolStats() || undefined,
-          strictPostgres: this.isStrictPostgres,
+          strictPostgres: true,
           error: err?.message || 'PostgreSQL connection failed',
         };
       }
     }
 
-    // SQLite ping verification
-    try {
-      if (this.sqliteDb) {
-        this.sqliteDb.prepare('SELECT 1 AS ping').get();
-        return {
-          healthy: true,
-          engine: 'sqlite',
-          latencyMs: Date.now() - start,
-          strictPostgres: this.isStrictPostgres,
-        };
-      }
-      return {
-        healthy: false,
-        engine: 'sqlite',
-        strictPostgres: this.isStrictPostgres,
-        error: 'SQLite database not initialized',
-      };
-    } catch (err: any) {
-      return {
-        healthy: false,
-        engine: 'sqlite',
-        strictPostgres: this.isStrictPostgres,
-        error: err?.message || 'SQLite query failed',
-      };
-    }
+    return {
+      healthy: false,
+      engine: 'postgres',
+      strictPostgres: true,
+      error: 'PostgreSQL database pool not configured',
+    };
   }
 
   public getRevisionInfo(institutionId = 'default'): { revision: number; lastModified: string } {
@@ -503,10 +443,6 @@ class DatabaseService {
    * points at this same database — unlike express-rate-limit's default
    * in-process MemoryStore, which keeps a separate counter per instance and
    * silently gives an attacker N free attempts across N replicas.
-   *
-   * Only meaningful on Postgres, since a SQLite deployment is inherently
-   * single-instance (one file on one disk) — MemoryStore is already
-   * correct there. Returns null on SQLite so the caller can fall back.
    */
   public async incrementRateLimitCounter(
     key: string,
@@ -551,418 +487,38 @@ class DatabaseService {
   public async init(): Promise<void> {
     if (this.isInitialized) return;
 
-    if (this.engine === 'postgres' && this.pgPool) {
-      const maxRetries = 4;
-      let attempt = 0;
-      let lastErr: any = null;
+    if (!this.pgPool) {
+      console.error('[DB] Cannot initialize: PostgreSQL connection pool is not configured.');
+      return;
+    }
 
-      while (attempt < maxRetries) {
-        attempt++;
-        try {
-          console.log(`[DB] Connecting to PostgreSQL (attempt ${attempt}/${maxRetries})...`);
-          await this.initPostgresSchema();
-          this.isInitialized = true;
-          console.log('[DB] PostgreSQL multi-tenant schema verified & ready.');
-          return;
-        } catch (err: any) {
-          lastErr = err;
-          console.error(`[DB] PostgreSQL connection attempt ${attempt} failed:`, err?.message || err);
-          if (attempt < maxRetries) {
-            const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-            console.log(`[DB] Retrying in ${backoffMs}ms...`);
-            await new Promise((res) => setTimeout(res, backoffMs));
-          }
+    const maxRetries = 3;
+    let attempt = 0;
+    let lastErr: any = null;
+
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        console.log(`[DB] Connecting to PostgreSQL (attempt ${attempt}/${maxRetries})...`);
+        await this.initPostgresSchema();
+        this.isInitialized = true;
+        console.log('[DB] PostgreSQL multi-tenant schema verified & ready.');
+        return;
+      } catch (err: any) {
+        lastErr = err;
+        console.error(`[DB] PostgreSQL connection attempt ${attempt} failed:`, err?.message || err);
+        if (attempt < maxRetries) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 3000);
+          console.log(`[DB] Retrying in ${backoffMs}ms...`);
+          await new Promise((res) => setTimeout(res, backoffMs));
         }
       }
-
-      if (this.isStrictPostgres) {
-        console.error('[DB FATAL] Could not connect to PostgreSQL after multiple retries in strict mode.');
-        throw new Error(`[DB STRICT] Fatal PostgreSQL connection failure: ${lastErr?.message || lastErr}`);
-      }
-
-      console.warn('[DB] Falling back to embedded SQLite after failed PostgreSQL connection attempts.');
-      this.engine = 'sqlite';
     }
 
-    this.initSqliteSchema();
-    this.isInitialized = true;
-    console.log('[DB] Embedded SQLite multi-tenant database verified & ready.');
+    console.error('[DB] PostgreSQL connection could not be established. PostgreSQL is required.');
   }
 
-  private initSqliteSchema(): void {
-    const dataDir = path.join(process.cwd(), 'data');
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    const dbPath = path.join(dataDir, 'school_management.db');
-    this.sqliteDb = new DatabaseSync(dbPath);
-
-    // If a legacy pre-multi-tenant SQLite database exists without institution_id, reset it cleanly
-    try {
-      const userColumns = (this.sqliteDb.prepare("PRAGMA table_info(users)").all() as any[]).map((c: any) => c.name);
-      if (userColumns.length > 0 && !userColumns.includes('institution_id')) {
-        console.log('[DB] Migrating legacy single-tenant SQLite database to multi-tenant structure...');
-        this.sqliteDb.exec(`
-          DROP TABLE IF EXISTS users;
-          DROP TABLE IF EXISTS entities;
-          DROP TABLE IF EXISTS system_metadata;
-          DROP TABLE IF EXISTS institutions;
-          DROP TABLE IF EXISTS operator_invites;
-        `);
-      }
-      // Older dev databases from before the per-entity schema redesign: drop
-      // the generic blob tables so the app doesn't try to read stale data
-      // through the old code path. Pre-launch app, no production data to
-      // preserve — see the per-entity tables created below for the
-      // replacement schema.
-      const instColumns = (this.sqliteDb.prepare("PRAGMA table_info(institutions)").all() as any[]).map((c: any) => c.name);
-      if (instColumns.length > 0 && !instColumns.includes('settings')) {
-        console.log('[DB] Migrating to per-entity schema (dropping legacy generic entities/system_metadata tables)...');
-        this.sqliteDb.exec(`
-          DROP TABLE IF EXISTS entities;
-          DROP TABLE IF EXISTS system_metadata;
-        `);
-      }
-    } catch {
-      // Table doesn't exist yet, proceed
-    }
-
-    this.sqliteDb.exec(`
-      CREATE TABLE IF NOT EXISTS institutions (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        code TEXT UNIQUE NOT NULL,
-        registration_no TEXT,
-        address TEXT,
-        phone TEXT,
-        email TEXT,
-        website TEXT,
-        currency TEXT DEFAULT 'PKR',
-        logo_url TEXT,
-        status TEXT DEFAULT 'active',
-        settings TEXT DEFAULT '{}',
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        username TEXT NOT NULL,
-        email TEXT,
-        password_hash TEXT NOT NULL,
-        full_name TEXT NOT NULL,
-        role TEXT NOT NULL,
-        permissions TEXT DEFAULT '[]',
-        status TEXT DEFAULT 'active',
-        created_by TEXT,
-        last_login_at TEXT,
-        created_at TEXT,
-        updated_at TEXT,
-        UNIQUE(institution_id, username)
-      );
-
-      CREATE TABLE IF NOT EXISTS operator_invites (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        invite_code TEXT UNIQUE NOT NULL,
-        full_name TEXT NOT NULL,
-        assigned_role TEXT NOT NULL,
-        permissions TEXT DEFAULT '[]',
-        expires_at TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        created_by TEXT NOT NULL,
-        created_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS system_sequences (
-        institution_id TEXT NOT NULL,
-        prefix TEXT NOT NULL,
-        year TEXT NOT NULL,
-        last_value INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT,
-        PRIMARY KEY (institution_id, prefix, year)
-      );
-
-      CREATE TABLE IF NOT EXISTS user_sessions (
-        session_token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        institution_id TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-
-      -- Per-entity tables (replacing the old generic entities JSON blob store)
-
-      CREATE TABLE IF NOT EXISTS classes (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        monthly_fee REAL NOT NULL DEFAULT 0,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS families (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        family_no TEXT,
-        head_name TEXT NOT NULL,
-        contact_phone TEXT,
-        address TEXT,
-        notes TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS students (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        student_no TEXT,
-        reg_no TEXT,
-        name TEXT NOT NULL,
-        admission_date TEXT,
-        first_billing_month TEXT,
-        class_id TEXT,
-        monthly_discount REAL NOT NULL DEFAULT 0,
-        mobile_number TEXT,
-        notes TEXT,
-        photo_url TEXT,
-        dob TEXT,
-        gender TEXT,
-        b_form_no TEXT,
-        family_id TEXT,
-        address TEXT,
-        father_name TEXT,
-        father_cnic TEXT,
-        father_phone TEXT,
-        father_occupation TEXT,
-        mother_name TEXT,
-        mother_cnic TEXT,
-        mother_phone TEXT,
-        documents TEXT DEFAULT '{}',
-        status TEXT NOT NULL DEFAULT 'Active',
-        created_date TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS buses (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        bus_number TEXT,
-        model TEXT,
-        reg_number TEXT,
-        driver_name TEXT,
-        driver_phone TEXT,
-        route_name TEXT,
-        active INTEGER NOT NULL DEFAULT 1,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS stops (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        name TEXT,
-        area TEXT,
-        landmark TEXT,
-        monthly_fare REAL NOT NULL DEFAULT 0,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS transport_assignments (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        month TEXT NOT NULL,
-        bus_id TEXT,
-        stop_id TEXT,
-        trip_type TEXT,
-        days_charged INTEGER NOT NULL DEFAULT 0,
-        discount REAL NOT NULL DEFAULT 0,
-        active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS fee_templates (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        label TEXT NOT NULL,
-        default_amount REAL NOT NULL DEFAULT 0,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        class_id TEXT,
-        student_id TEXT,
-        month TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS vouchers (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        voucher_no TEXT,
-        student_id TEXT NOT NULL,
-        month TEXT NOT NULL,
-        class_id TEXT,
-        issue_date TEXT,
-        due_date TEXT,
-        gross_total REAL NOT NULL DEFAULT 0,
-        discount_total REAL NOT NULL DEFAULT 0,
-        prev_balance REAL NOT NULL DEFAULT 0,
-        late_fee_rate REAL NOT NULL DEFAULT 0,
-        rounding_multiple REAL,
-        net_due REAL NOT NULL DEFAULT 0,
-        amount_paid REAL NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'Issued',
-        voucher_type TEXT,
-        carry_forward_month TEXT,
-        carried_late_fine REAL,
-        notes TEXT,
-        created_date TEXT,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS voucher_particulars (
-        id TEXT PRIMARY KEY,
-        voucher_id TEXT NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL,
-        label TEXT NOT NULL,
-        amount REAL NOT NULL,
-        sort_order INTEGER NOT NULL DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS collections (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        collection_no TEXT,
-        date TEXT,
-        total_amount REAL NOT NULL DEFAULT 0,
-        transaction_count INTEGER NOT NULL DEFAULT 0,
-        notes TEXT,
-        is_bulk_import INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS transactions (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        txn_no TEXT,
-        collection_id TEXT,
-        voucher_id TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        month TEXT,
-        amount REAL NOT NULL,
-        fine_added REAL,
-        payment_mode TEXT,
-        reference_no TEXT,
-        notes TEXT,
-        date TEXT,
-        created_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS bank_accounts (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        bank_name TEXT,
-        title TEXT,
-        account_number TEXT,
-        branch_code TEXT,
-        instructions_ltr TEXT,
-        instructions_rtl TEXT,
-        instructions_line1 TEXT,
-        instructions_line2 TEXT,
-        logo_url TEXT,
-        active INTEGER NOT NULL DEFAULT 1,
-        is_default INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT,
-        updated_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        operator_id TEXT,
-        operator_username TEXT,
-        operator_name TEXT,
-        operator_role TEXT,
-        action_type TEXT NOT NULL,
-        action_title TEXT,
-        description TEXT,
-        module TEXT,
-        target_id TEXT,
-        target_label TEXT,
-        month TEXT,
-        amount REAL,
-        previous_value TEXT,
-        new_value TEXT,
-        metadata TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS student_account_history (
-        id TEXT PRIMARY KEY,
-        institution_id TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        timestamp TEXT,
-        date TEXT,
-        category TEXT,
-        action_title TEXT,
-        description TEXT,
-        previous_value TEXT,
-        new_value TEXT,
-        operator_name TEXT,
-        operator_role TEXT,
-        month TEXT,
-        metadata TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS locked_months (
-        institution_id TEXT NOT NULL,
-        month TEXT NOT NULL,
-        locked_at TEXT,
-        PRIMARY KEY (institution_id, month)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_institutions_code ON institutions(code);
-      CREATE INDEX IF NOT EXISTS idx_users_institution ON users(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_invites_code ON operator_invites(invite_code);
-      CREATE INDEX IF NOT EXISTS idx_sequences_lookup ON system_sequences(institution_id, prefix, year);
-      CREATE INDEX IF NOT EXISTS idx_sessions_lookup ON user_sessions(session_token, expires_at);
-
-      CREATE INDEX IF NOT EXISTS idx_classes_institution ON classes(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_families_institution ON families(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_students_institution ON students(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_students_institution_class ON students(institution_id, class_id);
-      CREATE INDEX IF NOT EXISTS idx_students_institution_family ON students(institution_id, family_id);
-      CREATE INDEX IF NOT EXISTS idx_students_institution_status ON students(institution_id, status);
-      CREATE INDEX IF NOT EXISTS idx_buses_institution ON buses(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_stops_institution ON stops(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_transport_assignments_student ON transport_assignments(institution_id, student_id);
-      CREATE INDEX IF NOT EXISTS idx_fee_templates_institution ON fee_templates(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_vouchers_institution_student ON vouchers(institution_id, student_id);
-      CREATE INDEX IF NOT EXISTS idx_vouchers_institution_month ON vouchers(institution_id, month);
-      CREATE INDEX IF NOT EXISTS idx_vouchers_institution_status ON vouchers(institution_id, status);
-      CREATE INDEX IF NOT EXISTS idx_vouchers_institution_class ON vouchers(institution_id, class_id);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_student_month_active ON vouchers(institution_id, student_id, month) WHERE status != 'Reversed';
-      CREATE INDEX IF NOT EXISTS idx_voucher_particulars_voucher ON voucher_particulars(voucher_id);
-      CREATE INDEX IF NOT EXISTS idx_collections_institution_date ON collections(institution_id, date);
-      CREATE INDEX IF NOT EXISTS idx_transactions_institution_voucher ON transactions(institution_id, voucher_id);
-      CREATE INDEX IF NOT EXISTS idx_transactions_institution_student ON transactions(institution_id, student_id);
-      CREATE INDEX IF NOT EXISTS idx_transactions_institution_date ON transactions(institution_id, date);
-      CREATE INDEX IF NOT EXISTS idx_bank_accounts_institution ON bank_accounts(institution_id);
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_institution_time ON audit_logs(institution_id, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
-    `);
-  }
+  
 
   private async initPostgresSchema(): Promise<void> {
     if (!this.pgPool) return;
@@ -1455,82 +1011,6 @@ class DatabaseService {
       }
     }
 
-    if (this.sqliteDb) {
-      try {
-        this.sqliteDb.exec('BEGIN TRANSACTION;');
-        const instStmt = this.sqliteDb.prepare(`
-          INSERT INTO institutions (id, name, code, registration_no, address, phone, email, currency, logo_url, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        instStmt.run(
-          institution.id,
-          institution.name,
-          institution.code,
-          institution.registration_no,
-          institution.address,
-          institution.phone,
-          institution.email,
-          institution.currency,
-          institution.logo_url,
-          institution.status,
-          institution.created_at,
-          institution.updated_at
-        );
-
-        const userStmt = this.sqliteDb.prepare(`
-          INSERT INTO users (id, institution_id, username, email, password_hash, full_name, role, permissions, status, created_by, last_login_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        userStmt.run(
-          admin.id,
-          admin.institution_id,
-          admin.username,
-          admin.email,
-          admin.password_hash,
-          admin.full_name,
-          admin.role,
-          JSON.stringify(admin.permissions),
-          admin.status,
-          admin.created_by,
-          admin.last_login_at,
-          admin.created_at,
-          admin.updated_at
-        );
-
-        // Seed standard 9 default fee templates for the new institution
-        const defaultFeeTemplates = [
-          { kind: 'Tuition', label: 'Tuition Fee', defaultAmount: 0, sortOrder: 1 },
-          { kind: 'Flex1', label: 'Admission Fee', defaultAmount: 0, sortOrder: 2 },
-          { kind: 'Flex2', label: 'Registration Fee', defaultAmount: 0, sortOrder: 3 },
-          { kind: 'Transport', label: 'Transport Fee', defaultAmount: 0, sortOrder: 4 },
-          { kind: 'Fine', label: 'Fine', defaultAmount: 0, sortOrder: 5 },
-          { kind: 'Flex3', label: 'Exam Fee', defaultAmount: 0, sortOrder: 6 },
-          { kind: 'Flex4', label: 'Other', defaultAmount: 0, sortOrder: 7 },
-          { kind: 'PreviousBalance', label: 'Previous Balance', defaultAmount: 0, sortOrder: 8 },
-          { kind: 'Discount', label: 'Discount in Fee', defaultAmount: 0, sortOrder: 9 },
-        ];
-        const tplStmt = this.sqliteDb.prepare(`
-          INSERT INTO fee_templates (id, institution_id, kind, label, default_amount, sort_order, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const t of defaultFeeTemplates) {
-          const tplId = `${institution.id}_tpl_${t.sortOrder}`;
-          tplStmt.run(tplId, institution.id, t.kind, t.label, t.defaultAmount, t.sortOrder, now, now);
-        }
-
-        this.sqliteDb.exec('COMMIT;');
-        return { success: true, institution, admin };
-      } catch (err: any) {
-        try {
-          this.sqliteDb.exec('ROLLBACK;');
-        } catch {
-          // ignore
-        }
-        console.error('[DB] Failed to create institution in SQLite:', err);
-        return { success: false, error: err?.message || 'Failed to create institution.' };
-      }
-    }
-
     return { success: false, error: 'No database engine available.' };
   }
 
@@ -1539,11 +1019,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query('SELECT * FROM institutions WHERE id = $1', [id]);
       return (res.rows[0] as DbInstitution) || null;
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM institutions WHERE id = ?');
-      const row = stmt.get(id) as unknown as DbInstitution | undefined;
-      return row || null;
     }
     return null;
   }
@@ -1555,11 +1030,6 @@ class DatabaseService {
       const res = await this.pgPool.query('SELECT * FROM institutions WHERE LOWER(code) = $1', [clean]);
       return (res.rows[0] as DbInstitution) || null;
     }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM institutions WHERE LOWER(code) = ?');
-      const row = stmt.get(clean) as unknown as DbInstitution | undefined;
-      return row || null;
-    }
     return null;
   }
 
@@ -1568,10 +1038,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query('SELECT * FROM institutions ORDER BY created_at DESC');
       return res.rows as DbInstitution[];
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM institutions ORDER BY created_at DESC');
-      return (stmt.all() as unknown as DbInstitution[]) || [];
     }
     return [];
   }
@@ -1640,32 +1106,6 @@ class DatabaseService {
       }
     }
 
-    if (this.sqliteDb) {
-      try {
-        const stmt = this.sqliteDb.prepare(`
-          INSERT INTO users (id, institution_id, username, email, password_hash, full_name, role, permissions, status, created_by, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        stmt.run(
-          user.id,
-          user.institution_id,
-          user.username,
-          user.email,
-          user.password_hash,
-          user.full_name,
-          user.role,
-          JSON.stringify(user.permissions),
-          user.status,
-          user.created_by,
-          user.created_at,
-          user.updated_at
-        );
-        return { success: true, user };
-      } catch (err: any) {
-        return { success: false, error: err?.message || 'Failed to create user.' };
-      }
-    }
-
     return { success: false, error: 'Database unavailable' };
   }
 
@@ -1687,20 +1127,6 @@ class DatabaseService {
       };
     }
 
-    if (this.sqliteDb) {
-      const query = institutionId
-        ? 'SELECT * FROM users WHERE LOWER(username) = ? AND institution_id = ?'
-        : 'SELECT * FROM users WHERE LOWER(username) = ?';
-      const params = institutionId ? [clean, institutionId] : [clean];
-      const stmt = this.sqliteDb.prepare(query);
-      const row = (institutionId ? stmt.get(clean, institutionId) : stmt.get(clean)) as any;
-      if (!row) return null;
-      return {
-        ...row,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-      };
-    }
-
     return null;
   }
 
@@ -1710,15 +1136,6 @@ class DatabaseService {
       const res = await this.pgPool.query('SELECT * FROM users WHERE id = $1', [id]);
       if (res.rows.length === 0) return null;
       const row = res.rows[0];
-      return {
-        ...row,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-      };
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM users WHERE id = ?');
-      const row = stmt.get(id) as any;
-      if (!row) return null;
       return {
         ...row,
         permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
@@ -1735,14 +1152,6 @@ class DatabaseService {
         [institutionId]
       );
       return res.rows.map((row) => ({
-        ...row,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-      }));
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM users WHERE institution_id = ? ORDER BY created_at ASC');
-      const rows = (stmt.all(institutionId) as any[]) || [];
-      return rows.map((row) => ({
         ...row,
         permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
       }));
@@ -1796,49 +1205,6 @@ class DatabaseService {
       return (res.rowCount || 0) > 0;
     }
 
-    if (this.sqliteDb) {
-      const fields: string[] = ['updated_at = ?'];
-      const values: any[] = [now];
-
-      if (updates.full_name !== undefined) {
-        fields.push('full_name = ?');
-        values.push(updates.full_name);
-      }
-      if (updates.username !== undefined) {
-        fields.push('username = ?');
-        values.push(updates.username);
-      }
-      if (updates.email !== undefined) {
-        fields.push('email = ?');
-        values.push(updates.email);
-      }
-      if (updates.role !== undefined) {
-        fields.push('role = ?');
-        values.push(updates.role);
-      }
-      if (updates.permissions !== undefined) {
-        fields.push('permissions = ?');
-        values.push(JSON.stringify(updates.permissions));
-      }
-      if (updates.password_hash !== undefined) {
-        fields.push('password_hash = ?');
-        values.push(updates.password_hash);
-      }
-      if (updates.status !== undefined) {
-        fields.push('status = ?');
-        values.push(updates.status);
-      }
-      if (updates.last_login_at !== undefined) {
-        fields.push('last_login_at = ?');
-        values.push(updates.last_login_at);
-      }
-
-      values.push(id);
-      const stmt = this.sqliteDb.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`);
-      const result = stmt.run(...values);
-      return result.changes > 0;
-    }
-
     return false;
   }
 
@@ -1848,10 +1214,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM users WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
       return (res.rowCount || 0) > 0;
-    }
-    if (this.sqliteDb) {
-      const result = this.sqliteDb.prepare(`DELETE FROM users WHERE id = ? AND institution_id = ?`).run(id, tenantId);
-      return result.changes > 0;
     }
     return false;
   }
@@ -1927,26 +1289,6 @@ class DatabaseService {
       return { success: true, invite };
     }
 
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(`
-        INSERT INTO operator_invites (id, institution_id, invite_code, full_name, assigned_role, permissions, expires_at, status, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      stmt.run(
-        invite.id,
-        invite.institution_id,
-        invite.invite_code,
-        invite.full_name,
-        invite.assigned_role,
-        JSON.stringify(invite.permissions),
-        invite.expires_at,
-        invite.status,
-        invite.created_by,
-        invite.created_at
-      );
-      return { success: true, invite };
-    }
-
     return { success: false, error: 'Database unavailable' };
   }
 
@@ -1961,16 +1303,6 @@ class DatabaseService {
       );
       if (res.rows.length === 0) return null;
       const row = res.rows[0];
-      return {
-        ...row,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-      };
-    }
-
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('SELECT * FROM operator_invites WHERE UPPER(invite_code) = ?');
-      const row = stmt.get(clean) as any;
-      if (!row) return null;
       return {
         ...row,
         permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
@@ -1992,16 +1324,6 @@ class DatabaseService {
         permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
       }));
     }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(
-        'SELECT * FROM operator_invites WHERE institution_id = ? ORDER BY created_at DESC'
-      );
-      const rows = (stmt.all(institutionId) as any[]) || [];
-      return rows.map((row) => ({
-        ...row,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-      }));
-    }
     return [];
   }
 
@@ -2013,13 +1335,6 @@ class DatabaseService {
         "UPDATE operator_invites SET status = 'claimed' WHERE UPPER(invite_code) = $1",
         [clean]
       );
-      return true;
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(
-        "UPDATE operator_invites SET status = 'claimed' WHERE UPPER(invite_code) = ?"
-      );
-      stmt.run(clean);
       return true;
     }
     return false;
@@ -2044,15 +1359,6 @@ class DatabaseService {
          VALUES ($1, $2, $3, $4, $5)`,
         [token, userId, institutionId, expiresAt, createdAt]
       );
-      return { token, expiresAt };
-    }
-
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(
-        `INSERT INTO user_sessions (session_token, user_id, institution_id, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      );
-      stmt.run(token, userId, institutionId, expiresAt, createdAt);
       return { token, expiresAt };
     }
 
@@ -2106,44 +1412,6 @@ class DatabaseService {
       };
     }
 
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(
-        `SELECT s.session_token, s.user_id, s.institution_id, s.expires_at,
-                u.username, u.email, u.full_name, u.role, u.permissions, u.status, u.created_by, u.last_login_at, u.created_at, u.updated_at
-         FROM user_sessions s
-         JOIN users u ON s.user_id = u.id
-         WHERE s.session_token = ? AND s.expires_at > ?`
-      );
-      const row = stmt.get(token, nowIso) as any;
-      if (!row) return null;
-      const user: DbUser = {
-        id: row.user_id,
-        institution_id: row.institution_id,
-        username: row.username,
-        email: row.email,
-        password_hash: '',
-        full_name: row.full_name,
-        role: row.role,
-        permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
-        status: row.status,
-        created_by: row.created_by,
-        last_login_at: row.last_login_at,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-      };
-      const institution = await this.getInstitutionById(row.institution_id);
-      return {
-        session: {
-          session_token: row.session_token,
-          user_id: row.user_id,
-          institution_id: row.institution_id,
-          expires_at: row.expires_at,
-        },
-        user,
-        institution,
-      };
-    }
-
     return null;
   }
 
@@ -2153,11 +1421,6 @@ class DatabaseService {
       await this.pgPool.query('DELETE FROM user_sessions WHERE session_token = $1', [token]);
       return true;
     }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('DELETE FROM user_sessions WHERE session_token = ?');
-      stmt.run(token);
-      return true;
-    }
     return false;
   }
 
@@ -2165,11 +1428,6 @@ class DatabaseService {
     await this.init();
     if (this.engine === 'postgres' && this.pgPool) {
       await this.pgPool.query('DELETE FROM user_sessions WHERE user_id = $1', [userId]);
-      return true;
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare('DELETE FROM user_sessions WHERE user_id = ?');
-      stmt.run(userId);
       return true;
     }
     return false;
@@ -2202,53 +1460,10 @@ class DatabaseService {
       return Number(res.rows[0].last_value);
     }
 
-    if (this.sqliteDb) {
-      return this.withSqliteWriteLock(() => {
-        try {
-          this.sqliteDb!.exec('BEGIN IMMEDIATE TRANSACTION;');
-          const nextVal = this.nextSequenceNumberSqliteCore(tenantId, cleanPrefix, cleanYear, now);
-          this.sqliteDb!.exec('COMMIT;');
-          return nextVal;
-        } catch (err) {
-          try {
-            this.sqliteDb!.exec('ROLLBACK;');
-          } catch {
-            // ignore
-          }
-          console.error('[DB] SQLite sequence generation error:', err);
-          throw err;
-        }
-      });
-    }
-
     return 1;
   }
 
-  /**
-   * Core SELECT+UPSERT logic for minting a sequence number on SQLite, with
-   * NO transaction wrapping of its own. Callers must already hold the
-   * SQLite write lock (via withSqliteWriteLock) and an open transaction
-   * (BEGIN [IMMEDIATE]) before calling this — used both by the standalone
-   * nextSequenceNumber() and by runVoucherTransaction(), which needs to mint
-   * document numbers from *inside* its own already-open transaction without
-   * nesting a second BEGIN on the same connection (SQLite does not support
-   * nested transactions and would throw).
-   */
-  private nextSequenceNumberSqliteCore(tenantId: string, cleanPrefix: string, cleanYear: string, now: string): number {
-    const selectStmt = this.sqliteDb!.prepare(
-      'SELECT last_value FROM system_sequences WHERE institution_id = ? AND prefix = ? AND year = ?'
-    );
-    const existing = selectStmt.get(tenantId, cleanPrefix, cleanYear) as { last_value: number } | undefined;
-    const nextVal = (existing?.last_value || 0) + 1;
-
-    const upsertStmt = this.sqliteDb!.prepare(`
-      INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(institution_id, prefix, year) DO UPDATE SET last_value = excluded.last_value, updated_at = excluded.updated_at
-    `);
-    upsertStmt.run(tenantId, cleanPrefix, cleanYear, nextVal, now);
-    return nextVal;
-  }
+  
 
   /**
    * Formats a complete document number, e.g. FE2026-000042
@@ -2289,34 +1504,6 @@ class DatabaseService {
       );
       return;
     }
-
-    if (this.sqliteDb) {
-      await this.withSqliteWriteLock(() => {
-        try {
-          this.sqliteDb!.exec('BEGIN IMMEDIATE TRANSACTION;');
-          const selectStmt = this.sqliteDb!.prepare(
-            'SELECT last_value FROM system_sequences WHERE institution_id = ? AND prefix = ? AND year = ?'
-          );
-          const existing = selectStmt.get(tenantId, cleanPrefix, cleanYear) as { last_value: number } | undefined;
-          const cur = existing?.last_value || 0;
-          if (highestObservedNumber > cur) {
-            const upsertStmt = this.sqliteDb!.prepare(`
-              INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-              VALUES (?, ?, ?, ?, ?)
-              ON CONFLICT(institution_id, prefix, year) DO UPDATE SET last_value = excluded.last_value, updated_at = excluded.updated_at
-            `);
-            upsertStmt.run(tenantId, cleanPrefix, cleanYear, highestObservedNumber, now);
-          }
-          this.sqliteDb!.exec('COMMIT;');
-        } catch (err) {
-          try {
-            this.sqliteDb!.exec('ROLLBACK;');
-          } catch {
-            // ignore
-          }
-        }
-      });
-    }
   }
 
   /**
@@ -2335,21 +1522,15 @@ class DatabaseService {
    * success for both.
    *
    * Locking scope:
-   *  - `{ voucherIds: [...] }` locks (Postgres: SELECT ... FOR UPDATE;
-   *    SQLite: whole-DB write lock via BEGIN IMMEDIATE) exactly those rows.
+   *  - `{ voucherIds: [...] }` locks (Postgres: SELECT ... FOR UPDATE) exactly those rows.
    *    Use this for payment collection and carry-forward, where the set of
    *    affected vouchers is known upfront and concurrent operations on
-   *    *different* vouchers should not block each other (on Postgres).
+   *    *different* vouchers should not block each other.
    *  - `{ allVouchers: true }` locks every voucher row for the tenant. Use
    *    this for voucher generation, which must scan ALL existing vouchers
-   *    to avoid generating duplicates for the same student+month — a set of
-   *    specific IDs isn't known upfront, so the whole collection must be
-   *    locked to make the "check for duplicates, then insert" sequence
-   *    atomic against a concurrent generation run.
+   *    to avoid generating duplicates for the same student+month.
    *
-   * On Postgres this is safe across multiple app instances/processes (the
-   * lock is enforced by the database). On SQLite (development-only; see
-   * withSqliteWriteLock) it is safe within a single process.
+   * Safe across multiple app instances and operators via Postgres row-level locks.
    */
   private voucherRowToRecord(row: any, particulars: Array<{ kind: string; label: string; amount: number }>): VoucherRecord {
     return {
@@ -2555,182 +1736,6 @@ class DatabaseService {
       }
     }
 
-    if (this.sqliteDb) {
-      return this.withSqliteWriteLock(async () => {
-        try {
-          this.sqliteDb!.exec('BEGIN IMMEDIATE TRANSACTION;');
-
-          let voucherRows: any[];
-          if ('allVouchers' in lockScope) {
-            voucherRows = this.sqliteDb!.prepare(`SELECT * FROM vouchers WHERE institution_id = ?`).all(tenantId) as any[];
-          } else if (lockScope.voucherIds.length > 0) {
-            const placeholders = lockScope.voucherIds.map(() => '?').join(',');
-            voucherRows = this.sqliteDb!
-              .prepare(`SELECT * FROM vouchers WHERE institution_id = ? AND id IN (${placeholders})`)
-              .all(tenantId, ...lockScope.voucherIds) as any[];
-          } else {
-            voucherRows = [];
-          }
-
-          const particularsByVoucher = new Map<string, Array<{ kind: string; label: string; amount: number }>>();
-          for (const row of voucherRows) {
-            const pRows = this.sqliteDb!
-              .prepare(`SELECT * FROM voucher_particulars WHERE voucher_id = ? ORDER BY sort_order`)
-              .all(row.id) as any[];
-            particularsByVoucher.set(
-              row.id,
-              pRows.map((p) => ({ kind: p.kind, label: p.label, amount: Number(p.amount) }))
-            );
-          }
-
-          const locked = new Map<string, VoucherRecord>();
-          for (const row of voucherRows) {
-            locked.set(row.id, this.voucherRowToRecord(row, particularsByVoucher.get(row.id) || []));
-          }
-
-          const helpers = {
-            mintDocumentNumber: async (prefix: string, year: string, digits: number = 6): Promise<string> => {
-              const cleanPrefix = prefix.trim().toUpperCase();
-              const cleanYear = year.trim();
-              const num = this.nextSequenceNumberSqliteCore(tenantId, cleanPrefix, cleanYear, now);
-              return `${cleanPrefix}${cleanYear}-${String(num).padStart(digits, '0')}`;
-            },
-          };
-
-          const { writes, result } = await mutator(locked, helpers);
-
-          const upsertVoucherStmt = this.sqliteDb!.prepare(`
-            INSERT INTO vouchers (id, institution_id, voucher_no, student_id, month, class_id, issue_date, due_date,
-              gross_total, discount_total, prev_balance, late_fee_rate, rounding_multiple, net_due, amount_paid,
-              status, voucher_type, carry_forward_month, carried_late_fine, notes, created_date, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-              voucher_no=excluded.voucher_no, student_id=excluded.student_id, month=excluded.month, class_id=excluded.class_id,
-              issue_date=excluded.issue_date, due_date=excluded.due_date, gross_total=excluded.gross_total,
-              discount_total=excluded.discount_total, prev_balance=excluded.prev_balance, late_fee_rate=excluded.late_fee_rate,
-              rounding_multiple=excluded.rounding_multiple, net_due=excluded.net_due, amount_paid=excluded.amount_paid,
-              status=excluded.status, voucher_type=excluded.voucher_type, carry_forward_month=excluded.carry_forward_month,
-              carried_late_fine=excluded.carried_late_fine, notes=excluded.notes, created_date=excluded.created_date,
-              updated_at=excluded.updated_at
-          `);
-          const deleteParticularsStmt = this.sqliteDb!.prepare(`DELETE FROM voucher_particulars WHERE voucher_id = ?`);
-          const insertParticularStmt = this.sqliteDb!.prepare(
-            `INSERT INTO voucher_particulars (id, voucher_id, kind, label, amount, sort_order) VALUES (?,?,?,?,?,?)`
-          );
-
-          for (const [id, v] of Object.entries(writes.voucherUpserts || {})) {
-            upsertVoucherStmt.run(
-              id,
-              tenantId,
-              v.voucherNo,
-              v.studentId,
-              v.month,
-              v.classId || null,
-              v.issueDate || null,
-              v.dueDate || null,
-              v.grossTotal,
-              v.discountTotal,
-              v.prevBalance,
-              v.lateFeeRate,
-              v.roundingMultiple ?? null,
-              v.netDue,
-              v.amountPaid,
-              v.status,
-              v.voucherType || null,
-              v.carryForwardMonth || null,
-              v.carriedLateFine ?? null,
-              v.notes || null,
-              v.createdDate || null,
-              now,
-              now
-            );
-            deleteParticularsStmt.run(id);
-            let sortOrder = 0;
-            for (const p of v.particulars || []) {
-              insertParticularStmt.run(`${id}_p${sortOrder}`, id, p.kind, p.label, p.amount, sortOrder);
-              sortOrder++;
-            }
-          }
-
-          const insertTxnStmt = this.sqliteDb!.prepare(`
-            INSERT INTO transactions (id, institution_id, txn_no, collection_id, voucher_id, student_id, month, amount, fine_added, payment_mode, reference_no, notes, date, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-          `);
-          for (const t of writes.newTransactions || []) {
-            insertTxnStmt.run(
-              t.id,
-              tenantId,
-              t.txnNo,
-              t.collectionId,
-              t.voucherId,
-              t.studentId,
-              t.month,
-              t.amount,
-              t.fineAdded ?? null,
-              t.paymentMode || null,
-              t.referenceNo || null,
-              t.notes || null,
-              t.date,
-              now
-            );
-          }
-
-          const insertColStmt = this.sqliteDb!.prepare(`
-            INSERT INTO collections (id, institution_id, collection_no, date, total_amount, transaction_count, notes, is_bulk_import, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?)
-          `);
-          for (const c of writes.newCollections || []) {
-            insertColStmt.run(
-              c.id,
-              tenantId,
-              c.collectionNo,
-              c.date,
-              c.totalAmount,
-              c.transactionCount,
-              c.notes || null,
-              c.isBulkImport ? 1 : 0,
-              now
-            );
-          }
-
-          const deleteTxnStmt = this.sqliteDb!.prepare(`DELETE FROM transactions WHERE id = ? AND institution_id = ?`);
-          for (const id of writes.deleteTransactionIds || []) {
-            deleteTxnStmt.run(id, tenantId);
-          }
-
-          const updateColStmt = this.sqliteDb!.prepare(
-            `UPDATE collections SET total_amount = ?, transaction_count = ? WHERE id = ? AND institution_id = ?`
-          );
-          for (const [id, upd] of Object.entries(writes.collectionUpdates || {})) {
-            updateColStmt.run(upd.totalAmount, upd.transactionCount, id, tenantId);
-          }
-
-          const deleteColStmt = this.sqliteDb!.prepare(`DELETE FROM collections WHERE id = ? AND institution_id = ?`);
-          for (const id of writes.deleteCollectionIds || []) {
-            deleteColStmt.run(id, tenantId);
-          }
-
-          const deleteParticularsForVoucherStmt = this.sqliteDb!.prepare(`DELETE FROM voucher_particulars WHERE voucher_id = ?`);
-          const deleteVoucherStmt = this.sqliteDb!.prepare(`DELETE FROM vouchers WHERE id = ? AND institution_id = ?`);
-          for (const id of writes.deleteVoucherIds || []) {
-            deleteParticularsForVoucherStmt.run(id);
-            deleteVoucherStmt.run(id, tenantId);
-          }
-
-          this.sqliteDb!.exec('COMMIT;');
-          return result;
-        } catch (err) {
-          try {
-            this.sqliteDb!.exec('ROLLBACK;');
-          } catch {
-            // ignore
-          }
-          console.error('[DB] SQLite voucher transaction error:', err);
-          throw err;
-        }
-      });
-    }
-
     throw new Error('No database engine available for voucher transaction.');
   }
 
@@ -2749,11 +1754,6 @@ class DatabaseService {
       ]);
       return res.rows.map((r) => deserializeSimpleEntityRow(cfg.fields, r));
     }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(`SELECT ${cols} FROM ${cfg.table} WHERE institution_id = ?${orderClause}`);
-      const rows = stmt.all(tenantId) as any[];
-      return rows.map((r) => deserializeSimpleEntityRow(cfg.fields, r));
-    }
     return [];
   }
 
@@ -2769,11 +1769,6 @@ class DatabaseService {
         tenantId,
       ]);
       return res.rows.length ? deserializeSimpleEntityRow(cfg.fields, res.rows[0]) : null;
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(`SELECT ${cols} FROM ${cfg.table} WHERE id = ? AND institution_id = ?`);
-      const row = stmt.get(id, tenantId) as any;
-      return row ? deserializeSimpleEntityRow(cfg.fields, row) : null;
     }
     return null;
   }
@@ -2797,7 +1792,7 @@ class DatabaseService {
           }
         }
       }
-      const values = cfg.fields.map((f) => serializeFieldValue(this.engine, f, obj[f.field]));
+      const values = cfg.fields.map((f) => serializeFieldValue(f, obj[f.field]));
       const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       await this.pgPool.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`, [
@@ -2807,23 +1802,6 @@ class DatabaseService {
         now,
         now,
       ]);
-    } else if (this.sqliteDb) {
-      if (obj.id) {
-        const existing = this.sqliteDb.prepare(`SELECT id, institution_id FROM ${cfg.table} WHERE id = ?`).get(obj.id) as any;
-        if (existing) {
-          if (existing.institution_id === tenantId) {
-            return this.updateSimpleEntity(cfg, tenantId, obj.id, obj);
-          } else {
-            // ID already taken by another tenant - generate unique ID for this tenant
-            id = `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
-          }
-        }
-      }
-      const values = cfg.fields.map((f) => serializeFieldValue(this.engine, f, obj[f.field]));
-      const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
-      const placeholders = cols.map(() => '?').join(', ');
-      const stmt = this.sqliteDb.prepare(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`);
-      stmt.run(id, tenantId, ...values, now, now);
     } else {
       throw new Error('No database engine available.');
     }
@@ -2842,7 +1820,7 @@ class DatabaseService {
       return this.getSimpleEntityById(cfg, tenantId, id);
     }
 
-    const values = fieldsToUpdate.map((f) => serializeFieldValue(this.engine, f, updates[f.field]));
+    const values = fieldsToUpdate.map((f) => serializeFieldValue(f, updates[f.field]));
 
     if (this.engine === 'postgres' && this.pgPool) {
       const setClauses = fieldsToUpdate.map((f, i) => `${f.column} = $${i + 1}`);
@@ -2856,14 +1834,6 @@ class DatabaseService {
       if ((res.rowCount || 0) === 0) return null;
       return this.getSimpleEntityById(cfg, tenantId, id);
     }
-    if (this.sqliteDb) {
-      const setClauses = fieldsToUpdate.map((f) => `${f.column} = ?`);
-      setClauses.push('updated_at = ?');
-      const stmt = this.sqliteDb.prepare(`UPDATE ${cfg.table} SET ${setClauses.join(', ')} WHERE id = ? AND institution_id = ?`);
-      const result = stmt.run(...values, now, id, tenantId);
-      if (result.changes === 0) return null;
-      return this.getSimpleEntityById(cfg, tenantId, id);
-    }
     return null;
   }
 
@@ -2875,11 +1845,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
       return (res.rowCount || 0) > 0;
-    }
-    if (this.sqliteDb) {
-      const stmt = this.sqliteDb.prepare(`DELETE FROM ${cfg.table} WHERE id = ? AND institution_id = ?`);
-      const result = stmt.run(id, tenantId);
-      return result.changes > 0;
     }
     return false;
   }
@@ -2993,41 +1958,6 @@ class DatabaseService {
       return { students: res.rows.map((r) => this.studentRowToRecord(r)), total };
     }
 
-    if (this.sqliteDb) {
-      const conditions: string[] = ['institution_id = ?'];
-      const params: any[] = [tenantId];
-
-      if (opts.ids && opts.ids.length > 0) {
-        conditions.push(`id IN (${opts.ids.map(() => '?').join(',')})`);
-        params.push(...opts.ids);
-      }
-      if (opts.classId) {
-        conditions.push('class_id = ?');
-        params.push(opts.classId);
-      }
-      if (opts.familyId) {
-        conditions.push('family_id = ?');
-        params.push(opts.familyId);
-      }
-      if (opts.status) {
-        conditions.push('status = ?');
-        params.push(opts.status);
-      }
-      if (opts.q && opts.q.trim()) {
-        const searchExpr = DatabaseService.STUDENT_SEARCH_COLUMNS.map((c) => `coalesce(${c},'')`).join(" || ' ' || ");
-        conditions.push(`(${searchExpr}) LIKE ?`);
-        params.push(`%${opts.q.trim()}%`);
-      }
-
-      const whereClause = conditions.join(' AND ');
-      const countStmt = this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM students WHERE ${whereClause}`);
-      const total = Number((countStmt.get(...params) as any).total) || 0;
-
-      const dataStmt = this.sqliteDb.prepare(`SELECT * FROM students WHERE ${whereClause} ORDER BY name ASC LIMIT ? OFFSET ?`);
-      const rows = dataStmt.all(...params, pageSize, offset) as any[];
-      return { students: rows.map((r) => this.studentRowToRecord(r)), total };
-    }
-
     return { students: [], total: 0 };
   }
 
@@ -3049,17 +1979,6 @@ class DatabaseService {
         [tenantId]
       );
       return new Map(res.rows.map((r: any) => [r.class_id as string, Number(r.total) || 0]));
-    }
-
-    if (this.sqliteDb) {
-      const rows = this.sqliteDb
-        .prepare(
-          `SELECT class_id, COUNT(*) AS total FROM students
-           WHERE institution_id = ? AND status = 'Active' AND class_id IS NOT NULL
-           GROUP BY class_id`
-        )
-        .all(tenantId) as any[];
-      return new Map(rows.map((r) => [r.class_id as string, Number(r.total) || 0]));
     }
 
     return new Map();
@@ -3101,19 +2020,6 @@ class DatabaseService {
         const res = await this.pgPool.query(`SELECT name FROM students WHERE ${clause} LIMIT 1`, params);
         if (res.rows.length > 0) {
           return { field: check.field, existingStudentName: res.rows[0].name };
-        }
-      } else if (this.sqliteDb) {
-        const params: any[] = [tenantId, check.value];
-        let clause = `institution_id = ? AND ${check.column} = ?`;
-        if (excludeId) {
-          params.push(excludeId);
-          clause += ` AND id != ?`;
-        }
-        const row = this.sqliteDb.prepare(`SELECT name FROM students WHERE ${clause} LIMIT 1`).get(...params) as
-          | { name: string }
-          | undefined;
-        if (row) {
-          return { field: check.field, existingStudentName: row.name };
         }
       }
     }
@@ -3197,9 +2103,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       await this.pgPool.query(`INSERT INTO students (${cols.join(', ')}) VALUES (${placeholders})`, values);
-    } else if (this.sqliteDb) {
-      const placeholders = cols.map(() => '?').join(', ');
-      this.sqliteDb.prepare(`INSERT INTO students (${cols.join(', ')}) VALUES (${placeholders})`).run(...values);
     } else {
       throw new Error('No database engine available.');
     }
@@ -3273,13 +2176,6 @@ class DatabaseService {
         [...values, now, id, tenantId]
       );
       if ((res.rowCount || 0) === 0) return null;
-    } else if (this.sqliteDb) {
-      const setClauses = setCols.map((c) => `${c} = ?`);
-      setClauses.push('updated_at = ?');
-      const result = this.sqliteDb
-        .prepare(`UPDATE students SET ${setClauses.join(', ')} WHERE id = ? AND institution_id = ?`)
-        .run(...values, now, id, tenantId);
-      if (result.changes === 0) return null;
     } else {
       return null;
     }
@@ -3293,10 +2189,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM students WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
       return (res.rowCount || 0) > 0;
-    }
-    if (this.sqliteDb) {
-      const result = this.sqliteDb.prepare(`DELETE FROM students WHERE id = ? AND institution_id = ?`).run(id, tenantId);
-      return result.changes > 0;
     }
     return false;
   }
@@ -3340,25 +2232,6 @@ class DatabaseService {
         [id, tenantId]
       );
       return { deleted: false, blockedByVouchers: Boolean(existsRes.rows[0]?.exists) };
-    }
-
-    if (this.sqliteDb) {
-      return this.withSqliteWriteLock(() => {
-        const result = this.sqliteDb!
-          .prepare(
-            `DELETE FROM students
-             WHERE id = ? AND institution_id = ?
-               AND NOT EXISTS (SELECT 1 FROM vouchers WHERE student_id = ? AND institution_id = ?)`
-          )
-          .run(id, tenantId, id, tenantId);
-        if (result.changes > 0) {
-          return { deleted: true, blockedByVouchers: false };
-        }
-        const exists = this.sqliteDb!
-          .prepare(`SELECT 1 FROM students WHERE id = ? AND institution_id = ?`)
-          .get(id, tenantId);
-        return { deleted: false, blockedByVouchers: Boolean(exists) };
-      });
     }
 
     return { deleted: false, blockedByVouchers: false };
@@ -3434,36 +2307,6 @@ class DatabaseService {
       return { vouchers, total };
     }
 
-    if (this.sqliteDb) {
-      const { where, params } = buildConditions(() => '?');
-      const total = Number(
-        (this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM vouchers v WHERE ${where}`).get(...params) as any).total
-      );
-      const rows = this.sqliteDb
-        .prepare(
-          `SELECT v.*, s.name AS student_name, s.reg_no AS student_reg_no
-           FROM vouchers v
-           LEFT JOIN students s ON s.id = v.student_id AND s.institution_id = v.institution_id
-           WHERE ${where}
-           ORDER BY v.month DESC, v.voucher_no DESC
-           LIMIT ? OFFSET ?`
-        )
-        .all(...params, pageSize, offset) as any[];
-
-      const vouchers = rows.map((r) => {
-        const pRows = this.sqliteDb!.prepare(`SELECT * FROM voucher_particulars WHERE voucher_id = ? ORDER BY sort_order`).all(
-          r.id
-        ) as any[];
-        const particulars = pRows.map((p) => ({ kind: p.kind, label: p.label, amount: Number(p.amount) }));
-        return {
-          ...this.voucherRowToRecord(r, particulars),
-          studentName: r.student_name || undefined,
-          studentRegNo: r.student_reg_no || undefined,
-        };
-      });
-      return { vouchers, total };
-    }
-
     return { vouchers: [], total: 0 };
   }
 
@@ -3498,24 +2341,6 @@ class DatabaseService {
         [...params, pageSize, offset]
       );
       return { collections: res.rows.map((r) => this.collectionRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
-    }
-    if (this.sqliteDb) {
-      const conditions = ['institution_id = ?'];
-      const params: any[] = [tenantId];
-      if (opts.dateFrom) {
-        conditions.push('date >= ?');
-        params.push(opts.dateFrom);
-      }
-      if (opts.dateTo) {
-        conditions.push('date <= ?');
-        params.push(opts.dateTo);
-      }
-      const where = conditions.join(' AND ');
-      const total = Number((this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM collections WHERE ${where}`).get(...params) as any).total);
-      const rows = this.sqliteDb
-        .prepare(`SELECT * FROM collections WHERE ${where} ORDER BY date DESC, collection_no DESC LIMIT ? OFFSET ?`)
-        .all(...params, pageSize, offset) as any[];
-      return { collections: rows.map((r) => this.collectionRowToRecord(r)), total };
     }
     return { collections: [], total: 0 };
   }
@@ -3595,43 +2420,6 @@ class DatabaseService {
       );
       return { transactions: res.rows.map((r) => this.transactionRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
-    if (this.sqliteDb) {
-      const conditions = ['t.institution_id = ?'];
-      const params: any[] = [tenantId];
-      if (opts.studentId) {
-        conditions.push('t.student_id = ?');
-        params.push(opts.studentId);
-      }
-      if (opts.voucherId) {
-        conditions.push('t.voucher_id = ?');
-        params.push(opts.voucherId);
-      }
-      if (opts.collectionId) {
-        conditions.push('t.collection_id = ?');
-        params.push(opts.collectionId);
-      }
-      if (opts.dateFrom) {
-        conditions.push('t.date >= ?');
-        params.push(opts.dateFrom);
-      }
-      if (opts.dateTo) {
-        conditions.push('t.date <= ?');
-        params.push(opts.dateTo);
-      }
-      const where = conditions.join(' AND ');
-      const total = Number(
-        (this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM transactions t WHERE ${where}`).get(...params) as any).total
-      );
-      const rows = this.sqliteDb
-        .prepare(
-          `SELECT t.*, s.name AS student_name
-           FROM transactions t
-           LEFT JOIN students s ON s.id = t.student_id AND s.institution_id = t.institution_id
-           WHERE ${where} ORDER BY t.date DESC, t.txn_no DESC LIMIT ? OFFSET ?`
-        )
-        .all(...params, pageSize, offset) as any[];
-      return { transactions: rows.map((r) => this.transactionRowToRecord(r)), total };
-    }
     return { transactions: [], total: 0 };
   }
 
@@ -3697,32 +2485,6 @@ class DatabaseService {
       );
       return { logs: res.rows.map((r) => this.auditLogRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
-    if (this.sqliteDb) {
-      const conditions = ['institution_id = ?'];
-      const params: any[] = [tenantId];
-      if (opts.module) {
-        conditions.push('module = ?');
-        params.push(opts.module);
-      }
-      if (opts.actionType) {
-        conditions.push('action_type = ?');
-        params.push(opts.actionType);
-      }
-      if (opts.dateFrom) {
-        conditions.push('timestamp >= ?');
-        params.push(opts.dateFrom);
-      }
-      if (opts.dateTo) {
-        conditions.push('timestamp <= ?');
-        params.push(opts.dateTo);
-      }
-      const where = conditions.join(' AND ');
-      const total = Number((this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM audit_logs WHERE ${where}`).get(...params) as any).total);
-      const rows = this.sqliteDb
-        .prepare(`SELECT * FROM audit_logs WHERE ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
-        .all(...params, pageSize, offset) as any[];
-      return { logs: rows.map((r) => this.auditLogRowToRecord(r)), total };
-    }
     return { logs: [], total: 0 };
   }
 
@@ -3781,9 +2543,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       await this.pgPool.query(`INSERT INTO audit_logs (${cols.join(', ')}) VALUES (${placeholders})`, values);
-    } else if (this.sqliteDb) {
-      const placeholders = cols.map(() => '?').join(', ');
-      this.sqliteDb.prepare(`INSERT INTO audit_logs (${cols.join(', ')}) VALUES (${placeholders})`).run(...values);
     }
     return { id, timestamp, ...entry };
   }
@@ -3834,22 +2593,6 @@ class DatabaseService {
       );
       return { entries: res.rows.map((r) => this.studentHistoryRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
-    if (this.sqliteDb) {
-      const conditions = ['institution_id = ?'];
-      const params: any[] = [tenantId];
-      if (opts.studentId) {
-        conditions.push('student_id = ?');
-        params.push(opts.studentId);
-      }
-      const where = conditions.join(' AND ');
-      const total = Number(
-        (this.sqliteDb.prepare(`SELECT COUNT(*) AS total FROM student_account_history WHERE ${where}`).get(...params) as any).total
-      );
-      const rows = this.sqliteDb
-        .prepare(`SELECT * FROM student_account_history WHERE ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
-        .all(...params, pageSize, offset) as any[];
-      return { entries: rows.map((r) => this.studentHistoryRowToRecord(r)), total };
-    }
     return { entries: [], total: 0 };
   }
 
@@ -3895,9 +2638,6 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
       await this.pgPool.query(`INSERT INTO student_account_history (${cols.join(', ')}) VALUES (${placeholders})`, values);
-    } else if (this.sqliteDb) {
-      const placeholders = cols.map(() => '?').join(', ');
-      this.sqliteDb.prepare(`INSERT INTO student_account_history (${cols.join(', ')}) VALUES (${placeholders})`).run(...values);
     }
     return { id, timestamp, ...entry };
   }
@@ -3911,12 +2651,6 @@ class DatabaseService {
       const res = await this.pgPool.query(`SELECT month FROM locked_months WHERE institution_id = $1 ORDER BY month`, [tenantId]);
       return res.rows.map((r) => r.month);
     }
-    if (this.sqliteDb) {
-      const rows = this.sqliteDb
-        .prepare(`SELECT month FROM locked_months WHERE institution_id = ? ORDER BY month`)
-        .all(tenantId) as any[];
-      return rows.map((r) => r.month);
-    }
     return [];
   }
 
@@ -3929,10 +2663,6 @@ class DatabaseService {
         `INSERT INTO locked_months (institution_id, month, locked_at) VALUES ($1,$2,$3) ON CONFLICT (institution_id, month) DO NOTHING`,
         [tenantId, month, now]
       );
-    } else if (this.sqliteDb) {
-      this.sqliteDb
-        .prepare(`INSERT INTO locked_months (institution_id, month, locked_at) VALUES (?,?,?) ON CONFLICT(institution_id, month) DO NOTHING`)
-        .run(tenantId, month, now);
     }
   }
 
@@ -3941,8 +2671,6 @@ class DatabaseService {
     const tenantId = institutionId || 'default';
     if (this.engine === 'postgres' && this.pgPool) {
       await this.pgPool.query(`DELETE FROM locked_months WHERE institution_id = $1 AND month = $2`, [tenantId, month]);
-    } else if (this.sqliteDb) {
-      this.sqliteDb.prepare(`DELETE FROM locked_months WHERE institution_id = ? AND month = ?`).run(tenantId, month);
     }
   }
 
@@ -4021,10 +2749,6 @@ class DatabaseService {
         now,
         tenantId,
       ]);
-    } else if (this.sqliteDb) {
-      const setClauses = setCols.map((c) => `${c} = ?`);
-      setClauses.push('updated_at = ?');
-      this.sqliteDb.prepare(`UPDATE institutions SET ${setClauses.join(', ')} WHERE id = ?`).run(...values, now, tenantId);
     }
 
     return this.getInstitutionById(tenantId);
@@ -4116,14 +2840,6 @@ class DatabaseService {
           } else {
             await this.pgPool.query(`DELETE FROM ${table} WHERE institution_id = $1`, [tenantId]);
           }
-        } else if (this.sqliteDb) {
-          if (table === 'voucher_particulars') {
-            this.sqliteDb
-              .prepare(`DELETE FROM voucher_particulars WHERE voucher_id IN (SELECT id FROM vouchers WHERE institution_id = ?)`)
-              .run(tenantId);
-          } else {
-            this.sqliteDb.prepare(`DELETE FROM ${table} WHERE institution_id = ?`).run(tenantId);
-          }
         }
       }
 
@@ -4165,13 +2881,6 @@ class DatabaseService {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
             [c.id, tenantId, c.collectionNo, c.date, c.totalAmount, c.transactionCount, c.notes || null, !!c.isBulkImport, new Date().toISOString()]
           );
-        } else if (this.sqliteDb) {
-          this.sqliteDb
-            .prepare(
-              `INSERT INTO collections (id, institution_id, collection_no, date, total_amount, transaction_count, notes, is_bulk_import, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?)`
-            )
-            .run(c.id, tenantId, c.collectionNo, c.date, c.totalAmount, c.transactionCount, c.notes || null, c.isBulkImport ? 1 : 0, new Date().toISOString());
         }
       }
 
@@ -4182,13 +2891,6 @@ class DatabaseService {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
             [t.id, tenantId, t.txnNo, t.collectionId, t.voucherId, t.studentId, t.month, t.amount, t.fineAdded ?? null, t.paymentMode || null, t.referenceNo || null, t.notes || null, t.date, new Date().toISOString()]
           );
-        } else if (this.sqliteDb) {
-          this.sqliteDb
-            .prepare(
-              `INSERT INTO transactions (id, institution_id, txn_no, collection_id, voucher_id, student_id, month, amount, fine_added, payment_mode, reference_no, notes, date, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-            )
-            .run(t.id, tenantId, t.txnNo, t.collectionId, t.voucherId, t.studentId, t.month, t.amount, t.fineAdded ?? null, t.paymentMode || null, t.referenceNo || null, t.notes || null, t.date, new Date().toISOString());
         }
       }
 
@@ -4207,6 +2909,70 @@ class DatabaseService {
     } catch (err: any) {
       console.error(`[DB] Backup restore failed for tenant ${tenantId}:`, err);
       return { success: false, error: err?.message || 'Backup restore failed' };
+    }
+  }
+
+  /**
+   * Permanently deletes an entire institution and every associated record
+   * across all transactional, academic, security, and administrative tables.
+   * This is irreversible and executed atomically.
+   */
+  public async deleteInstitution(institutionId: string): Promise<{ success: boolean; error?: string }> {
+    const tenantId = institutionId || 'default';
+    await this.init();
+
+    try {
+      const wipeTables = [
+        'voucher_particulars',
+        'transactions',
+        'collections',
+        'vouchers',
+        'transport_assignments',
+        'stops',
+        'buses',
+        'student_account_history',
+        'students',
+        'classes',
+        'families',
+        'fee_templates',
+        'bank_accounts',
+        'locked_months',
+        'audit_logs',
+        'system_sequences',
+        'operator_invites',
+        'user_sessions',
+        'users',
+      ];
+
+      if (this.engine === 'postgres' && this.pgPool) {
+        const client = await this.pgPool.connect();
+        try {
+          await client.query('BEGIN');
+          for (const table of wipeTables) {
+            if (table === 'voucher_particulars') {
+              await client.query(
+                `DELETE FROM voucher_particulars WHERE voucher_id IN (SELECT id FROM vouchers WHERE institution_id = $1)`,
+                [tenantId]
+              );
+            } else {
+              await client.query(`DELETE FROM ${table} WHERE institution_id = $1`, [tenantId]);
+            }
+          }
+          await client.query(`DELETE FROM institutions WHERE id = $1`, [tenantId]);
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
+      }
+
+      this.revisions.delete(tenantId);
+      return { success: true };
+    } catch (err: any) {
+      console.error(`[DB] Failed to delete institution ${tenantId}:`, err);
+      return { success: false, error: err?.message || 'Failed to delete institution and all data.' };
     }
   }
 

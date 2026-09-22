@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
+import { DeleteInstitutionModal } from './settings/DeleteInstitutionModal';
 import { DataCleanupOptions } from '../types';
 import {
   AlertCircle,
@@ -82,6 +83,7 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
   const [hasAcknowledgedRisk, setHasAcknowledgedRisk] = useState<boolean>(false);
   const [confirmationPhrase, setConfirmationPhrase] = useState<string>('');
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
+  const [showDeleteInstitutionModal, setShowDeleteInstitutionModal] = useState<boolean>(false);
 
   useEscapeKey(() => {
     if (showConfirmModal) {
@@ -637,6 +639,41 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
               <Trash2 className="w-4 h-4" />
               Proceed to Reset Selected Tables ({selectedCount})
             </button>
+
+            {/* Comprehensive Institution Deletion Section */}
+            <div className="p-4 bg-rose-50/60 rounded-xl border border-rose-200 text-xs space-y-2.5 mt-4">
+              <div className="flex items-center gap-2 text-rose-950 font-bold">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>Permanent Institution Deletion</span>
+              </div>
+              <p className="text-[11px] text-rose-800 leading-relaxed">
+                Looking to completely remove this entire institution? This is more comprehensive than table resets: it permanently deletes the institution profile, admin credentials, users, and all server data.
+              </p>
+              <button
+                type="button"
+                id="btn-cleanup-open-delete-institution"
+                disabled={currentUser.role !== 'Admin'}
+                onClick={() => setShowDeleteInstitutionModal(true)}
+                className={`w-full py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  currentUser.role === 'Admin'
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-2xs cursor-pointer'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                }`}
+                title={
+                  currentUser.role !== 'Admin'
+                    ? 'Restricted: Only an Administrator for this institution can delete the profile and data.'
+                    : 'Permanently delete institution and all server data'
+                }
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Institution & All Data...
+              </button>
+              {currentUser.role !== 'Admin' && (
+                <span className="text-[10px] text-slate-500 block text-center">
+                  Restricted to Admin user for this institution.
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -766,6 +803,12 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
           </div>
         </div>
       )}
+
+      {/* Comprehensive Institution Deletion Modal */}
+      <DeleteInstitutionModal
+        isOpen={showDeleteInstitutionModal}
+        onClose={() => setShowDeleteInstitutionModal(false)}
+      />
     </div>
   );
 };

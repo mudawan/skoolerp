@@ -2,7 +2,7 @@ import { Institution, OperatorInvite, User } from '../types';
 
 export interface ApiHealthResponse {
   status: string;
-  engine: 'postgres' | 'sqlite';
+  engine: 'postgres';
   database?: {
     healthy: boolean;
     latencyMs?: number;
@@ -23,7 +23,7 @@ export interface ApiHealthResponse {
 
 export interface ApiStateResponse {
   success: boolean;
-  engine: 'postgres' | 'sqlite';
+  engine: 'postgres';
   revision?: number;
   institutionId?: string;
   data: any;
@@ -53,7 +53,7 @@ let activeInstitutionId: string | null = null;
 let syncTimeout: any = null;
 let pendingState: any = {};
 let isSyncing = false;
-let currentEngine: 'postgres' | 'sqlite' = 'sqlite';
+let currentEngine: 'postgres' = 'postgres';
 let isConnected = false;
 let currentRevision = 1;
 let activePeers = 1;
@@ -64,6 +64,37 @@ let statusListeners: ((status: DbStatus) => void)[] = [];
 let remoteUpdateListeners: ((data: any) => void)[] = [];
 let syncFailureListeners: ((info: SyncFailureInfo) => void)[] = [];
 let eventSource: EventSource | null = null;
+
+// Purge any lingering read-replica cache keys from client localStorage
+try {
+  Object.keys(localStorage).forEach((k) => {
+    if (k.startsWith('skooler_read_replica_')) {
+      localStorage.removeItem(k);
+    }
+  });
+} catch {}
+
+/**
+ * Returns whether the PostgreSQL backend is currently connected and healthy.
+ */
+export function isBackendConnected(): boolean {
+  return isConnected;
+}
+
+/**
+ * Validates that mutating operations (financial or structural) are allowed.
+ * Fails fast if the database is offline, preventing data overwrites or inconsistent states.
+ */
+export function checkMutationAllowed(): { allowed: boolean; error?: string } {
+  if (!isConnected) {
+    return {
+      allowed: false,
+      error:
+        'PostgreSQL database is currently offline. All financial operations and data updates are blocked until connection is restored to prevent multi-operator conflicts.',
+    };
+  }
+  return { allowed: true };
+}
 
 export interface SyncFailureInfo {
   collection: string;
@@ -328,12 +359,13 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
         website: institution.website || '',
         regNo: institution.registration_no || institution.regNo || '',
         sessionTimeoutMinutes: Number(instSettings?.sessionTimeoutMinutes) || 10,
+        settings: instSettings,
       };
     }
 
     initializeSyncSnapshots(data);
     isConnected = true;
-    currentEngine = currentEngine || 'sqlite';
+    currentEngine = currentEngine || 'postgres';
     notifyStatus();
     return { success: true, engine: currentEngine, revision: currentRevision, institutionId: targetId, data };
   } catch (err) {
@@ -632,6 +664,7 @@ async function syncInstituteProfile(institute: any) {
         registrationNo: institute.regNo,
         settings: {
           sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || 10,
+          ...(institute.settings || {}),
         },
       }),
     });
@@ -646,11 +679,33 @@ async function syncInstituteProfile(institute: any) {
 }
 
 /**
- * Queues state to be synced with the backend database for the active
- * institution. See the diff-and-sync functions above for how this maps
+ * Directly updates institution settings in PostgreSQL without disk caching.
+ */
+export async function apiUpdateInstituteSettings(settings: Record<string, any>): Promise<boolean> {
+  if (!activeInstitutionId) return false;
+  try {
+    const res = await fetch('/api/institute', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-institution-id': activeInstitutionId,
+      },
+      body: JSON.stringify({
+        settings,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Directly synchronizes state with the PostgreSQL database for the active
+ * institution without debounce delay. See the diff-and-sync functions above for how this maps
  * onto the real per-entity REST endpoints.
  */
-export function queueDatabaseSync(payload: any, instId?: string, delayMs = 250): void {
+export function queueDatabaseSync(payload: any, instId?: string, delayMs = 0): void {
   const targetId = instId || activeInstitutionId;
   if (!targetId) return;
 
@@ -658,10 +713,19 @@ export function queueDatabaseSync(payload: any, instId?: string, delayMs = 250):
 
   if (syncTimeout) {
     clearTimeout(syncTimeout);
+    syncTimeout = null;
   }
 
-  syncTimeout = setTimeout(async () => {
+  const flushSync = async () => {
     if (Object.keys(pendingState).length === 0) return;
+
+    if (!isConnected) {
+      pendingState = {};
+      isSyncing = false;
+      notifyStatus();
+      notifySyncFailure('database', ['offline_blocked']);
+      return;
+    }
 
     const toSend = pendingState;
     pendingState = {};
@@ -695,13 +759,20 @@ export function queueDatabaseSync(payload: any, instId?: string, delayMs = 250):
       await Promise.all(jobs);
       isConnected = true;
     } catch (err) {
-      console.warn('[Sync] Background sync to database encountered error:', err);
+      console.warn('[Sync] Direct write to database encountered error:', err);
       isConnected = false;
     } finally {
       isSyncing = false;
       notifyStatus();
     }
-  }, delayMs);
+  };
+
+  if (delayMs <= 0) {
+    // Direct immediate write to PostgreSQL
+    flushSync();
+  } else {
+    syncTimeout = setTimeout(flushSync, delayMs);
+  }
 }
 
 /**
@@ -733,6 +804,13 @@ export function initLiveRealtimeSync(instId?: string): () => void {
         const msg = JSON.parse(e.data);
         if (msg.type === 'handshake') {
           if (msg.revision) currentRevision = msg.revision;
+        } else if (msg.type === 'INSTITUTION_DELETED') {
+          setActiveInstitutionId(null);
+          resetSyncSnapshots();
+          try {
+            sessionStorage.setItem('school_deleted_notice', 'This institution and all its data have been permanently deleted by an administrator.');
+          } catch {}
+          window.location.reload();
         } else if (
           msg.type === 'db_mutation' ||
           msg.type === 'vouchers_generated' ||
@@ -920,6 +998,26 @@ export async function apiLogout(): Promise<{ success: boolean }> {
   }
 }
 
+export async function apiDeleteInstitution(
+  institutionId: string,
+  confirmationText: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/institution', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-institution-id': institutionId,
+      },
+      body: JSON.stringify({ confirmationText }),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to connect to server.' };
+  }
+}
+
 export async function apiListInstitutions(): Promise<{
   success: boolean;
   institutions?: Partial<Institution>[];
@@ -1051,6 +1149,12 @@ export async function apiGenerateVouchers(
   vouchers: any[],
   carriedPriorVouchers: any[] = []
 ): Promise<{ success: boolean; generatedCount?: number; vouchers?: any[]; error?: string }> {
+  if (!isConnected) {
+    return {
+      success: false,
+      error: 'Database is currently offline. Voucher generation is blocked until connection to PostgreSQL is restored.',
+    };
+  }
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/generate', {
@@ -1090,6 +1194,12 @@ export async function apiReceiveCollection(params: {
   updatedVouchers?: any[];
   error?: string;
 }> {
+  if (!isConnected) {
+    return {
+      success: false,
+      error: 'Database is currently offline. Payment collection is blocked until connection to PostgreSQL is restored.',
+    };
+  }
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/collections/receive', {
@@ -1119,6 +1229,12 @@ export async function apiCarryForwardVoucher(params: {
   targetVoucher?: any;
   error?: string;
 }> {
+  if (!isConnected) {
+    return {
+      success: false,
+      error: 'Database is currently offline. Balance carry-forward is blocked until connection to PostgreSQL is restored.',
+    };
+  }
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/carry-forward', {
@@ -1153,6 +1269,12 @@ export async function apiVoucherBatchUpdate(params: {
   collectionUpdates?: { id: string; totalAmount: number; transactionCount: number }[];
   deleteCollectionIds?: string[];
 }): Promise<{ success: boolean; revision?: number; error?: string }> {
+  if (!isConnected) {
+    return {
+      success: false,
+      error: 'Database is currently offline. Batch ledger updates are blocked until connection to PostgreSQL is restored.',
+    };
+  }
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/batch-update', {

@@ -123,6 +123,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     } catch {}
     return null;
   });
+  const [deletedNotice, setDeletedNotice] = useState<string | null>(() => {
+    try {
+      const notice = sessionStorage.getItem('school_deleted_notice');
+      if (notice) {
+        sessionStorage.removeItem('school_deleted_notice');
+        return notice;
+      }
+    } catch {}
+    return null;
+  });
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
@@ -387,8 +397,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
             </button>
           </div>
 
-          {/* Error, Timeout & Success Feedback Banners */}
-          {timeoutNotice && !errorMsg && !successMsg && (
+          {/* Error, Timeout, Deletion & Success Feedback Banners */}
+          {deletedNotice && !errorMsg && !successMsg && (
+            <div
+              id="auth-deleted-notice-banner"
+              className="mb-5 p-3.5 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs text-rose-200 flex items-start gap-2.5 animate-fadeIn"
+            >
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="flex-1 font-medium">{deletedNotice}</div>
+            </div>
+          )}
+
+          {timeoutNotice && !errorMsg && !successMsg && !deletedNotice && (
             <div
               id="auth-timeout-notice-banner"
               className="mb-5 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-start gap-2.5 animate-fadeIn"
@@ -965,12 +985,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
           )}
 
           {/* Footer Security Notice */}
-          <div className="mt-6 pt-4 border-t border-slate-700/60 text-center">
+          {/*<div className="mt-6 pt-4 border-t border-slate-700/60 text-center">
             <p className="text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5 text-teal-400 inline" />
               <span>Multi-Tenant Cloud Engine &bull; Scoped Institutional Encryption</span>
             </p>
-          </div>
+          </div>*/}
         </div>
       </div>
     </div>

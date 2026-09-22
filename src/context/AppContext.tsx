@@ -88,6 +88,7 @@ import {
   apiCreateUser,
   apiUpdateUser,
   apiDeleteUser,
+  apiDeleteInstitution,
   apiGenerateVouchers,
   apiReceiveCollection,
   apiCarryForwardVoucher,
@@ -96,6 +97,9 @@ import {
   subscribeSyncFailures,
   initializeSyncSnapshots,
   resetSyncSnapshots,
+  checkMutationAllowed,
+  subscribeDbStatus,
+  apiUpdateInstituteSettings,
 } from '../services/apiSync';
 
 export interface DownstreamConflict {
@@ -107,6 +111,10 @@ export interface DownstreamConflict {
 }
 
 interface AppContextType {
+  // Database Connectivity State
+  isDbConnected: boolean;
+  checkMutationAllowed: () => { allowed: boolean; error?: string };
+
   // Multi-Tenant & Auth
   currentInstitution: Institution | null;
   currentUser: User;
@@ -146,6 +154,7 @@ interface AppContextType {
   updateUser: (id: string, updates: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   updateUserPermissions: (id: string, permissions: string[], role?: UserRole) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (id: string) => Promise<{ success: boolean; error?: string }>;
+  deleteInstitutionAndData: (confirmationText: string) => Promise<{ success: boolean; error?: string }>;
 
   // Active Month
   activeMonth: string;
@@ -426,6 +435,7 @@ const STORAGE_KEY = 'skooler_app_data_v1';
 // We purge all un-scoped entity cache keys so the server database remains authoritative.
 try {
   const legacyGlobalKeys = [
+    `${STORAGE_KEY}_users`,
     `${STORAGE_KEY}_students`,
     `${STORAGE_KEY}_classes`,
     `${STORAGE_KEY}_families`,
@@ -441,6 +451,18 @@ try {
     `${STORAGE_KEY}_student_account_history`,
     `${STORAGE_KEY}_locked_months`,
     `${STORAGE_KEY}_institute`,
+    `${STORAGE_KEY}_prior_month_rule`,
+    `${STORAGE_KEY}_skipped_month_rule`,
+    `${STORAGE_KEY}_voucher_deletion_resolution`,
+    `${STORAGE_KEY}_session_timeout_minutes`,
+    `${STORAGE_KEY}_default_late_fee_rate`,
+    `${STORAGE_KEY}_rounding_multiple`,
+    `${STORAGE_KEY}_rounding_enabled`,
+    `${STORAGE_KEY}_default_due_date_enabled`,
+    `${STORAGE_KEY}_default_due_day`,
+    `${STORAGE_KEY}_due_day_seed_v2`,
+    `${STORAGE_KEY}_voucher_copy_order`,
+    `${STORAGE_KEY}_voucher_default_copies`,
   ];
   for (const k of legacyGlobalKeys) {
     localStorage.removeItem(k);
@@ -497,6 +519,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [invites, setInvites] = useState<OperatorInvite[]>([]);
 
+  // Database Connectivity State
+  const [isDbConnected, setIsDbConnected] = useState<boolean>(true);
+
+  // Toast System (declared early so all domain handlers can notify end-users)
+  const [toast, setToast] = useState<{
+    id: number;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  } | null>(null);
+
+  const showToast = useCallback(
+    (
+      message: string,
+      type: 'success' | 'error' | 'warning' | 'info' = 'info',
+      durationMs: number = 4000
+    ) => {
+      const id = Date.now();
+      setToast({ id, message, type });
+      setTimeout(() => {
+        setToast((current) => (current?.id === id ? null : current));
+      }, durationMs);
+    },
+    []
+  );
+
+  // Listen to live database status changes
+  useEffect(() => {
+    const unsub = subscribeDbStatus((status) => {
+      setIsDbConnected(status.isConnected);
+    });
+    return unsub;
+  }, []);
+
+  // Fail-fast guard for mutations when PostgreSQL is offline
+  const ensureMutationAllowed = useCallback((operationDesc?: string): { allowed: boolean; error?: string } => {
+    const perm = checkMutationAllowed();
+    if (!perm.allowed) {
+      const msg = perm.error || `${operationDesc || 'This operation'} is blocked while the database is offline.`;
+      showToast(msg, 'error', 6000);
+      return { allowed: false, error: msg };
+    }
+    return { allowed: true };
+  }, [showToast]);
+
   // Anonymous / unauthenticated guest placeholder for pre-login state
   const ANONYMOUS_USER: User = {
     id: 'usr-guest',
@@ -506,32 +572,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     permissions: [],
   };
 
-  // Stored Users in Database / Local Storage
-  const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_users`);
-    if (saved) {
-      try {
-        const parsed: User[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out legacy demo mock users if any
-          const realUsers = parsed.filter(
-            (u) =>
-              !(
-                (u.id === 'usr-admin' && u.username === 'admin' && (u.email === 'admin@school.edu' || u.email?.includes('skooler'))) ||
-                (u.id === 'usr-accountant' && u.username === 'accountant') ||
-                (u.id === 'usr-viewer' && u.username === 'viewer')
-              )
-          );
-          if (realUsers.length > 0) {
-            return realUsers;
-          }
-        }
-      } catch {
-        // ignore JSON parse errors and fallback
-      }
-    }
-    return SEEDED_USERS;
-  });
+  // Stored Users in Database (Direct from PostgreSQL, zero localStorage cache)
+  const [users, setUsers] = useState<User[]>(() => SEEDED_USERS);
 
   // Authentication State (Option B: Ephemeral Banking Model - invalidated on browser reopen)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -583,10 +625,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ) {
           return ANONYMOUS_USER;
         }
-        const savedUsers = localStorage.getItem(`${STORAGE_KEY}_users`);
-        const userList: User[] = savedUsers ? JSON.parse(savedUsers) : [];
-        const found = userList.find((u) => u.id === parsed.id || u.username.toLowerCase() === parsed.username?.toLowerCase());
-        if (found) return found;
         return parsed;
       } catch (e) {
         // ignore
@@ -601,102 +639,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // the switch, e.g. to confirm unsaved edits) that HeaderBar consults.
   const beforeMonthChange = useRef<((nextMonth: string) => boolean) | null>(null);
 
-  // Policy Settings State
-  const [priorMonthRule, setPriorMonthRuleState] = useState<PriorMonthVoucherRule>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_prior_month_rule`);
-    return (saved as PriorMonthVoucherRule) || 'strict';
-  });
+  // Policy Settings State (Server-Authoritative in PostgreSQL institutions.settings - no localStorage cache)
+  const [priorMonthRule, setPriorMonthRuleState] = useState<PriorMonthVoucherRule>('strict');
 
   const setPriorMonthRule = (rule: PriorMonthVoucherRule) => {
     setPriorMonthRuleState(rule);
-    localStorage.setItem(`${STORAGE_KEY}_prior_month_rule`, rule);
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, priorMonthRule: rule } }));
+    apiUpdateInstituteSettings({ priorMonthRule: rule });
   };
 
-  const [skippedMonthRule, setSkippedMonthRuleState] = useState<SkippedMonthVoucherRule>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_skipped_month_rule`);
-    return (saved as SkippedMonthVoucherRule) || 'warning';
-  });
+  const [skippedMonthRule, setSkippedMonthRuleState] = useState<SkippedMonthVoucherRule>('warning');
 
   const setSkippedMonthRule = (rule: SkippedMonthVoucherRule) => {
     setSkippedMonthRuleState(rule);
-    localStorage.setItem(`${STORAGE_KEY}_skipped_month_rule`, rule);
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, skippedMonthRule: rule } }));
+    apiUpdateInstituteSettings({ skippedMonthRule: rule });
   };
 
-  const [voucherDeletionResolution, setVoucherDeletionResolutionState] = useState<VoucherDeletionResolution>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_voucher_deletion_resolution`);
-    return (saved as VoucherDeletionResolution) || 'cascade';
-  });
+  const [voucherDeletionResolution, setVoucherDeletionResolutionState] = useState<VoucherDeletionResolution>('cascade');
 
   const setVoucherDeletionResolution = (resolution: VoucherDeletionResolution) => {
     setVoucherDeletionResolutionState(resolution);
-    localStorage.setItem(`${STORAGE_KEY}_voucher_deletion_resolution`, resolution);
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherDeletionResolution: resolution } }));
+    apiUpdateInstituteSettings({ voucherDeletionResolution: resolution });
   };
 
-  // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings)
-  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem(`${STORAGE_KEY}_session_timeout_minutes`);
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return 10;
-  });
+  // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings & persisted in PostgreSQL)
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(10);
 
   const setSessionTimeoutMinutes = (mins: number) => {
     const sanitized = Math.max(1, Math.min(180, Number(mins) || 10));
     setSessionTimeoutMinutesState(sanitized);
-    try {
-      localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(sanitized));
-    } catch {}
-    setInstitute((prev) => ({ ...prev, sessionTimeoutMinutes: sanitized }));
+    setInstitute((prev) => ({
+      ...prev,
+      sessionTimeoutMinutes: sanitized,
+      settings: { ...prev.settings, sessionTimeoutMinutes: sanitized },
+    }));
+    apiUpdateInstituteSettings({ sessionTimeoutMinutes: sanitized });
   };
 
-  const [defaultLateFeeRate, setDefaultLateFeeRateState] = useState<number>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_default_late_fee_rate`);
-    return saved ? Number(saved) : 500;
-  });
+  const [defaultLateFeeRate, setDefaultLateFeeRateState] = useState<number>(500);
 
   const setDefaultLateFeeRate = (rate: number) => {
-    setDefaultLateFeeRateState(rate);
-    localStorage.setItem(`${STORAGE_KEY}_default_late_fee_rate`, String(rate));
+    const cleanRate = Number(rate) || 0;
+    setDefaultLateFeeRateState(cleanRate);
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, defaultLateFeeRate: cleanRate } }));
+    apiUpdateInstituteSettings({ defaultLateFeeRate: cleanRate });
   };
 
-  const [roundingMultiple, setRoundingMultipleState] = useState<number>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_rounding_multiple`);
-    const parsed = saved ? Number(saved) : 0;
-    return parsed > 0 && Number.isInteger(parsed) ? parsed : 1;
-  });
+  const [roundingMultiple, setRoundingMultipleState] = useState<number>(1);
 
   const setRoundingMultiple = (multiple: number) => {
     const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 1;
     setRoundingMultipleState(clean);
-    localStorage.setItem(`${STORAGE_KEY}_rounding_multiple`, String(clean));
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, roundingMultiple: clean } }));
+    apiUpdateInstituteSettings({ roundingMultiple: clean });
   };
 
-  const [roundingEnabled, setRoundingEnabledState] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_rounding_enabled`);
-    return saved === null || saved === 'true';
-  });
+  const [roundingEnabled, setRoundingEnabledState] = useState<boolean>(true);
 
   const setRoundingEnabled = (enabled: boolean) => {
     setRoundingEnabledState(enabled);
-    localStorage.setItem(`${STORAGE_KEY}_rounding_enabled`, String(enabled));
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, roundingEnabled: enabled } }));
+    apiUpdateInstituteSettings({ roundingEnabled: enabled });
   };
 
-  const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_default_due_date_enabled`);
-    return saved === 'true';
-  });
+  const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(false);
 
-  const [defaultDueDay, setDefaultDueDayState] = useState<number>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_default_due_day`);
-    const parsed = saved ? parseInt(saved, 10) : 10;
-    return isNaN(parsed) || parsed < 1 || parsed > 31 ? 10 : parsed;
-  });
+  const [defaultDueDay, setDefaultDueDayState] = useState<number>(15);
 
   const setDefaultDueDateSettings = useCallback(
     (settings: {
@@ -704,13 +714,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       day?: number;
     }) => {
       setDefaultDueDateEnabledState(settings.enabled);
-      localStorage.setItem(`${STORAGE_KEY}_default_due_date_enabled`, String(settings.enabled));
-
+      const cleanDay = settings.day !== undefined ? Math.min(Math.max(1, settings.day), 31) : 15;
       if (settings.day !== undefined) {
-        const cleanDay = Math.min(Math.max(1, settings.day), 31);
         setDefaultDueDayState(cleanDay);
-        localStorage.setItem(`${STORAGE_KEY}_default_due_day`, String(cleanDay));
       }
+      setInstitute((prev) => ({
+        ...prev,
+        settings: {
+          ...prev.settings,
+          defaultDueDateEnabled: settings.enabled,
+          ...(settings.day !== undefined ? { defaultDueDay: cleanDay } : {}),
+        },
+      }));
+      apiUpdateInstituteSettings({
+        defaultDueDateEnabled: settings.enabled,
+        ...(settings.day !== undefined ? { defaultDueDay: cleanDay } : {}),
+      });
     },
     []
   );
@@ -726,43 +745,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [defaultDueDateEnabled, defaultDueDay]
   );
 
-  // Voucher Copy Order & Default Included Copies
-  const [voucherCopyOrder, setVoucherCopyOrderState] = useState<VoucherCopyType[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_voucher_copy_order`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {
-        // fallback
-      }
-    }
-    return ['bank', 'institute', 'student'];
-  });
+  // Voucher Copy Order & Default Included Copies (Stored directly in PostgreSQL)
+  const [voucherCopyOrder, setVoucherCopyOrderState] = useState<VoucherCopyType[]>(['bank', 'institute', 'student']);
 
   const setVoucherCopyOrder = useCallback((order: VoucherCopyType[]) => {
     const clean = Array.isArray(order) && order.length > 0 ? order : ['bank', 'institute', 'student'];
     setVoucherCopyOrderState(clean);
-    localStorage.setItem(`${STORAGE_KEY}_voucher_copy_order`, JSON.stringify(clean));
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherCopyOrder: clean } }));
+    apiUpdateInstituteSettings({ voucherCopyOrder: clean });
   }, []);
 
-  const [voucherDefaultCopies, setVoucherDefaultCopiesState] = useState<VoucherCopyType[]>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_voucher_default_copies`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {
-        // fallback
-      }
-    }
-    return ['bank', 'institute', 'student'];
-  });
+  const [voucherDefaultCopies, setVoucherDefaultCopiesState] = useState<VoucherCopyType[]>(['bank', 'institute', 'student']);
 
   const setVoucherDefaultCopies = useCallback((copies: VoucherCopyType[]) => {
     const clean = Array.isArray(copies) && copies.length > 0 ? copies : ['bank', 'institute', 'student'];
     setVoucherDefaultCopiesState(clean);
-    localStorage.setItem(`${STORAGE_KEY}_voucher_default_copies`, JSON.stringify(clean));
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherDefaultCopies: clean } }));
+    apiUpdateInstituteSettings({ voucherDefaultCopies: clean });
   }, []);
 
   // Core domain state
@@ -1148,13 +1147,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
     if (d.institute && d.institute.name) {
       setInstitute(d.institute);
-      if (d.institute.sessionTimeoutMinutes) {
-        const parsed = Number(d.institute.sessionTimeoutMinutes);
+      const s = d.institute.settings || {};
+      if (s.priorMonthRule) setPriorMonthRuleState(s.priorMonthRule);
+      if (s.skippedMonthRule) setSkippedMonthRuleState(s.skippedMonthRule);
+      if (s.voucherDeletionResolution) setVoucherDeletionResolutionState(s.voucherDeletionResolution);
+      if (s.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(s.defaultLateFeeRate));
+      if (s.roundingMultiple !== undefined) setRoundingMultipleState(Number(s.roundingMultiple));
+      if (s.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(s.roundingEnabled));
+      if (s.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(s.defaultDueDateEnabled));
+      if (s.defaultDueDay !== undefined) setDefaultDueDayState(Number(s.defaultDueDay));
+      if (Array.isArray(s.voucherCopyOrder) && s.voucherCopyOrder.length > 0) setVoucherCopyOrderState(s.voucherCopyOrder);
+      if (Array.isArray(s.voucherDefaultCopies) && s.voucherDefaultCopies.length > 0) setVoucherDefaultCopiesState(s.voucherDefaultCopies);
+
+      const timeoutVal = s.sessionTimeoutMinutes ?? d.institute.sessionTimeoutMinutes;
+      if (timeoutVal) {
+        const parsed = Number(timeoutVal);
         if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
           setSessionTimeoutMinutesState(parsed);
-          try {
-            localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(parsed));
-          } catch {}
         }
       }
     }
@@ -1166,16 +1175,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 150);
   }, []);
 
-  // Hydrate from centralized backend database on mount & subscribe to live SSE real-time sync
+  // Hydrate directly from authoritative PostgreSQL database on mount & subscribe to live SSE real-time sync
   useEffect(() => {
     fetchServerState().then((res) => {
       if (res?.success && res.data) {
+        setIsDbConnected(true);
         applyServerState(res.data);
+      } else {
+        setIsDbConnected(false);
       }
     });
 
     const cleanupSSE = initLiveRealtimeSync();
     const unsubRemote = subscribeRemoteChanges((remoteData) => {
+      setIsDbConnected(true);
       applyServerState(remoteData);
     });
 
@@ -1183,7 +1196,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cleanupSSE();
       unsubRemote();
     };
-  }, [applyServerState]);
+  }, [applyServerState, currentInstitution?.id]);
 
   // Sync to centralized tenant database
   useEffect(() => {
@@ -1274,7 +1287,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
       localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
-      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify([res.user]));
 
       // Update institutional header identity & currency
       setInstitute({
@@ -1482,11 +1494,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 ? JSON.parse(me.institution.settings)
                 : me.institution.settings
               : {};
+            if (instSettings.priorMonthRule) setPriorMonthRuleState(instSettings.priorMonthRule);
+            if (instSettings.skippedMonthRule) setSkippedMonthRuleState(instSettings.skippedMonthRule);
+            if (instSettings.voucherDeletionResolution) setVoucherDeletionResolutionState(instSettings.voucherDeletionResolution);
+            if (instSettings.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(instSettings.defaultLateFeeRate));
+            if (instSettings.roundingMultiple !== undefined) setRoundingMultipleState(Number(instSettings.roundingMultiple));
+            if (instSettings.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(instSettings.roundingEnabled));
+            if (instSettings.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(instSettings.defaultDueDateEnabled));
+            if (instSettings.defaultDueDay !== undefined) setDefaultDueDayState(Number(instSettings.defaultDueDay));
+            if (Array.isArray(instSettings.voucherCopyOrder) && instSettings.voucherCopyOrder.length > 0) setVoucherCopyOrderState(instSettings.voucherCopyOrder);
+            if (Array.isArray(instSettings.voucherDefaultCopies) && instSettings.voucherDefaultCopies.length > 0) setVoucherDefaultCopiesState(instSettings.voucherDefaultCopies);
             if (instSettings.sessionTimeoutMinutes) {
               const parsed = Number(instSettings.sessionTimeoutMinutes);
               if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
                 setSessionTimeoutMinutesState(parsed);
-                localStorage.setItem(`${STORAGE_KEY}_session_timeout_minutes`, String(parsed));
               }
             }
           } catch {}
@@ -1632,7 +1653,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const newHash = await hashPassword(password);
         const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
         setUsers(updatedUsers);
-        localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(updatedUsers));
       } catch {
         // ignore error
       }
@@ -1850,8 +1870,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
+  const deleteInstitutionAndData = async (
+    confirmationText: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (currentUser.role !== 'Admin') {
+      return {
+        success: false,
+        error: 'Access denied: Only an Administrator for this institution can delete the institution profile and data.',
+      };
+    }
+
+    const targetInstId = currentInstitution?.id;
+    if (!targetInstId) {
+      return { success: false, error: 'No active institution found to delete.' };
+    }
+
+    const instName = currentInstitution?.name || 'Institution';
+
+    try {
+      const res = await apiDeleteInstitution(targetInstId, confirmationText);
+      if (!res.success) {
+        return { success: false, error: res.error || 'Failed to delete institution on server.' };
+      }
+
+      // Reset all operational and administrative local states
+      setIsAuthenticated(false);
+      setCurrentUser(ANONYMOUS_USER);
+      setCurrentInstitution(null);
+      setActiveInstitutionId(null);
+      setInstitute(INITIAL_INSTITUTE);
+      setClasses([]);
+      setStudents([]);
+      setFamilies([]);
+      setBuses([]);
+      setStops([]);
+      setTransportAssignments([]);
+      setTemplates(INITIAL_GLOBAL_TEMPLATES);
+      setVouchers([]);
+      setCollections([]);
+      setTransactions([]);
+      setBankAccounts([]);
+      setAuditLogs([]);
+      setStudentAccountHistory([]);
+      setLockedMonths([]);
+      setUsers([]);
+      setInvites([]);
+
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith(STORAGE_KEY) || key.startsWith('quickfees_') || key.startsWith('school_'))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+        sessionStorage.removeItem(`${STORAGE_KEY}_browser_session_active`);
+        sessionStorage.setItem(
+          'school_deleted_notice',
+          `Institution "${instName}" and all associated academic, financial, and user records have been permanently deleted from the server.`
+        );
+      } catch {}
+
+      resetSyncSnapshots();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error deleting institution.' };
+    }
+  };
+
   // Class Management
   const addClass = (name: string, monthlyFee: number, sortOrder: number) => {
+    const perm = ensureMutationAllowed('Class creation');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (!name.trim()) return { success: false, error: 'Class name is required.' };
     if (classes.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
       return { success: false, error: 'A class with this name already exists.' };
@@ -1875,6 +1967,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateClass = (id: string, updates: Partial<SchoolClass>) => {
+    const perm = ensureMutationAllowed('Class update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (updates.name) {
       const exists = classes.some(
         (c) => c.id !== id && c.name.toLowerCase() === updates.name?.trim().toLowerCase()
@@ -1909,6 +2004,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteClass = (id: string) => {
+    const perm = ensureMutationAllowed('Class deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const enrolledStudents = students.filter((s) => s.classId === id);
     if (enrolledStudents.length > 0) {
       return {
@@ -1921,6 +2019,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const toggleClassActive = (id: string) => {
+    const perm = ensureMutationAllowed('Class status update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const cls = classes.find((c) => c.id === id);
     if (!cls) return { success: false, error: 'Class not found' };
 
@@ -1943,6 +2044,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const reorderClasses = (reorderedClasses: SchoolClass[]) => {
+    const perm = ensureMutationAllowed('Class reordering');
+    if (!perm.allowed) return;
+
     const updated = reorderedClasses.map((cls, idx) => ({
       ...cls,
       sortOrder: idx + 1,
@@ -1953,6 +2057,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Student Management
   const addStudent = (studentData: Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string }) => {
+    const perm = ensureMutationAllowed('Student registration');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const year = new Date().getFullYear();
 
     // Check if regNo already exists (read via ref so rows added earlier in a
@@ -2072,6 +2179,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateStudent = (id: string, updates: Partial<Student>) => {
+    const perm = ensureMutationAllowed('Student update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const target = students.find((s) => s.id === id);
     if (!target) return { success: false, error: 'Student not found.' };
 
@@ -2191,6 +2301,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteStudent = (id: string) => {
+    const perm = ensureMutationAllowed('Student deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const studentVouchers = vouchers.filter((v) => v.studentId === id);
     if (studentVouchers.length > 0) {
       return {
@@ -2209,6 +2322,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const bulkDeleteStudents = (ids: string[]) => {
+    const perm = ensureMutationAllowed('Bulk student deletion');
+    if (!perm.allowed) return { deletedCount: 0, skippedIds: ids };
+
     let deletedCount = 0;
     const skippedIds: string[] = [];
 
@@ -2226,6 +2342,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Family Management
   const addFamily = (familyData: Omit<Family, 'id' | 'familyNo'>) => {
+    const perm = ensureMutationAllowed('Family creation');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const year = new Date().getFullYear();
     familySeqRef.current += 1;
     const familyNo = `FAM${year}-${familySeqRef.current.toString().padStart(4, '0')}`;
@@ -2239,11 +2358,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateFamily = (id: string, updates: Partial<Family>) => {
+    const perm = ensureMutationAllowed('Family update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
     return { success: true };
   };
 
   const deleteFamily = (id: string) => {
+    const perm = ensureMutationAllowed('Family deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     setFamilies((prev) => prev.filter((f) => f.id !== id));
     setStudents((prev) =>
       prev.map((s) => (s.familyId === id ? { ...s, familyId: undefined } : s))
@@ -2252,6 +2377,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addStudentToFamily = (familyId: string, studentId: string) => {
+    const perm = ensureMutationAllowed('Family student assignment');
+    if (!perm.allowed) return;
+
     // 1. Update student's familyId
     setStudents((prev) =>
       prev.map((s) => (s.id === studentId ? { ...s, familyId } : s))
@@ -2275,6 +2403,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const removeStudentFromFamily = (familyId: string, studentId: string) => {
+    const perm = ensureMutationAllowed('Family student removal');
+    if (!perm.allowed) return;
     // 1. Unset student's familyId if it matches this family
     setStudents((prev) =>
       prev.map((s) => (s.id === studentId && s.familyId === familyId ? { ...s, familyId: undefined } : s))
@@ -2291,6 +2421,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Transport Management
   const addBus = (bus: Omit<TransportBus, 'id'>) => {
+    const perm = ensureMutationAllowed('Bus addition');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (buses.some((b) => b.busNumber.toLowerCase() === bus.busNumber.toLowerCase())) {
       return { success: false, error: 'Bus number already exists.' };
     }
@@ -2306,6 +2439,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateBus = (id: string, updates: Partial<TransportBus>) => {
+    const perm = ensureMutationAllowed('Bus update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (updates.busNumber) {
       const exists = buses.some(
         (b) => b.id !== id && b.busNumber.toLowerCase() === updates.busNumber?.trim().toLowerCase()
@@ -2332,6 +2468,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteBus = (id: string) => {
+    const perm = ensureMutationAllowed('Bus deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const activeAssignments = transportAssignments.filter(
       (a) => a.busId === id && students.some((s) => s.id === a.studentId && s.status === 'Active')
     );
@@ -2347,6 +2486,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const reorderBuses = (reorderedBuses: TransportBus[]) => {
+    const perm = ensureMutationAllowed('Bus reordering');
+    if (!perm.allowed) return;
+
     const updated = reorderedBuses.map((bus, idx) => ({
       ...bus,
       sortOrder: idx + 1,
@@ -2356,6 +2498,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addStop = (stop: Omit<TransportStop, 'id'>) => {
+    const perm = ensureMutationAllowed('Stop addition');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (stops.some((s) => s.name.toLowerCase() === stop.name.toLowerCase())) {
       return { success: false, error: 'Bus stop name already exists.' };
     }
@@ -2374,6 +2519,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateStop = (id: string, updates: Partial<TransportStop>) => {
+    const perm = ensureMutationAllowed('Stop update');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (updates.name) {
       const exists = stops.some(
         (s) => s.id !== id && s.name.toLowerCase() === updates.name?.trim().toLowerCase()
@@ -2415,6 +2563,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteStop = (id: string) => {
+    const perm = ensureMutationAllowed('Stop deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const activeAssignments = transportAssignments.filter(
       (a) => a.stopId === id && students.some((s) => s.id === a.studentId && s.status === 'Active')
     );
@@ -2430,6 +2581,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const reorderStops = (reorderedStops: TransportStop[]) => {
+    const perm = ensureMutationAllowed('Stop reordering');
+    if (!perm.allowed) return;
+
     const updated = reorderedStops.map((stop, idx) => ({
       ...stop,
       sortOrder: idx + 1,
@@ -2441,6 +2595,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const bulkSaveTransportStops = (
     stopsList: Array<Omit<TransportStop, 'id'> & { id?: string }>
   ) => {
+    const perm = ensureMutationAllowed('Bulk stop save');
+    if (!perm.allowed) return { success: false, count: 0, addedCount: 0, updatedCount: 0 };
     let addedCount = 0;
     let updatedCount = 0;
     setStops((prev) => {
@@ -2487,6 +2643,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const saveTransportAssignment = (
     assignment: Omit<TransportAssignment, 'id'> & { id?: string }
   ) => {
+    const perm = ensureMutationAllowed('Transport assignment save');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const stop = stops.find((s) => s.id === assignment.stopId);
     const bus = buses.find((b) => b.id === assignment.busId);
     const monthName = formatMonthName(assignment.month);
@@ -2556,6 +2715,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const bulkSaveTransportAssignments = (
     assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>
   ) => {
+    const perm = ensureMutationAllowed('Bulk transport assignments save');
+    if (!perm.allowed) return { success: false, count: 0 };
+
     setTransportAssignments((prev) => {
       let updated = [...prev];
       for (const asgn of assignments) {
@@ -2584,6 +2746,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteTransportAssignment = (id: string) => {
+    const perm = ensureMutationAllowed('Transport assignment deletion');
+    if (!perm.allowed) return;
+
     const targetAsgn = transportAssignments.find((a) => a.id === id);
     if (targetAsgn) {
       const stop = stops.find((s) => s.id === targetAsgn.stopId);
@@ -2607,6 +2772,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     targetMonth: string,
     daysChargedOverride?: number
   ) => {
+    const perm = ensureMutationAllowed('Copy transport assignments');
+    if (!perm.allowed) {
+      return { success: false, copiedCount: 0, skippedCount: 0, inactiveSkippedCount: 0, error: perm.error };
+    }
+
     if (!targetMonth || !targetMonth.includes('-')) {
       return { success: false, copiedCount: 0, skippedCount: 0, inactiveSkippedCount: 0, error: 'Invalid target month' };
     }
@@ -2688,6 +2858,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const bulkUpdateTransportDaysForMonth = (targetMonth: string, daysCharged: number) => {
+    const perm = ensureMutationAllowed('Bulk update transport days');
+    if (!perm.allowed) return { success: false, updatedCount: 0 };
+
     if (!targetMonth || !targetMonth.includes('-')) return { success: false, updatedCount: 0 };
     const [yStr, mStr] = targetMonth.split('-');
     const maxDays = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0).getDate();
@@ -2703,6 +2876,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Fee Particular Templates
   const saveGlobalTemplate = (template: Omit<FeeTemplate, 'id'>, month?: string) => {
+    const perm = ensureMutationAllowed('Save global fee template');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2729,6 +2905,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateGlobalTemplatesList = (newTemplates: FeeTemplate[], month?: string) => {
+    const perm = ensureMutationAllowed('Update global fee templates');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2754,6 +2933,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteGlobalTemplates = (month?: string) => {
+    const perm = ensureMutationAllowed('Delete global fee templates');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     setTemplates((prev) => {
       if (isAll) {
@@ -2774,6 +2956,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     amount: number,
     month?: string
   ) => {
+    const perm = ensureMutationAllowed('Save student fee template override');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2809,6 +2994,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
+    const perm = ensureMutationAllowed('Save class fee template overrides');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2833,6 +3021,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteClassTemplates = (classId: string, month?: string) => {
+    const perm = ensureMutationAllowed('Delete class fee templates');
+    if (!perm.allowed) return;
+
     setTemplates((prev) =>
       prev.filter((t) => {
         if (t.studentId || t.classId !== classId) return true;
@@ -2849,6 +3040,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
+    const perm = ensureMutationAllowed('Save student fee template overrides');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2879,6 +3073,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }>,
     month: string
   ) => {
+    const perm = ensureMutationAllowed('Bulk save student fee template overrides');
+    if (!perm.allowed) return;
+
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
@@ -2909,6 +3106,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteStudentTemplates = (studentId: string, month?: string) => {
+    const perm = ensureMutationAllowed('Delete student fee templates');
+    if (!perm.allowed) return;
+
     setTemplates((prev) =>
       prev.filter((t) => {
         if (t.studentId !== studentId) return true;
@@ -2921,6 +3121,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetAllTemplates = (month?: string) => {
+    const perm = ensureMutationAllowed('Reset fee templates');
+    if (!perm.allowed) return;
+
     setTemplates((prev) => {
       if (!month || month === 'all') {
         return [...INITIAL_GLOBAL_TEMPLATES];
@@ -2930,6 +3133,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteTemplate = (id: string) => {
+    const perm = ensureMutationAllowed('Delete fee template');
+    if (!perm.allowed) return;
+
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   };
 
@@ -2970,6 +3176,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const lockMonth = (month: string, notes?: string): { success: boolean; error?: string } => {
+    const perm = ensureMutationAllowed('Lock fee books');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (!month) return { success: false, error: 'Month parameter is required' };
     if (!hasPermission('settings.manage') && currentUser.role !== 'Admin' && !hasPermission('fees.generate')) {
       return { success: false, error: 'Unauthorized: insufficient permissions to lock fee books.' };
@@ -2998,6 +3207,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const unlockMonth = (month: string): { success: boolean; error?: string } => {
+    const perm = ensureMutationAllowed('Unlock fee books');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     if (!month) return { success: false, error: 'Month parameter is required' };
     if (!hasPermission('settings.manage') && currentUser.role !== 'Admin') {
       return { success: false, error: 'Unauthorized: only Administrators can unlock historical fee books.' };
@@ -3077,6 +3289,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     options: { dueDate?: string; lateFeeRate?: number; notes?: string; items?: { kind: ParticularKind; label: string; amount: number }[] } = {}
   ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
+    const perm = ensureMutationAllowed('Admission voucher generation');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const student = students.find((s) => s.id === studentId);
     if (!student) return { success: false, error: 'Student not found.' };
     if (student.status !== 'Active') return { success: false, error: 'Student is not active.' };
@@ -3233,6 +3448,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     dueDate?: string,
     lateFeeRate?: number
   ) => {
+    const perm = ensureMutationAllowed('Voucher generation');
+    if (!perm.allowed) return { success: false, generatedCount: 0, error: perm.error };
+
     const appliedLateFee = lateFeeRate !== undefined ? lateFeeRate : defaultLateFeeRate;
     const { previews, monthClosureBlocked, closureMessage } = previewVoucherGeneration(
       month,
@@ -3472,6 +3690,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     voucherId: string,
     updatedParticulars: VoucherItem[]
   ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
+    const perm = ensureMutationAllowed('Voucher modification');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
     if (voucher.status === 'Reversed') {
@@ -3591,6 +3812,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     date: string = new Date().toISOString().split('T')[0],
     updatedParticulars?: VoucherItem[]
   ) => {
+    const perm = ensureMutationAllowed('Payment collection');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
     if (voucher.status === 'Reversed') {
@@ -3777,6 +4001,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string,
     defaultDate: string = new Date().toISOString().split('T')[0]
   ) => {
+    const perm = ensureMutationAllowed('Bulk CSV payment collection');
+    if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error] };
+
     let successCount = 0;
     const errors: string[] = [];
 
@@ -4063,6 +4290,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addLateFine: boolean,
     customFineAmount?: number
   ) => {
+    const perm = ensureMutationAllowed('Carry forward defaulter');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     // Read via the ref (not the outer `vouchers` state) so that vouchers
     // already processed earlier in the same bulkCarryForwardDefaulters()
     // loop are visible here. Previously this read the outer closure, which
@@ -4342,6 +4572,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const undoCarryForwardVoucher = (
     voucherId: string
   ): { success: boolean; error?: string } => {
+    const perm = ensureMutationAllowed('Undo carry forward');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const baseList = vouchersRef.current;
     const voucher = baseList.find((v) => v.id === voucherId);
     if (!voucher) {
@@ -4570,6 +4803,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     force: boolean = false,
     mode?: VoucherDeletionResolution
   ) => {
+    const perm = ensureMutationAllowed('Voucher deletion');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
     const effectiveMode = mode || voucherDeletionResolution;
     const target = vouchers.find((v) => v.id === id);
     if (!target) return { success: false, error: 'Voucher not found' };
@@ -4708,6 +4944,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     force: boolean = false,
     mode?: VoucherDeletionResolution
   ) => {
+    const perm = ensureMutationAllowed('Bulk voucher deletion');
+    if (!perm.allowed) return { success: false, deletedCount: 0, error: perm.error };
+
     const effectiveMode = mode || voucherDeletionResolution;
     const selectedVouchers = vouchers.filter((v) => ids.includes(v.id));
     if (selectedVouchers.length === 0) return { success: false, deletedCount: 0 };
@@ -4839,6 +5078,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Collections Ledger Delete
   const deleteCollection = (id: string) => {
+    const perm = ensureMutationAllowed('Collection deletion');
+    if (!perm.allowed) return;
+
     const colToDelete = collections.find((c) => c.id === id);
     const colTxns = transactions.filter((t) => t.collectionId === id);
     if (colTxns.length === 0) {
@@ -5001,6 +5243,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addBankAccount = (bank: Omit<BankAccount, 'id'>) => {
+    const perm = ensureMutationAllowed('Add bank account');
+    if (!perm.allowed) return;
+
     const newBank: BankAccount = { ...bank, id: `bank-${Date.now()}` };
     if (newBank.isDefault) {
       setBankAccounts((prev) => prev.map((b) => ({ ...b, isDefault: false })).concat(newBank));
@@ -5010,6 +5255,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateBankAccount = (id: string, updates: Partial<BankAccount>) => {
+    const perm = ensureMutationAllowed('Update bank account');
+    if (!perm.allowed) return;
+
     if (updates.isDefault) {
       setBankAccounts((prev) =>
         prev.map((b) => (b.id === id ? { ...b, ...updates, isDefault: true } : { ...b, isDefault: false }))
@@ -5020,15 +5268,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteBankAccount = (id: string) => {
+    const perm = ensureMutationAllowed('Delete bank account');
+    if (!perm.allowed) return;
+
     setBankAccounts((prev) => prev.filter((b) => b.id !== id));
   };
 
   const setDefaultBankAccount = (id: string) => {
+    const perm = ensureMutationAllowed('Set default bank account');
+    if (!perm.allowed) return;
+
     setBankAccounts((prev) => prev.map((b) => ({ ...b, isDefault: b.id === id })));
   };
 
   // Selection-based database cleanup with cascading integrity awareness
   const cleanupDatabaseTables = async (options: DataCleanupOptions): Promise<CleanupResult> => {
+    const perm = ensureMutationAllowed('Database cleanup');
+    if (!perm.allowed) return { success: false, recordsClearedCount: 0, clearedTables: [], error: perm.error };
+
     const clearedTables: string[] = [];
     let recordsClearedCount = 0;
     // Collects human-readable descriptions of anything that failed to
@@ -5063,14 +5320,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.students) {
       recordsClearedCount += students.length;
       setStudents([]);
-      localStorage.setItem(`${STORAGE_KEY}_students`, JSON.stringify([]));
       setStudentAccountHistory([]);
-      localStorage.setItem(`${STORAGE_KEY}_student_account_history`, JSON.stringify([]));
       // Remove student members from families
       setFamilies((prev) => prev.map((f) => ({ ...f, memberStudentIds: [] })));
       // Clear transport assignments for students
       setTransportAssignments([]);
-      localStorage.setItem(`${STORAGE_KEY}_assignments`, JSON.stringify([]));
       // Clear student fee template overrides
       setTemplates((prev) => prev.filter((t) => !t.studentId));
       clearedTables.push(`Students & Profiles (${students.length} records)`);
@@ -5088,8 +5342,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recordsClearedCount += vouchers.length;
       setVouchers([]);
       setLockedMonths([]);
-      localStorage.setItem(`${STORAGE_KEY}_vouchers`, JSON.stringify([]));
-      localStorage.setItem(`${STORAGE_KEY}_locked_months`, JSON.stringify([]));
       clearedTables.push(`Fee Vouchers (${vouchers.length} records)`);
     }
 
@@ -5099,8 +5351,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recordsClearedCount += collCount;
       setCollections([]);
       setTransactions([]);
-      localStorage.setItem(`${STORAGE_KEY}_collections`, JSON.stringify([]));
-      localStorage.setItem(`${STORAGE_KEY}_transactions`, JSON.stringify([]));
       clearedTables.push(`Collections & Transactions (${collCount} records)`);
     }
 
@@ -5108,7 +5358,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.classes) {
       recordsClearedCount += classes.length;
       setClasses([]);
-      localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify([]));
       // Clear class fee template overrides
       setTemplates((prev) => prev.filter((t) => !t.classId));
       clearedTables.push(`Classes & Sections (${classes.length} records)`);
@@ -5123,7 +5372,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.families) {
       recordsClearedCount += families.length;
       setFamilies([]);
-      localStorage.setItem(`${STORAGE_KEY}_families`, JSON.stringify([]));
       // Remove familyId links from students if students were not already wiped
       if (!options.students) {
         setStudents((prev) => prev.map((s) => ({ ...s, familyId: undefined })));
@@ -5141,7 +5389,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const overrideCount = templates.filter((t) => !!t.studentId || !!t.classId).length;
       recordsClearedCount += (overrideCount || templates.length);
       setTemplates(INITIAL_GLOBAL_TEMPLATES);
-      localStorage.setItem(`${STORAGE_KEY}_templates`, JSON.stringify(INITIAL_GLOBAL_TEMPLATES));
       clearedTables.push(`Fee Particular Templates (Reset to standard 9-item baseline)`);
 
       templatesAfter = INITIAL_GLOBAL_TEMPLATES;
@@ -5155,7 +5402,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if ((options.transportAssignments || isFullTransportWipe) && !options.students) {
       recordsClearedCount += transportAssignments.length;
       setTransportAssignments([]);
-      localStorage.setItem(`${STORAGE_KEY}_assignments`, JSON.stringify([]));
       if (!isFullTransportWipe) {
         clearedTables.push(`Student Transport Assignments (${transportAssignments.length} records)`);
       }
@@ -5168,7 +5414,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.transportStops || isFullTransportWipe) {
       recordsClearedCount += stops.length;
       setStops([]);
-      localStorage.setItem(`${STORAGE_KEY}_stops`, JSON.stringify([]));
       if (!isFullTransportWipe) {
         clearedTables.push(`Bus Stops & Fare Rates (${stops.length} stops)`);
       }
@@ -5181,7 +5426,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.transportBuses || isFullTransportWipe) {
       recordsClearedCount += buses.length;
       setBuses([]);
-      localStorage.setItem(`${STORAGE_KEY}_buses`, JSON.stringify([]));
       if (!isFullTransportWipe) {
         clearedTables.push(`Buses Fleet Directory (${buses.length} buses)`);
       }
@@ -5199,7 +5443,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.bankAccounts) {
       recordsClearedCount += bankAccounts.length;
       setBankAccounts([]);
-      localStorage.setItem(`${STORAGE_KEY}_banks`, JSON.stringify([]));
       clearedTables.push(`Bank Accounts (${bankAccounts.length} accounts)`);
 
       bankAccountsAfter = [];
@@ -5212,7 +5455,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       recordsClearedCount += secondaryUsers.length;
       const preserved = users.filter((u) => u.id === currentUser.id);
       setUsers(preserved);
-      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(preserved));
       clearedTables.push(`Secondary Users (${secondaryUsers.length} users removed, current session preserved)`);
 
       secondaryUsersToDelete = secondaryUsers;
@@ -5316,28 +5558,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  // Toast System
-  const [toast, setToast] = useState<{
-    id: number;
-    message: string;
-    type: 'success' | 'error' | 'warning' | 'info';
-  } | null>(null);
-
-  const showToast = useCallback(
-    (
-      message: string,
-      type: 'success' | 'error' | 'warning' | 'info' = 'info',
-      durationMs: number = 4000
-    ) => {
-      const id = Date.now();
-      setToast({ id, message, type });
-      setTimeout(() => {
-        setToast((current) => (current?.id === id ? null : current));
-      }, durationMs);
-    },
-    []
-  );
-
   const reportFinancialSyncFailure = useCallback(
     (actionLabel: string, err: any) => {
       console.error(`[API] ${actionLabel} failed to save:`, err);
@@ -5389,6 +5609,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        isDbConnected,
+        checkMutationAllowed,
         currentInstitution,
         currentUser,
         isAuthenticated,
@@ -5405,6 +5627,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUser,
         updateUserPermissions,
         deleteUser,
+        deleteInstitutionAndData,
         activeMonth,
         setActiveMonth,
         beforeMonthChange,

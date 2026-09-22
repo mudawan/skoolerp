@@ -1,7 +1,7 @@
 #!/bin/sh
 # ==============================================================================
 # Skooler School Fee Management System - Automated Backup Script
-# Supports PostgreSQL (pg_dump) and SQLite databases
+# Supports PostgreSQL (pg_dump)
 # ==============================================================================
 
 set -e
@@ -12,22 +12,12 @@ RETENTION_DAYS="${RETENTION_DAYS:-30}"
 
 mkdir -p "$BACKUP_DIR"
 
-if [ -n "$DATABASE_URL" ] && echo "$DATABASE_URL" | grep -q "^postgres"; then
-  echo "[BACKUP] Starting PostgreSQL database backup..."
-  BACKUP_FILE="$BACKUP_DIR/postgres_backup_${TIMESTAMP}.sql.gz"
-  pg_dump "$DATABASE_URL" | gzip > "$BACKUP_FILE"
-  echo "[BACKUP] PostgreSQL backup created successfully at: $BACKUP_FILE"
-else
-  echo "[BACKUP] Starting SQLite database backup..."
-  SQLITE_DB="./data/school_management.db"
-  if [ -f "$SQLITE_DB" ]; then
-    BACKUP_FILE="$BACKUP_DIR/sqlite_backup_${TIMESTAMP}.db.gz"
-    gzip -c "$SQLITE_DB" > "$BACKUP_FILE"
-    echo "[BACKUP] SQLite backup created successfully at: $BACKUP_FILE"
-  else
-    echo "[BACKUP] Warning: SQLite database file not found at $SQLITE_DB"
-  fi
-fi
+DB_CONN="${DATABASE_URL:-postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-school_db}}"
+
+echo "[BACKUP] Starting PostgreSQL database backup..."
+BACKUP_FILE="$BACKUP_DIR/postgres_backup_${TIMESTAMP}.sql.gz"
+pg_dump "$DB_CONN" | gzip > "$BACKUP_FILE"
+echo "[BACKUP] PostgreSQL backup created successfully at: $BACKUP_FILE"
 
 # Clean up backups older than RETENTION_DAYS
 echo "[BACKUP] Pruning backups older than $RETENTION_DAYS days..."

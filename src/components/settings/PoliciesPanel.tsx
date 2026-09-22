@@ -225,7 +225,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 disabled={!hasPermission('settings.manage')}
                 value={selectedLateFeeRate}
                 onChange={(e) => setSelectedLateFeeRate(Math.max(0, Number(e.target.value) || 0))}
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
+                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
               />
             </div>
           </div>
@@ -283,7 +283,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                     setIsRoundingDropdownOpen(true);
                   }
                 }}
-                className="w-full pl-9 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition"
+                className="w-full pl-9 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 transition"
                 placeholder="1"
               />
               <button

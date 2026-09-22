@@ -79,10 +79,7 @@ async function startServer() {
    * Rate-limit store shared across every app instance via Postgres, so a
    * horizontally-scaled deployment (multiple replicas behind a load
    * balancer) enforces one real limit per client instead of giving an
-   * attacker one free set of attempts per replica. On a SQLite deployment
-   * (inherently single-instance — one file on one disk) this transparently
-   * falls back to a local in-memory counter, which is already correct
-   * there.
+   * attacker one free set of attempts per replica.
    */
   class SharedRateLimitStore implements Store {
     windowMs = 0;
@@ -101,9 +98,8 @@ async function startServer() {
         return { totalHits: pgResult.totalHits, resetTime: pgResult.resetTime };
       }
 
-      // Fallback path: local in-process counter (SQLite deployments, or a
-      // transient Postgres error). Not shared across instances, but that's
-      // the same guarantee the default MemoryStore already provided.
+      // Fallback path: local in-process counter during transient connection errors.
+      // Not shared across instances, but guarantees request servicing is not blocked.
       const now = Date.now();
       const existing = this.localCounts.get(key);
       if (!existing || existing.resetTime.getTime() <= now) {
@@ -152,6 +148,15 @@ async function startServer() {
 
   // Initialize Database Schema (no demo seeding - clean state for institutions)
   await dbService.init();
+
+  // Enforce zero caching on all API endpoints across all browsers, proxies, and intermediaries
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+    next();
+  });
 
   // Authentication resolution middleware: extracts user & institution from HTTP-only cookie or Bearer header
   async function resolveAuthSession(
@@ -1613,6 +1618,71 @@ async function startServer() {
     } catch (err: any) {
       console.error('[API] Failed to update institute profile:', err);
       res.status(500).json({ success: false, error: err?.message || 'Failed to update institute profile.' });
+    }
+  });
+
+  // Permanently delete institution profile and all associated data
+  // Strictly gated to an authenticated Admin for that institution. Irreversible and permanent.
+  app.delete('/api/institution', requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      if (req.user?.role !== 'Admin') {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied: Only an Administrator for this institution can permanently delete the institution profile and data.',
+        });
+      }
+
+      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string);
+      if (!institutionId) {
+        return res.status(400).json({ success: false, error: 'Institution ID is required.' });
+      }
+
+      const currentInst = await dbService.getInstitutionById(institutionId);
+      if (!currentInst) {
+        return res.status(404).json({ success: false, error: 'Institution not found.' });
+      }
+
+      const { confirmationText, confirmationName, confirmationCode } = req.body || {};
+      const targetName = currentInst.name?.trim().toLowerCase();
+      const targetCode = currentInst.code?.trim().toLowerCase();
+      const input = (confirmationText || confirmationName || confirmationCode || '').trim().toLowerCase();
+
+      // Require exact match with institution name, institution code, or the explicit phrase 'DELETE INSTITUTION'
+      if (input !== targetName && input !== targetCode && input !== 'delete institution') {
+        return res.status(400).json({
+          success: false,
+          error: `Confirmation mismatch: You must enter the exact institution name ("${currentInst.name}") or code ("${currentInst.code}") to confirm permanent deletion.`,
+        });
+      }
+
+      console.warn(`[API] DELETING INSTITUTION ${institutionId} (${currentInst.name}) requested by Admin ${req.user.username} (${req.user.id})`);
+
+      const result = await dbService.deleteInstitution(institutionId);
+      if (!result.success) {
+        return res.status(500).json({ success: false, error: result.error || 'Failed to delete institution data from server.' });
+      }
+
+      // Notify and disconnect all connected SSE clients for this institution
+      broadcastEvent({ type: 'INSTITUTION_DELETED', institutionId }, institutionId);
+      sseClients.forEach((c) => {
+        if (c.institutionId === institutionId) {
+          try {
+            c.res.end();
+          } catch {}
+        }
+      });
+      sseClients = sseClients.filter((c) => c.institutionId !== institutionId);
+
+      // Invalidate active session cookie
+      clearSessionCookie(res);
+
+      res.json({
+        success: true,
+        message: `Institution "${currentInst.name}" and all associated data have been permanently deleted.`,
+      });
+    } catch (err: any) {
+      console.error('[API] Failed to delete institution:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Failed to delete institution.' });
     }
   });
 

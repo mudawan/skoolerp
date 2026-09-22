@@ -25,6 +25,13 @@ interface GlobalStudentSearchProps {
 
 const RECENT_STUDENTS_STORAGE_KEY = 'quickfees_recent_searched_students';
 
+// Purge any legacy recent searched students from browser disk cache
+try {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(RECENT_STUDENTS_STORAGE_KEY);
+  }
+} catch {}
+
 export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
   onNavigateToLedger,
   onNavigateToStudents,
@@ -47,15 +54,8 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
     return true;
   };
 
-  // Recent students state (stored in localStorage)
-  const [recentStudentIds, setRecentStudentIds] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(RECENT_STUDENTS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Recent students state (ephemeral in-memory per session, zero disk cache)
+  const [recentStudentIds, setRecentStudentIds] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -191,15 +191,9 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Save to recent searches
+  // Save to recent searches (in-memory per session)
   const recordRecentStudent = (studentId: string) => {
-    try {
-      const updated = [studentId, ...recentStudentIds.filter((id) => id !== studentId)].slice(0, 8);
-      setRecentStudentIds(updated);
-      localStorage.setItem(RECENT_STUDENTS_STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      // Ignore storage errors
-    }
+    setRecentStudentIds((prev) => [studentId, ...prev.filter((id) => id !== studentId)].slice(0, 8));
   };
 
   // Open student profile

@@ -1,8 +1,8 @@
 # Skooler School Fee Management System - Production Deployment Guide
 
-This system is built with a production-grade database architecture:
-1. **PostgreSQL 16 (Production Default & Enforced)**: High-concurrency, ACID-compliant database with managed connection pooling, exponential retry backoff, and active db-ping health probes. When `REQUIRE_POSTGRES=true`, the app strictly enforces PostgreSQL and fails loudly if unreachable.
-2. **Embedded SQLite (Local Dev Fallback)**: Zero-setup, single-file relational database strictly intended for development when `REQUIRE_POSTGRES=false` and `DATABASE_URL` is omitted.
+This system is built with a production-grade PostgreSQL database architecture:
+- **PostgreSQL 16 (Authoritative Database)**: High-concurrency, ACID-compliant database with managed connection pooling, exponential retry backoff, row-level locking (`FOR UPDATE`), and active db-ping health probes.
+
 
 ---
 
@@ -126,7 +126,7 @@ sudo systemctl start skooler
 
 ## Automated Daily Backups
 
-The project includes an automated backup script at `./scripts/backup.sh` supporting both PostgreSQL and SQLite.
+The project includes an automated backup script at `./scripts/backup.sh` supporting PostgreSQL.
 
 To schedule a daily backup at 2:00 AM:
 ```bash
