@@ -484,6 +484,7 @@ const SYNC_ENTITY_LABELS: Record<string, string> = {
   templates: 'Fee Particular Templates',
   bankAccounts: 'Bank Accounts',
   lockedMonths: 'Month Lock/Unlock',
+  database: 'Database records',
 };
 
 /**
@@ -1124,10 +1125,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const isRemoteUpdateRef = useRef(false);
+  const isHydratedRef = useRef(false);
 
   const applyServerState = useCallback((d: any) => {
     if (!d) return;
     isRemoteUpdateRef.current = true;
+    isHydratedRef.current = true;
     if (Array.isArray(d.users) && d.users.length > 0) setUsers(d.users);
     if (Array.isArray(d.classes)) setClasses(d.classes);
     if (Array.isArray(d.students)) setStudents(d.students);
@@ -1177,6 +1180,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Hydrate directly from authoritative PostgreSQL database on mount & subscribe to live SSE real-time sync
   useEffect(() => {
+    isHydratedRef.current = false;
     fetchServerState().then((res) => {
       if (res?.success && res.data) {
         setIsDbConnected(true);
@@ -1200,7 +1204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Sync to centralized tenant database
   useEffect(() => {
-    if (isRemoteUpdateRef.current || !isAuthenticated || !currentInstitution?.id) {
+    if (!isHydratedRef.current || isRemoteUpdateRef.current || !isAuthenticated || !currentInstitution?.id) {
       return;
     }
 
@@ -1333,6 +1337,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bankAccounts: [],
         lockedMonths: [],
       });
+      isHydratedRef.current = true;
 
       logAuditEvent({
         actionType: 'system_cleanup',
@@ -1712,6 +1717,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem('quickfees_last_activity_timestamp');
     } catch {}
 
+    isHydratedRef.current = false;
     resetSyncSnapshots();
     apiLogout().catch(() => {});
   };

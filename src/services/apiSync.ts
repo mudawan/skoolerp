@@ -151,6 +151,12 @@ export function getActiveInstitutionId(): string | null {
 export function resetSyncSnapshots(): void {
   lastSyncedSnapshots = {};
   permanentlyFailedIds = {};
+  pendingState = {};
+  if (syncTimeout) {
+    clearTimeout(syncTimeout);
+    syncTimeout = null;
+  }
+  isSyncing = false;
 }
 
 export function initializeSyncSnapshots(data: any): void {
@@ -718,6 +724,11 @@ export function queueDatabaseSync(payload: any, instId?: string, delayMs = 0): v
 
   const flushSync = async () => {
     if (Object.keys(pendingState).length === 0) return;
+
+    // Do not attempt to diff or emit offline failures if snapshots haven't been loaded yet for this institution
+    if (!activeInstitutionId || Object.keys(lastSyncedSnapshots).length === 0) {
+      return;
+    }
 
     if (!isConnected) {
       pendingState = {};
