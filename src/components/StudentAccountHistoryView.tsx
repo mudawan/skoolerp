@@ -364,6 +364,8 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
                   className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${
                     student.status === 'Active'
                       ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                      : student.status === 'Graduated'
+                      ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
                       : student.status === 'Withdrawn'
                       ? 'bg-rose-100 text-rose-800 border-rose-200'
                       : student.status === 'AutoDeactivated'
@@ -762,8 +764,8 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
                 <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
                   New Status
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['Active', 'Withdrawn', 'Inactive', 'AutoDeactivated'] as StudentStatus[]).map((st) => {
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {(['Active', 'Withdrawn', 'Graduated', 'Inactive', 'AutoDeactivated'] as StudentStatus[]).map((st) => {
                     const isSelected = targetStatus === st;
                     return (
                       <button
@@ -775,6 +777,8 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
                           isSelected
                             ? st === 'Active'
                               ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-bold ring-2 ring-emerald-500/20'
+                              : st === 'Graduated'
+                              ? 'bg-indigo-50 border-indigo-500 text-indigo-950 font-bold ring-2 ring-indigo-500/20'
                               : st === 'Withdrawn'
                               ? 'bg-rose-50 border-rose-500 text-rose-950 font-bold ring-2 ring-rose-500/20'
                               : st === 'AutoDeactivated'
@@ -792,6 +796,16 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
               </div>
 
               {/* Status explanation alert */}
+              {targetStatus === 'Graduated' && (
+                <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] flex items-start gap-2">
+                  <GraduationCap className="w-4 h-4 shrink-0 text-indigo-600 mt-0.5" />
+                  <div>
+                    <strong className="block font-bold">Graduation Notice</strong>
+                    Marks student as graduated from the academy. Closes active billing cycles while preserving all historical fee records.
+                  </div>
+                </div>
+              )}
+
               {targetStatus === 'Withdrawn' && (
                 <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] flex items-start gap-2">
                   <ShieldAlert className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
@@ -802,7 +816,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
                 </div>
               )}
 
-              {targetStatus === 'Active' && student.status === 'Withdrawn' && (
+              {targetStatus === 'Active' && (student.status === 'Withdrawn' || student.status === 'Graduated') && (
                 <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] flex items-start gap-2">
                   <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
                   <div>

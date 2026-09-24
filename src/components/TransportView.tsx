@@ -709,7 +709,7 @@ export const TransportView: React.FC = () => {
           if (!student) {
             isValid = false;
             errorMsg = `Student '${rawRegNo}' not found`;
-          } else if (student.status === 'Inactive' || student.status === 'Passout') {
+          } else if (student.status !== 'Active') {
             isValid = false;
             errorMsg = `Student is ${student.status}`;
           } else if (!bus) {

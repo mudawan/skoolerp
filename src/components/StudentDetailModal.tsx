@@ -238,6 +238,8 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
                     currentStudent.status === 'Active'
                       ? 'bg-emerald-100 text-emerald-800'
+                      : currentStudent.status === 'Graduated'
+                      ? 'bg-indigo-100 text-indigo-800'
                       : currentStudent.status === 'Withdrawn'
                       ? 'bg-rose-100 text-rose-800'
                       : currentStudent.status === 'AutoDeactivated'
@@ -402,7 +404,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 font-bold uppercase block">Gender</span>
-                <span className="font-bold text-slate-900 text-xs">{student.gender}</span>
+                <span className="font-bold text-slate-900 text-xs">{student.gender || 'Not specified'}</span>
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 font-bold uppercase block">Student CNIC / B-Form</span>

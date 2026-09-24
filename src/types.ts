@@ -85,7 +85,7 @@ export interface SchoolClass {
   studentCount?: number;
 }
 
-export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn';
+export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn' | 'Graduated';
 
 export interface StudentDocument {
   name: string;
@@ -110,7 +110,7 @@ export interface Student {
 
   // 2. Other Information
   dob: string; // Date of Birth
-  gender: 'Male' | 'Female'; // Gender
+  gender?: 'Male' | 'Female' | ''; // Gender
   bFormNo?: string; // Student CNIC / Birth Form ID
   familyId?: string; // Family
   address?: string; // Address
@@ -140,6 +140,7 @@ export interface Family {
   familyNo: string;
   headName: string;
   contactPhone: string;
+  fatherCnic?: string;
   address: string;
   notes?: string;
   memberStudentIds: string[];

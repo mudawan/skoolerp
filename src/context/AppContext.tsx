@@ -70,6 +70,7 @@ import {
   roundUpToMultiple,
   VoucherPreviewCalculation,
   normalizeDateToISO,
+  normalizeCnic,
 } from '../utils/feeMath';
 import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
 import {
@@ -163,7 +164,7 @@ interface AppContextType {
 
   // Classes
   classes: SchoolClass[];
-  addClass: (name: string, monthlyFee: number, sortOrder: number) => { success: boolean; error?: string };
+  addClass: (name: string, monthlyFee: number, sortOrder: number) => { success: boolean; error?: string; newClass?: SchoolClass };
   updateClass: (id: string, updates: Partial<SchoolClass>) => { success: boolean; error?: string };
   deleteClass: (id: string) => { success: boolean; error?: string };
   toggleClassActive: (id: string) => { success: boolean; error?: string };
@@ -1969,7 +1970,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const clampedIndex = Math.min(Math.max(sortOrder - 1, 0), existing.length);
     existing.splice(clampedIndex, 0, newClass);
     setClasses(existing.map((c, idx) => ({ ...c, sortOrder: idx + 1 })));
-    return { success: true };
+    return { success: true, newClass };
   };
 
   const updateClass = (id: string, updates: Partial<SchoolClass>) => {
@@ -2092,22 +2093,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const regNo = studentData.regNo?.trim() || `REG-${(1000 + studentSeqRef.current).toString()}`;
     const studentNo = studentData.studentNo?.trim() || regNo;
 
-    // Auto family linking by Father CNIC (reads via refs so a family created
-    // for an earlier row of the same bulk import is matched instead of
-    // duplicated)
+    // Auto family linking strictly by Father CNIC (reads via refs so a family created
+    // for an earlier row of the same bulk import or an existing family whose students were
+    // deleted is matched and re-adopted instead of duplicated)
     let familyId = studentData.familyId;
     if (!familyId && studentData.fatherCnic?.trim()) {
+      const rawCnic = studentData.fatherCnic.trim();
+      const normCnic = normalizeCnic(rawCnic);
+
       const existingFamily = familiesRef.current.find((f) => {
-        const memberStudents = studentsRef.current.filter((s) => f.memberStudentIds.includes(s.id));
-        return memberStudents.some((s) => s.fatherCnic === studentData.fatherCnic.trim());
+        // Direct match on family's own stored fatherCnic
+        if (!f.fatherCnic?.trim()) return false;
+        const fNorm = normalizeCnic(f.fatherCnic);
+        return (
+          f.fatherCnic.trim().toLowerCase() === rawCnic.toLowerCase() ||
+          (normCnic.length >= 5 && fNorm === normCnic)
+        );
       });
+
       if (existingFamily) {
         familyId = existingFamily.id;
+        // Re-adopt existing family: fill headName/contactPhone if currently blank
+        const updatedHeadName = existingFamily.headName || studentData.fatherName;
+        const updatedPhone = existingFamily.contactPhone || studentData.fatherPhone || '';
+        if (updatedHeadName !== existingFamily.headName || updatedPhone !== existingFamily.contactPhone) {
+          const updatedFamily = {
+            ...existingFamily,
+            headName: updatedHeadName,
+            contactPhone: updatedPhone,
+          };
+          setFamilies((prev) =>
+            prev.map((f) => (f.id === existingFamily.id ? updatedFamily : f))
+          );
+          familiesRef.current = familiesRef.current.map((f) =>
+            f.id === existingFamily.id ? updatedFamily : f
+          );
+        }
       } else {
-        // Create auto family
-        // generateUniqueId (not `fam-${Date.now()}`) prevents collisions when
-        // multiple new families are minted within the same millisecond, e.g.
-        // several rows of a bulk CSV import each introducing a new father CNIC.
+        // Create auto family strictly with fatherCnic
         const newFamId = generateUniqueId('fam');
         familySeqRef.current += 1;
         const newFamNo = `FAM${year}-${familySeqRef.current.toString().padStart(4, '0')}`;
@@ -2115,7 +2138,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           id: newFamId,
           familyNo: newFamNo,
           headName: studentData.fatherName,
-          contactPhone: studentData.fatherPhone,
+          contactPhone: studentData.fatherPhone || '',
+          fatherCnic: rawCnic,
           address: '',
           memberStudentIds: [],
         };
@@ -2319,9 +2343,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setStudents((prev) => prev.filter((s) => s.id !== id));
+    studentsRef.current = studentsRef.current.filter((s) => s.id !== id);
+
     setFamilies((prev) =>
       prev.map((f) => ({ ...f, memberStudentIds: f.memberStudentIds.filter((mId) => mId !== id) }))
     );
+    familiesRef.current = familiesRef.current.map((f) => ({
+      ...f,
+      memberStudentIds: f.memberStudentIds.filter((mId) => mId !== id),
+    }));
+
     setTransportAssignments((prev) => prev.filter((a) => a.studentId !== id));
     setTemplates((prev) => prev.filter((t) => t.studentId !== id));
     return { success: true };
@@ -2358,8 +2389,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...familyData,
       id: generateUniqueId('fam'),
       familyNo,
+      fatherCnic: familyData.fatherCnic?.trim() || '',
     };
     setFamilies((prev) => [...prev, newFamily]);
+    familiesRef.current = [...familiesRef.current, newFamily];
     return { success: true, family: newFamily };
   };
 
@@ -2367,7 +2400,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const perm = ensureMutationAllowed('Family update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
+    const sanitized = { ...updates };
+    if (sanitized.fatherCnic !== undefined) {
+      sanitized.fatherCnic = sanitized.fatherCnic.trim();
+    }
+    setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...sanitized } : f)));
+    familiesRef.current = familiesRef.current.map((f) => (f.id === id ? { ...f, ...sanitized } : f));
     return { success: true };
   };
 
@@ -2376,8 +2414,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!perm.allowed) return { success: false, error: perm.error };
 
     setFamilies((prev) => prev.filter((f) => f.id !== id));
+    familiesRef.current = familiesRef.current.filter((f) => f.id !== id);
+
     setStudents((prev) =>
       prev.map((s) => (s.familyId === id ? { ...s, familyId: undefined } : s))
+    );
+    studentsRef.current = studentsRef.current.map((s) =>
+      s.familyId === id ? { ...s, familyId: undefined } : s
     );
     return { success: true };
   };
@@ -2390,9 +2433,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudents((prev) =>
       prev.map((s) => (s.id === studentId ? { ...s, familyId } : s))
     );
+    studentsRef.current = studentsRef.current.map((s) =>
+      s.id === studentId ? { ...s, familyId } : s
+    );
     // 2. Add to target family and remove from any previous family
-    setFamilies((prev) =>
-      prev.map((f) => {
+    const updateFamilyMembers = (prevFamilies: Family[]) =>
+      prevFamilies.map((f) => {
         if (f.id === familyId) {
           return {
             ...f,
@@ -2404,8 +2450,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             memberStudentIds: f.memberStudentIds.filter((id) => id !== studentId),
           };
         }
-      })
-    );
+      });
+    setFamilies(updateFamilyMembers);
+    familiesRef.current = updateFamilyMembers(familiesRef.current);
   };
 
   const removeStudentFromFamily = (familyId: string, studentId: string) => {
@@ -2415,14 +2462,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudents((prev) =>
       prev.map((s) => (s.id === studentId && s.familyId === familyId ? { ...s, familyId: undefined } : s))
     );
+    studentsRef.current = studentsRef.current.map((s) =>
+      s.id === studentId && s.familyId === familyId ? { ...s, familyId: undefined } : s
+    );
     // 2. Remove student ID from this family
-    setFamilies((prev) =>
-      prev.map((f) =>
+    const updateFamilyRemoval = (prevFamilies: Family[]) =>
+      prevFamilies.map((f) =>
         f.id === familyId
           ? { ...f, memberStudentIds: f.memberStudentIds.filter((id) => id !== studentId) }
           : f
-      )
-    );
+      );
+    setFamilies(updateFamilyRemoval);
+    familiesRef.current = updateFamilyRemoval(familiesRef.current);
   };
 
   // Transport Management

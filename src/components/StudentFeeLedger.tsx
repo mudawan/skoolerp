@@ -683,6 +683,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                       className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
                         currentStudent.status === 'Active'
                           ? 'bg-emerald-100 text-emerald-800'
+                          : currentStudent.status === 'Graduated'
+                          ? 'bg-indigo-100 text-indigo-800'
                           : 'bg-rose-100 text-rose-800'
                       }`}
                     >

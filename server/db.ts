@@ -237,6 +237,7 @@ export const FAMILY_ENTITY_CONFIG: SimpleEntityConfig = {
     { column: 'family_no', field: 'familyNo', type: 'string' },
     { column: 'head_name', field: 'headName', type: 'string' },
     { column: 'contact_phone', field: 'contactPhone', type: 'string' },
+    { column: 'father_cnic', field: 'fatherCnic', type: 'string' },
     { column: 'address', field: 'address', type: 'string' },
     { column: 'notes', field: 'notes', type: 'string' },
   ],
@@ -611,11 +612,13 @@ class DatabaseService {
           family_no VARCHAR(64),
           head_name VARCHAR(255) NOT NULL,
           contact_phone VARCHAR(64),
+          father_cnic VARCHAR(64),
           address TEXT,
           notes TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE families ADD COLUMN IF NOT EXISTS father_cnic VARCHAR(64);
 
         CREATE TABLE IF NOT EXISTS students (
           id VARCHAR(64) PRIMARY KEY,
@@ -1990,37 +1993,31 @@ class DatabaseService {
   }
 
   /**
-   * Checks whether a B-Form number or Father CNIC is already used by
-   * another student in this institution — a real, indexed, server-side
-   * uniqueness check replacing the old client-side full-roster scan.
+   * Checks whether an individual student's B-Form number is already used by
+   * another student in this institution. Father CNIC is shared across siblings
+   * and is not unique per student.
    */
   public async findDuplicateStudent(
     institutionId: string,
     fields: { bFormNo?: string; fatherCnic?: string },
     excludeId?: string
-  ): Promise<{ field: 'bFormNo' | 'fatherCnic'; existingStudentName: string } | null> {
+  ): Promise<{ field: 'bFormNo'; existingStudentName: string } | null> {
     await this.init();
     const tenantId = institutionId || 'default';
 
-    const checks: Array<{ field: 'bFormNo' | 'fatherCnic'; column: string; value?: string }> = [
-      { field: 'bFormNo', column: 'b_form_no', value: fields.bFormNo?.trim() },
-      { field: 'fatherCnic', column: 'father_cnic', value: fields.fatherCnic?.trim() },
-    ];
+    const bFormValue = fields.bFormNo?.trim();
+    if (!bFormValue) return null;
 
-    for (const check of checks) {
-      if (!check.value) continue;
-
-      if (this.engine === 'postgres' && this.pgPool) {
-        const params: any[] = [tenantId, check.value];
-        let clause = `institution_id = $1 AND ${check.column} = $2`;
-        if (excludeId) {
-          params.push(excludeId);
-          clause += ` AND id != $3`;
-        }
-        const res = await this.pgPool.query(`SELECT name FROM students WHERE ${clause} LIMIT 1`, params);
-        if (res.rows.length > 0) {
-          return { field: check.field, existingStudentName: res.rows[0].name };
-        }
+    if (this.engine === 'postgres' && this.pgPool) {
+      const params: any[] = [tenantId, bFormValue];
+      let clause = `institution_id = $1 AND b_form_no = $2`;
+      if (excludeId) {
+        params.push(excludeId);
+        clause += ` AND id != $3`;
+      }
+      const res = await this.pgPool.query(`SELECT name FROM students WHERE ${clause} LIMIT 1`, params);
+      if (res.rows.length > 0) {
+        return { field: 'bFormNo', existingStudentName: res.rows[0].name };
       }
     }
     return null;

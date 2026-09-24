@@ -281,6 +281,14 @@ export function formatStudentAge(dob: string | undefined | null, format: 'short'
 }
 
 /**
+ * Normalizes a Pakistani CNIC / B-Form string by stripping non-alphanumeric characters.
+ */
+export function normalizeCnic(cnic: string | undefined | null): string {
+  if (!cnic) return '';
+  return String(cnic).replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
+}
+
+/**
  * Helper to get total calendar days in a given YYYY-MM month string (e.g. 2026-08 -> 31)
  */
 export function getDaysInMonth(month: string): number {

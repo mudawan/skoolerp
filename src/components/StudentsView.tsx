@@ -45,7 +45,7 @@ interface PreviewRow {
   firstBillingMonth?: string;
   rawClassName: string;
   classId: string;
-  gender: 'Male' | 'Female';
+  gender?: 'Male' | 'Female' | '';
   dob: string;
   fatherName: string;
   fatherCnic: string;
@@ -63,7 +63,35 @@ interface PreviewRow {
   hasCaution?: boolean;
   classUnresolved?: boolean;
   validationMessage: string;
+  duplicateReason?: string;
 }
+
+// Normalizes diverse month strings into standard YYYY-MM
+const normalizeMonthToYYYYMM = (val: string): string => {
+  const trimmed = val.trim();
+  if (!trimmed) return '';
+  const yyyymm = trimmed.match(/^(\d{4})[-/.](\d{1,2})$/);
+  if (yyyymm) {
+    const y = parseInt(yyyymm[1], 10);
+    const m = parseInt(yyyymm[2], 10);
+    if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12) {
+      return `${y}-${String(m).padStart(2, '0')}`;
+    }
+  }
+  const mmyyyy = trimmed.match(/^(\d{1,2})[-/.](\d{4})$/);
+  if (mmyyyy) {
+    const m = parseInt(mmyyyy[1], 10);
+    const y = parseInt(mmyyyy[2], 10);
+    if (y >= 1900 && y <= 2100 && m >= 1 && m <= 12) {
+      return `${y}-${String(m).padStart(2, '0')}`;
+    }
+  }
+  const fullDate = normalizeDateToISO(trimmed);
+  if (fullDate && fullDate.length >= 7) {
+    return fullDate.substring(0, 7);
+  }
+  return trimmed;
+};
 
 interface StudentsViewProps {
   onNavigateToLedger?: (studentId: string) => void;
@@ -79,6 +107,73 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     addStudent,
     showToast,
   } = useApp();
+
+  // Helper to strictly evaluate row validity matching Student Registration Modal requirements
+  const evaluateRowValidation = (r: {
+    name?: string;
+    admissionDate?: string;
+    firstBillingMonth?: string;
+    classId?: string;
+    rawClassName?: string;
+    fatherName?: string;
+    fatherCnic?: string;
+    fatherPhone?: string;
+    monthlyDiscount?: number;
+    isDuplicate?: boolean;
+    duplicateReason?: string;
+  }): { isValid: boolean; validationMessage: string; classUnresolved: boolean } => {
+    if (r.isDuplicate) {
+      return {
+        isValid: false,
+        validationMessage: r.duplicateReason || 'Duplicate Reg #',
+        classUnresolved: false,
+      };
+    }
+
+    const missing: string[] = [];
+    if (!r.name?.trim()) missing.push('Student Name');
+    if (!r.admissionDate?.trim()) missing.push('Admission Date');
+    if (!r.firstBillingMonth?.trim()) missing.push('First Billing Month');
+    if (!r.fatherName?.trim()) missing.push('Father Name');
+    if (!r.fatherCnic?.trim()) missing.push('Father CNIC');
+    if (!r.fatherPhone?.trim()) missing.push('Father Phone');
+    if (r.monthlyDiscount === undefined || isNaN(r.monthlyDiscount) || r.monthlyDiscount < 0) {
+      missing.push('Discount in Fee');
+    }
+
+    const cls = classes.find((c) => c.id === r.classId);
+    const classMissing = !r.classId || !cls;
+
+    if (missing.length > 0 && classMissing) {
+      return {
+        isValid: false,
+        validationMessage: `Missing: ${missing.join(', ')} & Class unassigned`,
+        classUnresolved: true,
+      };
+    }
+
+    if (classMissing) {
+      return {
+        isValid: false,
+        validationMessage: `Class "${r.rawClassName || 'None'}" not found - assign below`,
+        classUnresolved: true,
+      };
+    }
+
+    if (missing.length > 0) {
+      return {
+        isValid: false,
+        validationMessage: `Missing: ${missing.join(', ')}`,
+        classUnresolved: false,
+      };
+    }
+
+    return {
+      isValid: true,
+      validationMessage: 'Valid',
+      classUnresolved: false,
+    };
+  };
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -452,28 +547,44 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         const colMap = {
           regNo: headerTokens.findIndex((h) => h.includes('reg') || h.includes('id') || h.includes('roll')),
           name: headerTokens.findIndex((h) => h.includes('name') && !h.includes('father') && !h.includes('mother')),
-          admissionDate: headerTokens.findIndex((h) => h.includes('admission') || h.includes('enrolled')),
+          admissionDate: headerTokens.findIndex((h) => h.includes('admission') || h.includes('enrolled') || h.includes('admdate')),
           firstBillingMonth: headerTokens.findIndex((h) => h.includes('firstbilling') || h.includes('billingmonth') || h.includes('billingstart') || h.includes('startmonth')),
           class: headerTokens.findIndex((h) => h.includes('class') || h.includes('grade')),
           gender: headerTokens.findIndex((h) => h.includes('gender') || h.includes('sex')),
           dob: headerTokens.findIndex((h) => h.includes('dob') || h.includes('birth')),
           bform: headerTokens.findIndex((h) => h.includes('bform') || h.includes('birthform') || h.includes('studentcnic')),
-          mobile: headerTokens.findIndex((h) => h.includes('mobile') && !h.includes('father') && !h.includes('mother')),
+          mobile: headerTokens.findIndex((h) => (h.includes('studentmobile') || h.includes('studentphone') || h.includes('studentcell') || h.includes('mobile') || h.includes('cell') || h.includes('contact')) && !h.includes('father') && !h.includes('mother')),
           address: headerTokens.findIndex((h) => h.includes('address') || h.includes('residence')),
-          fatherName: headerTokens.findIndex((h) => h.includes('fathername') || h.includes('guardianname') || (h.includes('father') && !h.includes('phone') && !h.includes('cnic'))),
+          fatherName: headerTokens.findIndex((h) => h.includes('fathername') || h.includes('guardianname') || (h.includes('father') && !h.includes('phone') && !h.includes('cnic') && !h.includes('mobile'))),
           fatherCnic: headerTokens.findIndex((h) => h.includes('fathercnic') || (h.includes('father') && h.includes('cnic'))),
-          fatherPhone: headerTokens.findIndex((h) => h.includes('fatherphone') || h.includes('fathermobile') || (h.includes('father') && h.includes('phone'))),
+          fatherPhone: headerTokens.findIndex((h) => h.includes('fatherphone') || h.includes('fathermobile') || (h.includes('father') && (h.includes('phone') || h.includes('mobile') || h.includes('cell')))),
           fatherOccupation: headerTokens.findIndex((h) => h.includes('occupation') || h.includes('profession')),
-          motherName: headerTokens.findIndex((h) => h.includes('mothername') || (h.includes('mother') && !h.includes('phone') && !h.includes('cnic'))),
+          motherName: headerTokens.findIndex((h) => h.includes('mothername') || (h.includes('mother') && !h.includes('phone') && !h.includes('cnic') && !h.includes('mobile'))),
           motherCnic: headerTokens.findIndex((h) => h.includes('mothercnic') || (h.includes('mother') && h.includes('cnic'))),
-          motherPhone: headerTokens.findIndex((h) => h.includes('motherphone') || h.includes('mothermobile') || (h.includes('mother') && h.includes('phone'))),
+          motherPhone: headerTokens.findIndex((h) => h.includes('motherphone') || h.includes('mothermobile') || (h.includes('mother') && (h.includes('phone') || h.includes('mobile') || h.includes('cell')))),
           discount: headerTokens.findIndex((h) => h.includes('discount') || h.includes('concession') || h.includes('scholarship')),
         };
 
-        if (colMap.name === -1 || colMap.fatherName === -1) {
+        // Requirement 3: Match mandatory fields in student import CSV with those in add/edit student modal
+        const requiredHeaderDefs: { key: keyof typeof colMap; label: string }[] = [
+          { key: 'name', label: 'Name' },
+          { key: 'admissionDate', label: 'AdmissionDate' },
+          { key: 'firstBillingMonth', label: 'FirstBillingMonth' },
+          { key: 'class', label: 'Class' },
+          { key: 'fatherName', label: 'FatherName' },
+          { key: 'fatherCnic', label: 'FatherCnic' },
+          { key: 'fatherPhone', label: 'FatherPhone' },
+          { key: 'discount', label: 'MonthlyDiscount (or Discount)' },
+        ];
+
+        const missingHeaders = requiredHeaderDefs
+          .filter((def) => colMap[def.key] === -1)
+          .map((def) => def.label);
+
+        if (missingHeaders.length > 0) {
           setImportStatus({
             message: null,
-            error: 'Missing required columns: "Name" and "FatherName" must be present in the header.',
+            error: `Missing required column(s) in CSV header: ${missingHeaders.join(', ')}. All mandatory columns matching the Student Registration Form (Name, AdmissionDate, FirstBillingMonth, Class, FatherName, FatherCnic, FatherPhone, MonthlyDiscount) must be present in the header.`,
           });
           return;
         }
@@ -485,48 +596,40 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
           const row = parseCsvLine(lines[i]);
           if (row.length === 0 || row.every((c) => c === '')) continue;
 
-          const rawRegNo = colMap.regNo !== -1 ? row[colMap.regNo] || '' : '';
-          const name = colMap.name !== -1 ? row[colMap.name] || '' : '';
-          const rawAdmDate = colMap.admissionDate !== -1 ? row[colMap.admissionDate] || '' : '';
+          const rawRegNo = colMap.regNo !== -1 ? (row[colMap.regNo] || '').trim() : '';
+          const name = colMap.name !== -1 ? (row[colMap.name] || '').trim() : '';
+          const rawAdmDate = colMap.admissionDate !== -1 ? (row[colMap.admissionDate] || '').trim() : '';
           const admissionDate = normalizeDateToISO(rawAdmDate) || rawAdmDate.trim();
-          const rawFirstBillingMonth = colMap.firstBillingMonth !== -1 ? row[colMap.firstBillingMonth] || '' : '';
-          
-          // Determine firstBillingMonth: if specified in CSV use it; otherwise pick the later of current month and admission month
-          let firstBillingMonth: string | undefined = undefined;
-          if (rawFirstBillingMonth.trim()) {
-            const parsedMonth = normalizeDateToISO(rawFirstBillingMonth.trim());
-            firstBillingMonth = parsedMonth ? parsedMonth.substring(0, 7) : rawFirstBillingMonth.trim();
-          }
-          if (!firstBillingMonth) {
-            const now = new Date();
-            const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-            const admMonth = admissionDate && admissionDate.length >= 7 ? admissionDate.substring(0, 7) : '';
-            if (admMonth && currentMonth) {
-              firstBillingMonth = admMonth > currentMonth ? admMonth : currentMonth;
-            } else {
-              firstBillingMonth = admMonth || currentMonth;
-            }
-          }
-          const rawClassName = colMap.class !== -1 ? row[colMap.class] || '' : '';
-          const rawGender = colMap.gender !== -1 ? row[colMap.gender] || 'Male' : 'Male';
+          const rawFirstBillingMonth = colMap.firstBillingMonth !== -1 ? (row[colMap.firstBillingMonth] || '').trim() : '';
+          const firstBillingMonth = normalizeMonthToYYYYMM(rawFirstBillingMonth);
+
+          const rawClassName = colMap.class !== -1 ? (row[colMap.class] || '').trim() : '';
+          const rawGender = colMap.gender !== -1 ? (row[colMap.gender] || '').trim() : '';
           const rawDob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '';
           const dob = normalizeDateToISO(rawDob) || rawDob.trim();
-          const bFormNo = colMap.bform !== -1 ? row[colMap.bform] || '' : '';
-          const mobileNumber = colMap.mobile !== -1 ? row[colMap.mobile] || '' : '';
-          const address = colMap.address !== -1 ? row[colMap.address] || '' : '';
-          const fatherName = colMap.fatherName !== -1 ? row[colMap.fatherName] || '' : '';
-          const fatherCnic = colMap.fatherCnic !== -1 ? row[colMap.fatherCnic] || '' : '';
-          const fatherPhone = colMap.fatherPhone !== -1 ? row[colMap.fatherPhone] || '+92 300 0000000' : '+92 300 0000000';
-          const fatherOccupation = colMap.fatherOccupation !== -1 ? row[colMap.fatherOccupation] || '' : '';
-          const motherName = colMap.motherName !== -1 ? row[colMap.motherName] || '' : '';
-          const motherCnic = colMap.motherCnic !== -1 ? row[colMap.motherCnic] || '' : '';
-          const motherPhone = colMap.motherPhone !== -1 ? row[colMap.motherPhone] || '' : '';
-          const rawDiscount = colMap.discount !== -1 ? row[colMap.discount] || '0' : '0';
-          const monthlyDiscount = Math.max(0, parseInt(rawDiscount.replace(/\D/g, ''), 10) || 0);
+          const bFormNo = colMap.bform !== -1 ? (row[colMap.bform] || '').trim() : '';
+          const mobileNumber = colMap.mobile !== -1 ? (row[colMap.mobile] || '').trim() : '';
+          const address = colMap.address !== -1 ? (row[colMap.address] || '').trim() : '';
+          const fatherName = colMap.fatherName !== -1 ? (row[colMap.fatherName] || '').trim() : '';
+          const fatherCnic = colMap.fatherCnic !== -1 ? (row[colMap.fatherCnic] || '').trim() : '';
+          const fatherPhone = colMap.fatherPhone !== -1 ? (row[colMap.fatherPhone] || '').trim() : '';
+          const fatherOccupation = colMap.fatherOccupation !== -1 ? (row[colMap.fatherOccupation] || '').trim() : '';
+          const motherName = colMap.motherName !== -1 ? (row[colMap.motherName] || '').trim() : '';
+          const motherCnic = colMap.motherCnic !== -1 ? (row[colMap.motherCnic] || '').trim() : '';
+          const motherPhone = colMap.motherPhone !== -1 ? (row[colMap.motherPhone] || '').trim() : '';
+          const rawDiscount = colMap.discount !== -1 ? (row[colMap.discount] || '').trim() : '';
+          const parsedDiscount = parseInt(rawDiscount.replace(/[^\d.-]/g, ''), 10);
+          const monthlyDiscount = !isNaN(parsedDiscount) ? Math.max(0, parsedDiscount) : (rawDiscount === '' ? NaN : 0);
 
-          let gender: 'Male' | 'Female' = 'Male';
-          if (/female|f|girl|woman/i.test(rawGender.trim())) gender = 'Female';
-          else gender = 'Male';
+          // Requirement 4: No default gender in import CSV parsing
+          let gender: 'Male' | 'Female' | '' = '';
+          if (/^(female|f|girl|woman)$/i.test(rawGender)) {
+            gender = 'Female';
+          } else if (/^(male|m|boy|man)$/i.test(rawGender)) {
+            gender = 'Male';
+          } else {
+            gender = '';
+          }
 
           const trimmedRawClass = rawClassName.trim();
           const normalizedRawClass = trimmedRawClass.toLowerCase();
@@ -540,29 +643,17 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
               )
             : undefined;
 
-          let isValid = true;
           let isDuplicate = false;
-          let hasCaution = false;
-          let classUnresolved = false;
-          let validationMessage = 'Valid';
-
-          if (!name.trim()) {
-            isValid = false;
-            validationMessage = 'Missing student name';
-          } else if (!fatherName.trim()) {
-            isValid = false;
-            validationMessage = 'Missing father name';
-          }
+          let duplicateReason: string | undefined = undefined;
 
           if (rawRegNo) {
-            const regLower = rawRegNo.trim().toLowerCase();
+            const regLower = rawRegNo.toLowerCase();
             const existsInDb = students.some((s) => s.regNo.toLowerCase() === regLower);
             const existsInFile = seenRegInFile.has(regLower);
 
             if (existsInDb || existsInFile) {
               isDuplicate = true;
-              isValid = false;
-              validationMessage = existsInDb
+              duplicateReason = existsInDb
                 ? `Reg # "${rawRegNo}" already exists in system`
                 : `Reg # "${rawRegNo}" duplicated in CSV`;
             } else {
@@ -570,19 +661,28 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             }
           }
 
-          if (isValid && !matchedClass) {
-            isValid = false;
-            classUnresolved = true;
-            validationMessage = `Class "${trimmedRawClass || 'None'}" not found - assign the correct class below`;
-          }
+          // Strictly evaluate against all mandatory fields matching the student add modal
+          const evalRes = evaluateRowValidation({
+            name,
+            admissionDate,
+            firstBillingMonth,
+            classId: matchedClass ? matchedClass.id : '',
+            rawClassName,
+            fatherName,
+            fatherCnic,
+            fatherPhone,
+            monthlyDiscount: isNaN(monthlyDiscount) ? -1 : monthlyDiscount,
+            isDuplicate,
+            duplicateReason,
+          });
 
           parsedList.push({
             id: `import-${i}-${Date.now()}`,
-            selected: isValid && !isDuplicate,
+            selected: evalRes.isValid && !isDuplicate,
             regNo: rawRegNo,
             name,
             admissionDate: admissionDate || undefined,
-            firstBillingMonth,
+            firstBillingMonth: firstBillingMonth || undefined,
             rawClassName,
             classId: matchedClass ? matchedClass.id : '',
             gender,
@@ -597,12 +697,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             motherName,
             motherCnic,
             motherPhone,
-            monthlyDiscount,
-            isValid,
+            monthlyDiscount: isNaN(monthlyDiscount) ? 0 : monthlyDiscount,
+            isValid: evalRes.isValid,
             isDuplicate,
-            hasCaution,
-            classUnresolved,
-            validationMessage,
+            hasCaution: false,
+            classUnresolved: evalRes.classUnresolved,
+            validationMessage: evalRes.validationMessage,
+            duplicateReason,
           });
         }
 
@@ -667,20 +768,44 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   const handleUpdatePreviewClass = (id: string, newClassId: string) => {
     setPreviewRows((prev) =>
       prev.map((r) => {
-        if (r.id === id) {
-          const selectedCls = classes.find((c) => c.id === newClassId);
-          return {
-            ...r,
-            classId: newClassId,
-            hasCaution: false,
-            classUnresolved: !selectedCls,
-            isValid: selectedCls ? true : r.isValid,
-            selected: selectedCls ? true : r.selected,
-            validationMessage: selectedCls ? `Assigned to ${selectedCls.name}` : 'Valid',
-          };
-        }
-        return r;
+        if (r.id !== id) return r;
+        const updated = { ...r, classId: newClassId };
+        const evalRes = evaluateRowValidation(updated);
+        return {
+          ...updated,
+          classUnresolved: evalRes.classUnresolved,
+          isValid: evalRes.isValid,
+          selected: evalRes.isValid && !r.isDuplicate,
+          validationMessage: evalRes.validationMessage,
+        };
       })
+    );
+  };
+
+  const handleUpdatePreviewField = (
+    id: string,
+    field: 'name' | 'admissionDate' | 'firstBillingMonth' | 'fatherName' | 'fatherCnic' | 'fatherPhone' | 'monthlyDiscount',
+    val: any
+  ) => {
+    setPreviewRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const updated = { ...r, [field]: val };
+        const evalRes = evaluateRowValidation(updated);
+        return {
+          ...updated,
+          classUnresolved: evalRes.classUnresolved,
+          isValid: evalRes.isValid,
+          selected: evalRes.isValid && !r.isDuplicate,
+          validationMessage: evalRes.validationMessage,
+        };
+      })
+    );
+  };
+
+  const handleUpdatePreviewGender = (id: string, newGender: 'Male' | 'Female' | '') => {
+    setPreviewRows((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, gender: newGender } : r))
     );
   };
 
@@ -704,18 +829,18 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         admissionDate: r.admissionDate,
         firstBillingMonth: r.firstBillingMonth,
         classId: r.classId,
-        gender: r.gender,
+        gender: r.gender ? r.gender : undefined,
         dob: r.dob,
         bFormNo: r.bFormNo,
-        mobileNumber: r.mobileNumber,
+        mobileNumber: r.mobileNumber || undefined,
         address: r.address,
         fatherName: r.fatherName,
         fatherCnic: r.fatherCnic,
-        fatherPhone: r.fatherPhone,
+        fatherPhone: r.fatherPhone || '',
         fatherOccupation: r.fatherOccupation,
         motherName: r.motherName,
         motherCnic: r.motherCnic,
-        motherPhone: r.motherPhone,
+        motherPhone: r.motherPhone || '',
         status: 'Active',
         monthlyDiscount: r.monthlyDiscount,
       });
@@ -738,9 +863,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
   // Download Sample CSV
   const handleDownloadSampleCsv = () => {
-    const sampleCsv = `RegNo,Name,AdmissionDate,FirstBillingMonth,Class,Gender,DOB,BForm,Mobile,Address,FatherName,FatherCnic,FatherPhone,MotherName,MotherCnic,MotherPhone,MonthlyDiscount
+    const sampleCsv = `RegNo,Name,AdmissionDate,FirstBillingMonth,Class,Gender,DOB,BForm,StudentMobile,Address,FatherName,FatherCnic,FatherPhone,MotherName,MotherCnic,MotherPhone,MonthlyDiscount
 REG-1007,Ali Raza,2024-03-01,2024-03,Class 1,Male,2017-05-12,37405-1234567-1,+92 300 1234567,"House 12, Sector F-8, Islamabad",Raza Ahmed,37405-1234567-1,+92 300 1234567,Saima Raza,37405-7654321-1,+92 301 7654321,500
-REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321-2,+92 300 7654321,"House 45, Street 9, Rawalpindi",Fatima Ullah,37405-7654321-2,+92 300 7654321,Noreen Fatima,37405-9988776-2,+92 301 1234567,0`;
+REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321-2,+92 300 7654321,"House 45, Street 9, Rawalpindi",Fatima Ullah,37405-7654321-2,+92 300 7654322,Noreen Fatima,37405-9988776-2,+92 301 1234567,0`;
 
     downloadCsv('Skooler_Sample_Student_Import.csv', sampleCsv);
   };
@@ -881,6 +1006,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
             <option value="all">All Statuses</option>
             <option value="Active">Active Only</option>
             <option value="Withdrawn">Withdrawn</option>
+            <option value="Graduated">Graduated</option>
             <option value="Inactive">Inactive</option>
             <option value="AutoDeactivated">Auto-Deactivated</option>
           </select>
@@ -1077,9 +1203,13 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                               {s.name}
                             </button>
                             <div className="text-[11px] text-slate-400 truncate flex items-center gap-1 mt-0.5">
-                              <span>{s.gender}</span>
-                              <span>&bull;</span>
-                              <span>{s.dob}</span>
+                              {s.gender && (
+                                <>
+                                  <span>{s.gender}</span>
+                                  <span>&bull;</span>
+                                </>
+                              )}
+                              <span>{s.dob || 'DOB N/A'}</span>
                               {s.dob && (
                                 <span className="font-semibold text-teal-700 bg-teal-50 border border-teal-200/60 px-1 py-0.2 rounded text-[10px]" title={`Calculated Age: ${calculateAge(s.dob)?.fullText || ''}`}>
                                   {formatStudentAge(s.dob)}
@@ -1117,6 +1247,8 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                           className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
                             s.status === 'Active'
                               ? 'bg-emerald-100 text-emerald-800'
+                              : s.status === 'Graduated'
+                              ? 'bg-indigo-100 text-indigo-800'
                               : s.status === 'Withdrawn'
                               ? 'bg-rose-100 text-rose-800'
                               : s.status === 'AutoDeactivated'
@@ -1337,6 +1469,37 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                     <FileSpreadsheet className="w-4 h-4" />
                     Download Sample CSV Format
                   </button>
+                </div>
+
+                {/* Accepted CSV Columns Guide */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 space-y-2">
+                  <div className="font-bold text-slate-800 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-teal-600 inline-block"></span>
+                      Accepted CSV Columns & Mandatory Sync:
+                    </span>
+                    <span className="text-[10px] text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/60 font-semibold">
+                      Headers case-insensitive
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-700 block">Student Information:</span>
+                      <p className="text-slate-600">
+                        <strong className="text-rose-700 font-bold">Name *</strong>, <strong className="text-rose-700 font-bold">AdmissionDate *</strong>, <strong className="text-rose-700 font-bold">FirstBillingMonth *</strong>, <strong className="text-rose-700 font-bold">Class *</strong>, RegNo, Gender <em>(no default forced)</em>, DOB, BForm, <strong className="text-teal-700 font-bold">StudentMobile (or Mobile)</strong>, Address
+                      </p>
+                    </div>
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-700 block">Parents & Fee Concession:</span>
+                      <p className="text-slate-600">
+                        <strong className="text-rose-700 font-bold">FatherName *</strong>, <strong className="text-rose-700 font-bold">FatherCnic *</strong>, <strong className="text-rose-700 font-bold">FatherPhone *</strong>, <strong className="text-rose-700 font-bold">MonthlyDiscount *</strong>, FatherOccupation, MotherName, MotherCnic, MotherPhone
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-500 border-t border-slate-200/80 pt-1.5 flex items-center gap-1">
+                    <span className="font-bold text-rose-600">* Mandatory fields:</span>
+                    <span>Directly matched with Add/Edit Student Registration Modal requirements.</span>
+                  </div>
                 </div>
 
                 {/* Status alerts */}
@@ -1679,9 +1842,25 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                             )}
                           </td>
                           <td className="p-3">
-                            <span className="font-bold text-slate-900 block">{r.name || '(Empty)'}</span>
-                            <span className="text-[10px] text-slate-500 flex items-center gap-1 flex-wrap">
-                              <span>{r.gender}</span>
+                            <span className="font-bold text-slate-900 block">{r.name || <span className="text-rose-600 italic">(Empty Name)</span>}</span>
+                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <select
+                                value={r.gender || ''}
+                                onChange={(e) => handleUpdatePreviewGender(r.id, e.target.value as 'Male' | 'Female' | '')}
+                                disabled={r.isDuplicate}
+                                className={`text-[10px] py-0.5 px-1 rounded font-semibold border cursor-pointer ${
+                                  r.gender === 'Female'
+                                    ? 'bg-pink-50 text-pink-700 border-pink-200'
+                                    : r.gender === 'Male'
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-300 italic'
+                                }`}
+                                title="Gender (No default applied - select if desired)"
+                              >
+                                <option value="">(No gender)</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                              </select>
                               <span>&bull;</span>
                               <span>DOB: {r.dob || 'N/A'}</span>
                               {r.dob && (
@@ -1689,7 +1868,44 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                                   {formatStudentAge(r.dob)}
                                 </span>
                               )}
-                            </span>
+                            </div>
+                            {/* Admission Date & First Billing Month display */}
+                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 flex-wrap mt-1">
+                              <span className={r.admissionDate ? 'text-slate-600' : 'text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200'}>
+                                Adm: {r.admissionDate || 'MISSING *'}
+                              </span>
+                              <span>&bull;</span>
+                              <span className={r.firstBillingMonth ? 'text-slate-600' : 'text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200'}>
+                                Billing: {r.firstBillingMonth || 'MISSING *'}
+                              </span>
+                            </div>
+                            {!r.admissionDate && (
+                              <div className="mt-1 flex items-center gap-1">
+                                <span className="text-[9px] text-rose-600 font-semibold">Adm Date:</span>
+                                <input
+                                  type="date"
+                                  value=""
+                                  onChange={(e) => handleUpdatePreviewField(r.id, 'admissionDate', e.target.value)}
+                                  className="text-[10px] border border-rose-300 rounded px-1 py-0.5 bg-white text-slate-800"
+                                />
+                              </div>
+                            )}
+                            {!r.firstBillingMonth && (
+                              <div className="mt-1 flex items-center gap-1">
+                                <span className="text-[9px] text-rose-600 font-semibold">Billing Month:</span>
+                                <input
+                                  type="month"
+                                  value=""
+                                  onChange={(e) => handleUpdatePreviewField(r.id, 'firstBillingMonth', e.target.value)}
+                                  className="text-[10px] border border-rose-300 rounded px-1 py-0.5 bg-white text-slate-800"
+                                />
+                              </div>
+                            )}
+                            {r.mobileNumber && (
+                              <span className="block text-[10px] text-teal-700 font-mono mt-0.5 font-medium">
+                                Student Mobile: {r.mobileNumber}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3">
                             <select
@@ -1714,10 +1930,49 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                             )}
                           </td>
                           <td className="p-3">
-                            <span className="font-semibold text-slate-800 block">{r.fatherName}</span>
-                            <span className="text-[10px] text-slate-500 font-mono">
-                              CNIC: {r.fatherCnic} &bull; {r.fatherPhone}
+                            <span className="font-semibold text-slate-800 block">
+                              {r.fatherName || <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200">MISSING *</span>}
                             </span>
+                            <div className="text-[10px] text-slate-500 font-mono mt-0.5 space-y-0.5">
+                              <div className="flex items-center gap-1">
+                                <span>CNIC:</span>
+                                {r.fatherCnic ? (
+                                  <span className="text-slate-700">{r.fatherCnic}</span>
+                                ) : (
+                                  <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
+                                    MISSING *
+                                  </span>
+                                )}
+                              </div>
+                              {!r.fatherCnic && (
+                                <input
+                                  type="text"
+                                  placeholder="Enter Father CNIC *"
+                                  value=""
+                                  onChange={(e) => handleUpdatePreviewField(r.id, 'fatherCnic', e.target.value)}
+                                  className="text-[10px] border border-rose-300 rounded px-1.5 py-0.5 bg-white text-slate-800 w-full mt-0.5"
+                                />
+                              )}
+                              <div className="flex items-center gap-1">
+                                <span>Phone:</span>
+                                {r.fatherPhone ? (
+                                  <span className="text-slate-700">{r.fatherPhone}</span>
+                                ) : (
+                                  <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
+                                    MISSING *
+                                  </span>
+                                )}
+                              </div>
+                              {!r.fatherPhone && (
+                                <input
+                                  type="text"
+                                  placeholder="Enter Father Phone *"
+                                  value=""
+                                  onChange={(e) => handleUpdatePreviewField(r.id, 'fatherPhone', e.target.value)}
+                                  className="text-[10px] border border-rose-300 rounded px-1.5 py-0.5 bg-white text-slate-800 w-full mt-0.5"
+                                />
+                              )}
+                            </div>
                           </td>
                           <td className="p-3 font-semibold text-emerald-700">
                             {formatCurrency(r.monthlyDiscount)}

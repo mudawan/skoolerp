@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentDocument, StudentStatus } from '../types';
-import { formatCurrency, calculateAge, normalizeDateToISO } from '../utils/feeMath';
+import { formatCurrency, calculateAge, normalizeDateToISO, normalizeCnic } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { StudentAvatar } from './StudentAvatar';
@@ -199,48 +199,21 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     }
   }, true, 1);
 
-  const normalizeCnic = (cnic: string) => cnic.replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
-
   const findMatchingFamily = (cnicInput: string) => {
     const raw = cnicInput.trim();
     if (!raw || raw.length < 5) return null;
 
     const normInput = normalizeCnic(raw);
 
-    // 1. Check if any student with matching CNIC is already in a family
-    const matchedStudent = students.find((s) => {
-      if (student && s.id === student.id) return false;
-      if (!s.fatherCnic || !s.familyId) return false;
-      const sNorm = normalizeCnic(s.fatherCnic);
+    // Strict direct match on Family's own fatherCnic
+    const directFamily = families.find((f) => {
+      if (!f.fatherCnic) return false;
       return (
-        s.fatherCnic.trim().toLowerCase() === raw.toLowerCase() ||
-        (sNorm.length >= 5 && sNorm === normInput)
+        f.fatherCnic.trim().toLowerCase() === raw.toLowerCase() ||
+        (normalizeCnic(f.fatherCnic).length >= 5 && normalizeCnic(f.fatherCnic) === normInput)
       );
     });
-
-    if (matchedStudent && matchedStudent.familyId) {
-      const fam = families.find((f) => f.id === matchedStudent.familyId);
-      if (fam) return fam;
-    }
-
-    // 2. Check all families to see if any member has matching fatherCnic
-    for (const fam of families) {
-      const members = students.filter((s) => {
-        if (student && s.id === student.id) return false;
-        return fam.memberStudentIds.includes(s.id);
-      });
-      const found = members.find((s) => {
-        if (!s.fatherCnic) return false;
-        const sNorm = normalizeCnic(s.fatherCnic);
-        return (
-          s.fatherCnic.trim().toLowerCase() === raw.toLowerCase() ||
-          (sNorm.length >= 5 && sNorm === normInput)
-        );
-      });
-      if (found) return fam;
-    }
-
-    return null;
+    return directFamily || null;
   };
 
   const handleFatherCnicChange = (cnicValue: string) => {
@@ -403,6 +376,11 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
     if (!formData.fatherName.trim()) {
       setFormError('Father Name is required.');
+      return;
+    }
+
+    if (!formData.fatherCnic.trim()) {
+      setFormError('Father CNIC is required.');
       return;
     }
 
@@ -745,6 +723,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 >
                   <option value="Active">Active</option>
                   <option value="Withdrawn">Withdrawn</option>
+                  <option value="Graduated">Graduated</option>
                   <option value="Inactive">Inactive</option>
                   <option value="AutoDeactivated">Auto-Deactivated</option>
                 </select>
@@ -899,15 +878,16 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
               {/* Father's CNIC */}
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Father’s CNIC</label>
+                <label className="block font-bold text-slate-700 mb-1">Father’s CNIC *</label>
                 <input
                   type="text"
+                  required
                   placeholder="00000-1234567-1"
                   value={formData.fatherCnic}
                   onChange={(e) => handleFatherCnicChange(e.target.value)}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">Auto-links family if matched</p>
+                <p className="text-[10px] text-slate-400 mt-1">Auto-links family by CNIC if matched</p>
               </div>
 
               {/* Mobile No */}

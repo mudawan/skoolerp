@@ -1327,12 +1327,11 @@ async function startServer() {
       }
       const duplicate = await dbService.findDuplicateStudent(institutionId, {
         bFormNo: body.bFormNo,
-        fatherCnic: body.fatherCnic,
       });
       if (duplicate) {
         return res.status(409).json({
           success: false,
-          error: `${duplicate.field === 'bFormNo' ? 'B-Form Number' : "Father's CNIC"} is already used by student '${duplicate.existingStudentName}'.`,
+          error: `B-Form Number is already used by student '${duplicate.existingStudentName}'.`,
           field: duplicate.field,
         });
       }
@@ -1357,16 +1356,16 @@ async function startServer() {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
       const body = req.body || {};
-      if (body.bFormNo !== undefined || body.fatherCnic !== undefined) {
+      if (body.bFormNo !== undefined) {
         const duplicate = await dbService.findDuplicateStudent(
           institutionId,
-          { bFormNo: body.bFormNo, fatherCnic: body.fatherCnic },
+          { bFormNo: body.bFormNo },
           req.params.id
         );
         if (duplicate) {
           return res.status(409).json({
             success: false,
-            error: `${duplicate.field === 'bFormNo' ? 'B-Form Number' : "Father's CNIC"} is already used by student '${duplicate.existingStudentName}'.`,
+            error: `B-Form Number is already used by student '${duplicate.existingStudentName}'.`,
             field: duplicate.field,
           });
         }

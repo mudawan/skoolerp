@@ -50,7 +50,7 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
   // Helper to test if a student matches status filter
   const isMatchStatus = (student: Student, filter: 'all' | 'active' | 'withdrawn') => {
     if (filter === 'active') return student.status === 'Active';
-    if (filter === 'withdrawn') return student.status === 'Inactive' || student.status === 'AutoDeactivated';
+    if (filter === 'withdrawn') return student.status !== 'Active';
     return true;
   };
 
@@ -118,7 +118,7 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
       : students;
 
     const active = matched.filter((s) => s.status === 'Active').length;
-    const withdrawn = matched.filter((s) => s.status === 'Inactive' || s.status === 'AutoDeactivated').length;
+    const withdrawn = matched.filter((s) => s.status !== 'Active').length;
     return { all: matched.length, active, withdrawn };
   }, [students, query, classMap, familyMap]);
 
