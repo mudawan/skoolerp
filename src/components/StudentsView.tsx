@@ -591,6 +591,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
         const parsedList: PreviewRow[] = [];
         const seenRegInFile = new Set<string>();
+        const seenBFormInFile = new Map<string, string>();
 
         for (let i = 1; i < lines.length; i++) {
           const row = parseCsvLine(lines[i]);
@@ -658,6 +659,25 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
                 : `Reg # "${rawRegNo}" duplicated in CSV`;
             } else {
               seenRegInFile.add(regLower);
+            }
+          }
+
+          // Pre-validate B-Form duplicates against existing students and earlier rows in file
+          if (!isDuplicate && bFormNo && bFormNo.trim() !== '') {
+            const bFormClean = bFormNo.trim().toLowerCase();
+            const existsInDb = students.find(
+              (s) => s.bFormNo && s.bFormNo.trim().toLowerCase() === bFormClean
+            );
+            const existsInFileStudent = seenBFormInFile.get(bFormClean);
+
+            if (existsInDb) {
+              isDuplicate = true;
+              duplicateReason = `B-Form "${bFormNo}" already assigned to student '${existsInDb.name}'`;
+            } else if (existsInFileStudent) {
+              isDuplicate = true;
+              duplicateReason = `B-Form "${bFormNo}" duplicated in CSV (already in row for '${existsInFileStudent}')`;
+            } else {
+              seenBFormInFile.set(bFormClean, name || `Row ${i}`);
             }
           }
 

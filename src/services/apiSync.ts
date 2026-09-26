@@ -298,20 +298,18 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
     ] = await Promise.all([
       safeJson(fetch('/api/classes', { headers }), { items: [] }),
       safeJson(fetch('/api/families', { headers }), { items: [] }),
-      // Students: fetch a large page so components that still expect the
-      // full roster in memory keep working. GlobalStudentSearch bypasses
-      // this entirely and queries /api/students?q=... directly instead.
-      safeJson(fetch('/api/students?pageSize=5000', { headers }), { students: [] }),
+      // Students: unpaged dynamic fetch so components receive the complete roster
+      safeJson(fetch('/api/students', { headers }), { students: [] }),
       safeJson(fetch('/api/transport/buses', { headers }), { items: [] }),
       safeJson(fetch('/api/transport/stops', { headers }), { items: [] }),
       safeJson(fetch('/api/transport/assignments', { headers }), { items: [] }),
       safeJson(fetch('/api/fee-templates', { headers }), { items: [] }),
-      safeJson(fetch('/api/vouchers?pageSize=10000', { headers }), { vouchers: [] }),
-      safeJson(fetch('/api/collections?pageSize=10000', { headers }), { collections: [] }),
-      safeJson(fetch('/api/transactions?pageSize=10000', { headers }), { transactions: [] }),
+      safeJson(fetch('/api/vouchers', { headers }), { vouchers: [] }),
+      safeJson(fetch('/api/collections', { headers }), { collections: [] }),
+      safeJson(fetch('/api/transactions', { headers }), { transactions: [] }),
       safeJson(fetch('/api/bank-accounts', { headers }), { items: [] }),
-      safeJson(fetch('/api/audit-logs?pageSize=2000', { headers }), { logs: [] }),
-      safeJson(fetch('/api/student-account-history?pageSize=5000', { headers }), { entries: [] }),
+      safeJson(fetch('/api/audit-logs', { headers }), { logs: [] }),
+      safeJson(fetch('/api/student-account-history', { headers }), { entries: [] }),
       safeJson(fetch('/api/locked-months', { headers }), { months: [] }),
       safeJson(fetch('/api/auth/me', { headers }), {}),
       // Users list requires users.manage; a caller without it gets a 403,

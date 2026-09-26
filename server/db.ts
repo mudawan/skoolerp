@@ -1918,9 +1918,10 @@ class DatabaseService {
   ): Promise<{ students: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(500, Math.max(1, opts.pageSize || 50));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     if (this.engine === 'postgres' && this.pgPool) {
       const conditions: string[] = ['institution_id = $1'];
@@ -1953,11 +1954,13 @@ class DatabaseService {
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM students WHERE ${whereClause}`, params);
       const total = Number(countRes.rows[0].total) || 0;
 
-      const dataParams = [...params, pageSize, offset];
-      const res = await this.pgPool.query(
-        `SELECT * FROM students WHERE ${whereClause} ORDER BY name ASC LIMIT $${p++} OFFSET $${p++}`,
-        dataParams
-      );
+      let query = `SELECT * FROM students WHERE ${whereClause} ORDER BY name ASC`;
+      const dataParams = [...params];
+      if (isPaged) {
+        query += ` LIMIT $${p++} OFFSET $${p++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       return { students: res.rows.map((r) => this.studentRowToRecord(r)), total };
     }
 
@@ -2243,9 +2246,10 @@ class DatabaseService {
   ): Promise<{ vouchers: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 100));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     const buildConditions = (placeholder: (i: number) => string) => {
       const conditions: string[] = [`v.institution_id = ${placeholder(1)}`];
@@ -2275,15 +2279,18 @@ class DatabaseService {
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM vouchers v WHERE ${where}`, params);
       const total = Number(countRes.rows[0].total) || 0;
 
-      const res = await this.pgPool.query(
-        `SELECT v.*, s.name AS student_name, s.reg_no AS student_reg_no
+      let query = `SELECT v.*, s.name AS student_name, s.reg_no AS student_reg_no
          FROM vouchers v
          LEFT JOIN students s ON s.id = v.student_id AND s.institution_id = v.institution_id
          WHERE ${where}
-         ORDER BY v.month DESC, v.voucher_no DESC
-         LIMIT $${nextIndex} OFFSET $${nextIndex + 1}`,
-        [...params, pageSize, offset]
-      );
+         ORDER BY v.month DESC, v.voucher_no DESC`;
+      const dataParams = [...params];
+      let pIdx = nextIndex;
+      if (isPaged) {
+        query += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       const voucherIds = res.rows.map((r) => r.id);
       let particularsByVoucher = new Map<string, any[]>();
       if (voucherIds.length > 0) {
@@ -2315,9 +2322,10 @@ class DatabaseService {
   ): Promise<{ collections: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 100));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     if (this.engine === 'postgres' && this.pgPool) {
       const conditions = ['institution_id = $1'];
@@ -2333,10 +2341,13 @@ class DatabaseService {
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM collections WHERE ${where}`, params);
-      const res = await this.pgPool.query(
-        `SELECT * FROM collections WHERE ${where} ORDER BY date DESC, collection_no DESC LIMIT $${p++} OFFSET $${p++}`,
-        [...params, pageSize, offset]
-      );
+      let query = `SELECT * FROM collections WHERE ${where} ORDER BY date DESC, collection_no DESC`;
+      const dataParams = [...params];
+      if (isPaged) {
+        query += ` LIMIT $${p++} OFFSET $${p++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       return { collections: res.rows.map((r) => this.collectionRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
     return { collections: [], total: 0 };
@@ -2378,9 +2389,10 @@ class DatabaseService {
   ): Promise<{ transactions: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 100));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     if (this.engine === 'postgres' && this.pgPool) {
       const conditions = ['t.institution_id = $1'];
@@ -2408,13 +2420,16 @@ class DatabaseService {
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM transactions t WHERE ${where}`, params);
-      const res = await this.pgPool.query(
-        `SELECT t.*, s.name AS student_name
+      let query = `SELECT t.*, s.name AS student_name
          FROM transactions t
          LEFT JOIN students s ON s.id = t.student_id AND s.institution_id = t.institution_id
-         WHERE ${where} ORDER BY t.date DESC, t.txn_no DESC LIMIT $${p++} OFFSET $${p++}`,
-        [...params, pageSize, offset]
-      );
+         WHERE ${where} ORDER BY t.date DESC, t.txn_no DESC`;
+      const dataParams = [...params];
+      if (isPaged) {
+        query += ` LIMIT $${p++} OFFSET $${p++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       return { transactions: res.rows.map((r) => this.transactionRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
     return { transactions: [], total: 0 };
@@ -2450,9 +2465,10 @@ class DatabaseService {
   ): Promise<{ logs: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 100));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     if (this.engine === 'postgres' && this.pgPool) {
       const conditions = ['institution_id = $1'];
@@ -2476,10 +2492,13 @@ class DatabaseService {
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM audit_logs WHERE ${where}`, params);
-      const res = await this.pgPool.query(
-        `SELECT * FROM audit_logs WHERE ${where} ORDER BY timestamp DESC LIMIT $${p++} OFFSET $${p++}`,
-        [...params, pageSize, offset]
-      );
+      let query = `SELECT * FROM audit_logs WHERE ${where} ORDER BY timestamp DESC`;
+      const dataParams = [...params];
+      if (isPaged) {
+        query += ` LIMIT $${p++} OFFSET $${p++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       return { logs: res.rows.map((r) => this.auditLogRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
     return { logs: [], total: 0 };
@@ -2570,9 +2589,10 @@ class DatabaseService {
   ): Promise<{ entries: any[]; total: number }> {
     await this.init();
     const tenantId = institutionId || 'default';
-    const page = Math.max(1, opts.page || 1);
-    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 200));
-    const offset = (page - 1) * pageSize;
+    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
+    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
+    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
+    const offset = isPaged ? (page - 1) * pageSize : 0;
 
     if (this.engine === 'postgres' && this.pgPool) {
       const conditions = ['institution_id = $1'];
@@ -2584,10 +2604,13 @@ class DatabaseService {
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM student_account_history WHERE ${where}`, params);
-      const res = await this.pgPool.query(
-        `SELECT * FROM student_account_history WHERE ${where} ORDER BY timestamp DESC LIMIT $${p++} OFFSET $${p++}`,
-        [...params, pageSize, offset]
-      );
+      let query = `SELECT * FROM student_account_history WHERE ${where} ORDER BY timestamp DESC`;
+      const dataParams = [...params];
+      if (isPaged) {
+        query += ` LIMIT $${p++} OFFSET $${p++}`;
+        dataParams.push(pageSize, offset);
+      }
+      const res = await this.pgPool.query(query, dataParams);
       return { entries: res.rows.map((r) => this.studentHistoryRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
     return { entries: [], total: 0 };
@@ -2765,12 +2788,12 @@ class DatabaseService {
       this.listSimpleEntities(FEE_TEMPLATE_ENTITY_CONFIG, tenantId),
       this.listSimpleEntities(BANK_ACCOUNT_ENTITY_CONFIG, tenantId),
     ]);
-    const { students } = await this.searchStudents(tenantId, { pageSize: 100000 });
-    const { vouchers } = await this.listVouchers(tenantId, { pageSize: 100000 });
-    const { collections } = await this.listCollections(tenantId, { pageSize: 100000 });
-    const { transactions } = await this.listTransactions(tenantId, { pageSize: 100000 });
-    const { logs: auditLogs } = await this.listAuditLogs(tenantId, { pageSize: 100000 });
-    const { entries: studentAccountHistory } = await this.listStudentAccountHistory(tenantId, { pageSize: 100000 });
+    const { students } = await this.searchStudents(tenantId, {});
+    const { vouchers } = await this.listVouchers(tenantId, {});
+    const { collections } = await this.listCollections(tenantId, {});
+    const { transactions } = await this.listTransactions(tenantId, {});
+    const { logs: auditLogs } = await this.listAuditLogs(tenantId, {});
+    const { entries: studentAccountHistory } = await this.listStudentAccountHistory(tenantId, {});
     const lockedMonths = await this.listLockedMonths(tenantId);
 
     return {
