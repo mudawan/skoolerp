@@ -2018,9 +2018,10 @@ class DatabaseService {
         params.push(excludeId);
         clause += ` AND id != $3`;
       }
-      const res = await this.pgPool.query(`SELECT name FROM students WHERE ${clause} LIMIT 1`, params);
+      const res = await this.pgPool.query(`SELECT reg_no, name FROM students WHERE ${clause} LIMIT 1`, params);
       if (res.rows.length > 0) {
-        return { field: 'bFormNo', existingStudentName: res.rows[0].name };
+        const studentLabel = [res.rows[0].reg_no, res.rows[0].name].filter(Boolean).join(' ');
+        return { field: 'bFormNo', existingStudentName: studentLabel };
       }
     }
     return null;

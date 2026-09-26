@@ -590,7 +590,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         }
 
         const parsedList: PreviewRow[] = [];
-        const seenRegInFile = new Set<string>();
+        const seenRegInFile = new Map<string, string>();
         const seenBFormInFile = new Map<string, string>();
 
         for (let i = 1; i < lines.length; i++) {
@@ -649,16 +649,19 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
           if (rawRegNo) {
             const regLower = rawRegNo.toLowerCase();
-            const existsInDb = students.some((s) => s.regNo.toLowerCase() === regLower);
-            const existsInFile = seenRegInFile.has(regLower);
+            const existsInDb = students.find((s) => s.regNo.toLowerCase() === regLower);
+            const existsInFileStudent = seenRegInFile.get(regLower);
 
-            if (existsInDb || existsInFile) {
+            if (existsInDb) {
               isDuplicate = true;
-              duplicateReason = existsInDb
-                ? `Reg # "${rawRegNo}" already exists in system`
-                : `Reg # "${rawRegNo}" duplicated in CSV`;
+              const existingLabel = [existsInDb.regNo, existsInDb.name].filter(Boolean).join(' ');
+              duplicateReason = `Reg # "${rawRegNo}" already exists in system with '${existingLabel}'`;
+            } else if (existsInFileStudent) {
+              isDuplicate = true;
+              duplicateReason = `Reg # "${rawRegNo}" duplicated in CSV with '${existsInFileStudent}'`;
             } else {
-              seenRegInFile.add(regLower);
+              const fileStudentLabel = [rawRegNo, name].filter(Boolean).join(' ') || `Row ${i}`;
+              seenRegInFile.set(regLower, fileStudentLabel);
             }
           }
 
@@ -672,12 +675,14 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
             if (existsInDb) {
               isDuplicate = true;
-              duplicateReason = `B-Form "${bFormNo}" already assigned to student '${existsInDb.name}'`;
+              const existingLabel = [existsInDb.regNo, existsInDb.name].filter(Boolean).join(' ');
+              duplicateReason = `B-Form "${bFormNo}" already exists in system with '${existingLabel}'`;
             } else if (existsInFileStudent) {
               isDuplicate = true;
-              duplicateReason = `B-Form "${bFormNo}" duplicated in CSV (already in row for '${existsInFileStudent}')`;
+              duplicateReason = `B-Form "${bFormNo}" duplicated in CSV with '${existsInFileStudent}'`;
             } else {
-              seenBFormInFile.set(bFormClean, name || `Row ${i}`);
+              const fileStudentLabel = [rawRegNo, name].filter(Boolean).join(' ') || `Row ${i}`;
+              seenBFormInFile.set(bFormClean, fileStudentLabel);
             }
           }
 

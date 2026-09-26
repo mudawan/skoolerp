@@ -1331,7 +1331,7 @@ async function startServer() {
       if (duplicate) {
         return res.status(409).json({
           success: false,
-          error: `B-Form Number is already used by student '${duplicate.existingStudentName}'.`,
+          error: `B-Form "${body.bFormNo}" already exists in system with '${duplicate.existingStudentName}'.`,
           field: duplicate.field,
         });
       }
@@ -1365,7 +1365,7 @@ async function startServer() {
         if (duplicate) {
           return res.status(409).json({
             success: false,
-            error: `B-Form Number is already used by student '${duplicate.existingStudentName}'.`,
+            error: `B-Form "${body.bFormNo}" already exists in system with '${duplicate.existingStudentName}'.`,
             field: duplicate.field,
           });
         }
