@@ -785,49 +785,6 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     );
   };
 
-  const handleUpdatePreviewClass = (id: string, newClassId: string) => {
-    setPreviewRows((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        const updated = { ...r, classId: newClassId };
-        const evalRes = evaluateRowValidation(updated);
-        return {
-          ...updated,
-          classUnresolved: evalRes.classUnresolved,
-          isValid: evalRes.isValid,
-          selected: evalRes.isValid && !r.isDuplicate,
-          validationMessage: evalRes.validationMessage,
-        };
-      })
-    );
-  };
-
-  const handleUpdatePreviewField = (
-    id: string,
-    field: 'name' | 'admissionDate' | 'firstBillingMonth' | 'fatherName' | 'fatherCnic' | 'fatherPhone' | 'monthlyDiscount',
-    val: any
-  ) => {
-    setPreviewRows((prev) =>
-      prev.map((r) => {
-        if (r.id !== id) return r;
-        const updated = { ...r, [field]: val };
-        const evalRes = evaluateRowValidation(updated);
-        return {
-          ...updated,
-          classUnresolved: evalRes.classUnresolved,
-          isValid: evalRes.isValid,
-          selected: evalRes.isValid && !r.isDuplicate,
-          validationMessage: evalRes.validationMessage,
-        };
-      })
-    );
-  };
-
-  const handleUpdatePreviewGender = (id: string, newGender: 'Male' | 'Female' | '') => {
-    setPreviewRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, gender: newGender } : r))
-    );
-  };
 
   const handleConfirmImport = () => {
     const rowsToImport = previewRows.filter((r) => r.selected && r.isValid && !r.isDuplicate);
@@ -1491,37 +1448,6 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                   </button>
                 </div>
 
-                {/* Accepted CSV Columns Guide */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 space-y-2">
-                  <div className="font-bold text-slate-800 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-teal-600 inline-block"></span>
-                      Accepted CSV Columns & Mandatory Sync:
-                    </span>
-                    <span className="text-[10px] text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/60 font-semibold">
-                      Headers case-insensitive
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-slate-700 block">Student Information:</span>
-                      <p className="text-slate-600">
-                        <strong className="text-rose-700 font-bold">Name *</strong>, <strong className="text-rose-700 font-bold">AdmissionDate *</strong>, <strong className="text-rose-700 font-bold">FirstBillingMonth *</strong>, <strong className="text-rose-700 font-bold">Class *</strong>, RegNo, Gender <em>(no default forced)</em>, DOB, BForm, <strong className="text-teal-700 font-bold">StudentMobile (or Mobile)</strong>, Address
-                      </p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-slate-700 block">Parents & Fee Concession:</span>
-                      <p className="text-slate-600">
-                        <strong className="text-rose-700 font-bold">FatherName *</strong>, <strong className="text-rose-700 font-bold">FatherCnic *</strong>, <strong className="text-rose-700 font-bold">FatherPhone *</strong>, <strong className="text-rose-700 font-bold">MonthlyDiscount *</strong>, FatherOccupation, MotherName, MotherCnic, MotherPhone
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-slate-500 border-t border-slate-200/80 pt-1.5 flex items-center gap-1">
-                    <span className="font-bold text-rose-600">* Mandatory fields:</span>
-                    <span>Directly matched with Add/Edit Student Registration Modal requirements.</span>
-                  </div>
-                </div>
-
                 {/* Status alerts */}
                 {importStatus.message && (
                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-medium flex items-center gap-2">
@@ -1795,23 +1721,30 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                 )}
 
                 {/* Table container */}
-                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] flex-1">
+                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[52vh] flex-1">
                   <table className="w-full text-left text-xs border-collapse">
-                    <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
+                    <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 whitespace-nowrap">
                       <tr>
                         <th className="p-3 w-10 text-center">Import</th>
-                        <th className="p-3">Reg # / ID</th>
+                        <th className="p-3">Reg #</th>
                         <th className="p-3">Student Name</th>
-                        <th className="p-3">Assigned Class</th>
-                        <th className="p-3">Father Name & Contact</th>
+                        <th className="p-3">Class</th>
+                        <th className="p-3">Adm Date</th>
+                        <th className="p-3">First Billing</th>
+                        <th className="p-3">Father Name</th>
+                        <th className="p-3">Father CNIC</th>
+                        <th className="p-3">Father Phone</th>
                         <th className="p-3">Discount</th>
+                        <th className="p-3">Gender</th>
+                        <th className="p-3">DOB</th>
+                        <th className="p-3">B-Form</th>
                         <th className="p-3">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 whitespace-nowrap">
                       {displayedPreviewRows.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center bg-white text-slate-500">
+                          <td colSpan={14} className="p-8 text-center bg-white text-slate-500">
                             <div className="flex flex-col items-center justify-center gap-2">
                               <AlertCircle className="w-6 h-6 text-slate-400" />
                               <p className="font-semibold text-slate-700 text-sm">
@@ -1828,194 +1761,122 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                           </td>
                         </tr>
                       ) : (
-                        displayedPreviewRows.map((r) => (
-                        <tr
-                          key={r.id}
-                          className={`hover:bg-slate-50/80 transition ${
-                            r.isDuplicate
-                              ? 'bg-rose-50/60 text-slate-700'
-                              : !r.isValid
-                              ? 'bg-rose-50/40'
-                              : r.hasCaution
-                              ? 'bg-amber-50/40'
-                              : r.selected
-                              ? 'bg-teal-50/20'
-                              : ''
-                          }`}
-                        >
-                          <td className="p-3 text-center">
-                            <input
-                              type="checkbox"
-                              disabled={!r.isValid || r.isDuplicate}
-                              checked={r.selected && r.isValid && !r.isDuplicate}
-                              onChange={() => handleTogglePreviewRow(r.id)}
-                              className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                            />
-                          </td>
-                          <td className="p-3 font-mono font-bold text-slate-800">
-                            {r.regNo ? (
-                              <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
-                                {r.regNo}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 italic text-[11px]">(Auto-assign)</span>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            <span className="font-bold text-slate-900 block">{r.name || <span className="text-rose-600 italic">(Empty Name)</span>}</span>
-                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
-                              <select
-                                value={r.gender || ''}
-                                onChange={(e) => handleUpdatePreviewGender(r.id, e.target.value as 'Male' | 'Female' | '')}
-                                disabled={r.isDuplicate}
-                                className={`text-[10px] py-0.5 px-1 rounded font-semibold border cursor-pointer ${
-                                  r.gender === 'Female'
-                                    ? 'bg-pink-50 text-pink-700 border-pink-200'
-                                    : r.gender === 'Male'
-                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                    : 'bg-amber-50 text-amber-700 border-amber-300 italic'
-                                }`}
-                                title="Gender (No default applied - select if desired)"
-                              >
-                                <option value="">(No gender)</option>
-                                <option value="Male">Male</option>
-                                <option value="Female">Female</option>
-                              </select>
-                              <span>&bull;</span>
-                              <span>DOB: {r.dob || 'N/A'}</span>
-                              {r.dob && (
-                                <span className="font-semibold text-teal-700 bg-teal-50 border border-teal-200/60 px-1 py-0.2 rounded text-[10px]" title={`Calculated Age: ${calculateAge(r.dob)?.fullText || ''}`}>
-                                  {formatStudentAge(r.dob)}
-                                </span>
-                              )}
-                            </div>
-                            {/* Admission Date & First Billing Month display */}
-                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 flex-wrap mt-1">
-                              <span className={r.admissionDate ? 'text-slate-600' : 'text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200'}>
-                                Adm: {r.admissionDate || 'MISSING *'}
-                              </span>
-                              <span>&bull;</span>
-                              <span className={r.firstBillingMonth ? 'text-slate-600' : 'text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200'}>
-                                Billing: {r.firstBillingMonth || 'MISSING *'}
-                              </span>
-                            </div>
-                            {!r.admissionDate && (
-                              <div className="mt-1 flex items-center gap-1">
-                                <span className="text-[9px] text-rose-600 font-semibold">Adm Date:</span>
-                                <input
-                                  type="date"
-                                  value=""
-                                  onChange={(e) => handleUpdatePreviewField(r.id, 'admissionDate', e.target.value)}
-                                  className="text-[10px] border border-rose-300 rounded px-1 py-0.5 bg-white text-slate-800"
-                                />
-                              </div>
-                            )}
-                            {!r.firstBillingMonth && (
-                              <div className="mt-1 flex items-center gap-1">
-                                <span className="text-[9px] text-rose-600 font-semibold">Billing Month:</span>
-                                <input
-                                  type="month"
-                                  value=""
-                                  onChange={(e) => handleUpdatePreviewField(r.id, 'firstBillingMonth', e.target.value)}
-                                  className="text-[10px] border border-rose-300 rounded px-1 py-0.5 bg-white text-slate-800"
-                                />
-                              </div>
-                            )}
-                            {r.mobileNumber && (
-                              <span className="block text-[10px] text-teal-700 font-mono mt-0.5 font-medium">
-                                Student Mobile: {r.mobileNumber}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            <select
-                              value={r.classId}
-                              onChange={(e) => handleUpdatePreviewClass(r.id, e.target.value)}
-                              disabled={(!r.isValid && !r.classUnresolved) || r.isDuplicate}
-                              className={`bg-white border rounded px-2 py-1 text-xs font-semibold focus:ring-1 focus:ring-teal-500 cursor-pointer disabled:opacity-50 ${
-                                r.hasCaution || r.classUnresolved ? 'border-amber-400 text-amber-900 bg-amber-50/30' : 'border-slate-300 text-slate-800'
-                              }`}
-                            >
-                              <option value="">{r.classUnresolved ? '-- Class not found --' : '-- Select --'}</option>
-                              {classes.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name}
-                                </option>
-                              ))}
-                            </select>
-                            {r.rawClassName && (
-                              <span className="block text-[10px] text-slate-400 mt-0.5">
-                                Raw: {r.rawClassName}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            <span className="font-semibold text-slate-800 block">
-                              {r.fatherName || <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200">MISSING *</span>}
-                            </span>
-                            <div className="text-[10px] text-slate-500 font-mono mt-0.5 space-y-0.5">
-                              <div className="flex items-center gap-1">
-                                <span>CNIC:</span>
-                                {r.fatherCnic ? (
-                                  <span className="text-slate-700">{r.fatherCnic}</span>
-                                ) : (
-                                  <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
-                                    MISSING *
-                                  </span>
-                                )}
-                              </div>
-                              {!r.fatherCnic && (
-                                <input
-                                  type="text"
-                                  placeholder="Enter Father CNIC *"
-                                  value=""
-                                  onChange={(e) => handleUpdatePreviewField(r.id, 'fatherCnic', e.target.value)}
-                                  className="text-[10px] border border-rose-300 rounded px-1.5 py-0.5 bg-white text-slate-800 w-full mt-0.5"
-                                />
-                              )}
-                              <div className="flex items-center gap-1">
-                                <span>Phone:</span>
-                                {r.fatherPhone ? (
-                                  <span className="text-slate-700">{r.fatherPhone}</span>
-                                ) : (
-                                  <span className="text-rose-600 font-bold bg-rose-50 px-1 py-0.2 rounded border border-rose-200">
-                                    MISSING *
-                                  </span>
-                                )}
-                              </div>
-                              {!r.fatherPhone && (
-                                <input
-                                  type="text"
-                                  placeholder="Enter Father Phone *"
-                                  value=""
-                                  onChange={(e) => handleUpdatePreviewField(r.id, 'fatherPhone', e.target.value)}
-                                  className="text-[10px] border border-rose-300 rounded px-1.5 py-0.5 bg-white text-slate-800 w-full mt-0.5"
-                                />
-                              )}
-                            </div>
-                          </td>
-                          <td className="p-3 font-semibold text-emerald-700">
-                            {formatCurrency(r.monthlyDiscount)}
-                          </td>
-                          <td className="p-3">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                        displayedPreviewRows.map((r) => {
+                          const resolvedClass = classes.find((c) => c.id === r.classId);
+                          return (
+                            <tr
+                              key={r.id}
+                              className={`hover:bg-slate-50/80 transition ${
                                 r.isDuplicate
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                  ? 'bg-rose-50/60 text-slate-700'
                                   : !r.isValid
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                  ? 'bg-rose-50/40'
                                   : r.hasCaution
-                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  ? 'bg-amber-50/40'
+                                  : r.selected
+                                  ? 'bg-teal-50/20'
+                                  : ''
                               }`}
                             >
-                              {r.hasCaution && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
-                              {r.validationMessage}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
+                              <td className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  disabled={!r.isValid || r.isDuplicate}
+                                  checked={r.selected && r.isValid && !r.isDuplicate}
+                                  onChange={() => handleTogglePreviewRow(r.id)}
+                                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                />
+                              </td>
+                              <td className="p-3 font-mono font-bold text-slate-800">
+                                {r.regNo ? (
+                                  <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                    {r.regNo}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 italic text-[11px]">(Auto)</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-medium text-slate-900">
+                                {r.name || <span className="text-rose-600 font-bold italic">MISSING *</span>}
+                              </td>
+                              <td className="p-3 font-medium">
+                                {resolvedClass ? (
+                                  <span className="text-slate-800">{resolvedClass.name}</span>
+                                ) : r.rawClassName ? (
+                                  <span className="text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded font-semibold text-[11px]">
+                                    {r.rawClassName}
+                                  </span>
+                                ) : (
+                                  <span className="text-rose-600 font-bold italic">MISSING *</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.admissionDate ? (
+                                  r.admissionDate
+                                ) : (
+                                  <span className="text-rose-600 font-bold italic">MISSING *</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.firstBillingMonth ? (
+                                  r.firstBillingMonth
+                                ) : (
+                                  <span className="text-rose-600 font-bold italic">MISSING *</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-medium text-slate-800">
+                                {r.fatherName || <span className="text-rose-600 font-bold italic">MISSING *</span>}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.fatherCnic || <span className="text-rose-600 font-bold italic">MISSING *</span>}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.fatherPhone || <span className="text-rose-600 font-bold italic">MISSING *</span>}
+                              </td>
+                              <td className="p-3 font-mono font-medium text-emerald-700">
+                                {formatCurrency(r.monthlyDiscount || 0)}
+                              </td>
+                              <td className="p-3 text-slate-700">
+                                {r.gender ? (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                                      r.gender === 'Female'
+                                        ? 'bg-pink-50 text-pink-700 border-pink-200'
+                                        : 'bg-blue-50 text-blue-700 border-blue-200'
+                                    }`}
+                                  >
+                                    {r.gender}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 italic text-[11px]">-</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.dob || <span className="text-slate-400 italic text-[11px]">-</span>}
+                              </td>
+                              <td className="p-3 font-mono text-slate-700">
+                                {r.bFormNo || <span className="text-slate-400 italic text-[11px]">-</span>}
+                              </td>
+                              <td className="p-3">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap ${
+                                    r.isDuplicate
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                      : !r.isValid
+                                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                      : r.hasCaution
+                                      ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                      : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  }`}
+                                >
+                                  {r.hasCaution && <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />}
+                                  {r.validationMessage}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
