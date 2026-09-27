@@ -309,7 +309,7 @@ export function getDaysInMonth(month: string): number {
 export function calculateTransportFee(
   assignment: TransportAssignment | undefined,
   stop: TransportStop | undefined,
-  transportRoundingMultiple: number = 1
+  transportRoundingMultiple: number = 10
 ): number {
   if (!assignment || !assignment.active || !stop) return 0;
 
@@ -561,7 +561,7 @@ export function calculateStudentVoucherPreview(
   priorMonthRule: PriorMonthVoucherRule = 'strict',
   skippedMonthRule: SkippedMonthVoucherRule = 'warning',
   roundingMultiple: number = 10,
-  transportRoundingMultiple: number = 1
+  transportRoundingMultiple: number = 10
 ): VoucherPreviewCalculation {
   const existingVoucher = existingVouchers.find(
     (v) => v.studentId === student.id && v.month === month && v.status !== 'Reversed'
@@ -701,27 +701,12 @@ export function calculateStudentVoucherPreview(
     amount: flex2Info.amount ?? 0,
   });
 
-  // 4. Transport Fee (Student Override [Month > All] > Class Override [Month > All] > Stop Calculation)
+  // 4. Transport Fee (Derived dynamically from active TransportAssignment + TransportStop)
   const assignment = assignments.find(
     (a) => a.studentId === student.id && a.month === month && a.active
   );
   const stop = assignment ? stops.find((s) => s.id === assignment.stopId) : undefined;
-  const transportStudentOverride =
-    templates.find((t) => t.studentId === student.id && t.kind === 'Transport' && isMonthMatch(t.month)) ||
-    templates.find((t) => t.studentId === student.id && t.kind === 'Transport' && isAllMatch(t.month));
-
-  const transportClassOverride =
-    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isMonthMatch(t.month)) ||
-    templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isAllMatch(t.month));
-
-  const calculatedTransportFee = calculateTransportFee(assignment, stop, transportRoundingMultiple);
-
-  let transportFee = calculatedTransportFee;
-  if (transportStudentOverride && transportStudentOverride.defaultAmount > 0) {
-    transportFee = transportStudentOverride.defaultAmount;
-  } else if (transportClassOverride && transportClassOverride.defaultAmount > 0) {
-    transportFee = transportClassOverride.defaultAmount;
-  }
+  const transportFee = calculateTransportFee(assignment, stop, transportRoundingMultiple);
 
   const transportInfo = getTemplateInfo('Transport', 'Transport Fee');
   particulars.push({
@@ -749,8 +734,8 @@ export function calculateStudentVoucherPreview(
 
   if (priorVoucher) {
     if (priorVoucher.status === 'Carried') {
-      // Unpaid balance carried forward
-      prevBalance = Math.max(0, priorVoucher.netDue - priorVoucher.amountPaid);
+      // Unpaid balance carried forward (or credit carried forward)
+      prevBalance = priorVoucher.netDue - priorVoucher.amountPaid;
       if (priorVoucher.carriedLateFine && priorVoucher.carriedLateFine > 0) {
         carriedFine = priorVoucher.carriedLateFine;
       }
@@ -758,10 +743,10 @@ export function calculateStudentVoucherPreview(
       priorVoucher.status === 'Issued' ||
       priorVoucher.status === 'Partial'
     ) {
-      // Still outstanding from prior month
-      prevBalance = Math.max(0, priorVoucher.netDue - priorVoucher.amountPaid);
+      // Outstanding debt (positive) or unapplied credit (negative) from prior month
+      prevBalance = priorVoucher.netDue - priorVoucher.amountPaid;
     } else if (priorVoucher.status === 'Paid') {
-      // If overpaid in prior voucher, excess is negative balance (advance)
+      // If overpaid in prior voucher, excess is negative balance (advance credit)
       const excess = priorVoucher.amountPaid - priorVoucher.netDue;
       if (excess > 0) {
         prevBalance = -excess;

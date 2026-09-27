@@ -1,0 +1,5 @@
+{
+  "summary":  "Updated System Specification and Verification Matrix with user clarifications: default transport rounding set to 10, seating capacity confirmed non-existent and omitted, fee template CSV upload scope reconfirmed for Fine and Flex 1-4, payment collection reconciler elaborated with concrete example, and negative values confirmed fully supported in Flex 1-4.",
+  "updatedAt":  "2026-09-27T10:01:50.113895009Z",
+  "userFacing":  true
+}

@@ -708,10 +708,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     apiUpdateInstituteSettings({ roundingEnabled: enabled });
   };
 
-  const [transportRoundingMultiple, setTransportRoundingMultipleState] = useState<number>(1);
+  const [transportRoundingMultiple, setTransportRoundingMultipleState] = useState<number>(10);
 
   const setTransportRoundingMultiple = (multiple: number) => {
-    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 1;
+    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 10;
     setTransportRoundingMultipleState(clean);
     setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, transportRoundingMultiple: clean } }));
     apiUpdateInstituteSettings({ transportRoundingMultiple: clean });
@@ -1169,7 +1169,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (s.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(s.defaultLateFeeRate));
       if (s.roundingMultiple !== undefined) setRoundingMultipleState(Number(s.roundingMultiple));
       if (s.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(s.roundingEnabled));
-      if (s.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(s.transportRoundingMultiple));
+      if (s.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(s.transportRoundingMultiple) || 10);
+      else setTransportRoundingMultipleState(10);
       if (s.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(s.defaultDueDateEnabled));
       if (s.defaultDueDay !== undefined) setDefaultDueDayState(Number(s.defaultDueDay));
       if (Array.isArray(s.voucherCopyOrder) && s.voucherCopyOrder.length > 0) setVoucherCopyOrderState(s.voucherCopyOrder);
@@ -1518,7 +1519,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (instSettings.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(instSettings.defaultLateFeeRate));
             if (instSettings.roundingMultiple !== undefined) setRoundingMultipleState(Number(instSettings.roundingMultiple));
             if (instSettings.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(instSettings.roundingEnabled));
-            if (instSettings.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(instSettings.transportRoundingMultiple));
+            if (instSettings.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(instSettings.transportRoundingMultiple) || 10);
+            else setTransportRoundingMultipleState(10);
             if (instSettings.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(instSettings.defaultDueDateEnabled));
             if (instSettings.defaultDueDay !== undefined) setDefaultDueDayState(Number(instSettings.defaultDueDay));
             if (Array.isArray(instSettings.voucherCopyOrder) && instSettings.voucherCopyOrder.length > 0) setVoucherCopyOrderState(instSettings.voucherCopyOrder);
@@ -4786,7 +4788,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             prevVoucher.status === 'Issued' ||
             prevVoucher.status === 'Partial'
           ) {
-            newPrevBalance = Math.max(0, prevVoucher.netDue - prevVoucher.amountPaid);
+            newPrevBalance = prevVoucher.netDue - prevVoucher.amountPaid;
             if (prevVoucher.status === 'Carried' && prevVoucher.carriedLateFine && prevVoucher.carriedLateFine > 0) {
               carriedFine = roundUpToMultiple(prevVoucher.carriedLateFine, mult);
             }
