@@ -36,6 +36,7 @@ export const TransportView: React.FC = () => {
     deleteTransportAssignment,
     copyTransportAssignmentsFromPreviousMonth,
     bulkUpdateTransportDaysForMonth,
+    transportRoundingMultiple,
     hasPermission,
     showToast,
     themeConfig,
@@ -735,7 +736,7 @@ export const TransportView: React.FC = () => {
             discount,
             active: true,
           };
-          const effectiveFare = stop ? calculateTransportFee(mockAsgn, stop) : 0;
+          const effectiveFare = stop ? calculateTransportFee(mockAsgn, stop, transportRoundingMultiple) : 0;
 
           parsedRows.push({
             id: `csv-row-${i}-${Date.now()}`,
@@ -1150,8 +1151,8 @@ export const TransportView: React.FC = () => {
         valB = b.discount || 0;
         break;
       case 'fare':
-        valA = calculateTransportFee(a, stopA);
-        valB = calculateTransportFee(b, stopB);
+        valA = calculateTransportFee(a, stopA, transportRoundingMultiple);
+        valB = calculateTransportFee(b, stopB, transportRoundingMultiple);
         break;
       default:
         valA = (sA?.name || '').toLowerCase();
@@ -2305,7 +2306,7 @@ export const TransportView: React.FC = () => {
                     const stop = stops.find((sp) => sp.id === a.stopId);
                     const totalMonthDays = getDaysInMonth(a.month);
                     const daysAvailed = a.daysCharged !== undefined ? a.daysCharged : totalMonthDays;
-                    const calculatedFee = calculateTransportFee(a, stop);
+                    const calculatedFee = calculateTransportFee(a, stop, transportRoundingMultiple);
                     const isSelected = selectedAsgnIds.includes(a.id);
 
                     return (

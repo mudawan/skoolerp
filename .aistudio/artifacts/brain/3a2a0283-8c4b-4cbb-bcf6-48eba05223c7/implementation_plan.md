@@ -1,56 +1,121 @@
-# Implementation Plan: Dynamic Capacity & CSV B-Form Duplicate Validation
+# User-Selectable Transport Fee Rounding
 
-Remove arbitrary hardcoded server-side query ceilings (such as 500 or 10,000) so that institutions of any size load dynamically and completely, and flag duplicate B-Forms (such as ID 1553 matching ID 1181) during CSV preview.
+Add configurable transport fare rounding to Fee & Policy Settings, allowing schools to round calculated transport fees (e.g. nearest Rs. 5, 10, 50, 100 or 1 for exact) before incorporating them into the voucher gross and net due total.
 
----
+## User Review & Critical Decisions
 
-## 1. Confirmation: Dashboard Card & Full Roster Counters
-
-**Confirmed**: The **Dashboard "Enrolled Students" card** (`activeStudents.length`), along with all other roster counters across the application, will show the **actual, full count of students** (e.g., 542+) instead of the 500 it currently displays.
-
-### Why it currently displays 500:
-1. In `src/components/DashboardView.tsx`, the Enrolled Students card renders `{activeStudents.length.toLocaleString()} Students`.
-2. `activeStudents` is computed directly from `students` loaded into `AppContext` via `fetchServerState() -> GET /api/students`.
-3. In `server/db.ts` (`searchStudents`), line 1922 clamped all query results to `Math.min(500, pageSize)`.
-4. As a result, the backend only returned 500 student objects to the browser.
-5. This artificially reduced the count in:
-   - **Dashboard**: "Enrolled Students" card (showed 500).
-   - **Students View**: Header roster badge and total student count (showed 500).
-   - **Students View Pagination**: Total records for "All records", 25, 50, 100 pages.
-   - **Class Breakdown**: Student distribution and headcount per class.
-   - **Transport & Fee Views**: Active student counts.
-
-Lifting the server query clamp dynamically delivers all student records to the frontend state, which automatically updates the Dashboard card and all full roster counters to the true total.
+> [!IMPORTANT]
+> The following decisions and architectural alignment have been incorporated:
+>
+> - **Transport Fee Source**: Transport fee is not a manual template override or CSV upload field (fee template overrides and CSV imports are strictly reserved for Fine and Flex1–4 items). Transport amounts are **always derived dynamically from the Transport Module assignments** (`TransportAssignment` + `TransportStop`).
+> - **Setting Location**: Located in **Settings > Policies** tab alongside the existing Net Due / Late Fee Rounding policy card.
+> - **Available Multiples**: Options matching voucher rounding: **1 (Exact / No rounding)**, **5**, **10**, **50**, and **100** (with custom numeric entry supported).
+> - **Rounding Target**: Every active transport charge is computed from stop fare, discount, days charged, and trip type, and then rounded up to the selected transport multiple before entering the voucher particulars array.
 
 ---
 
-## 2. Proposed Changes
+## 1. Overview & Core Concept
 
-### A. Dynamic, Unbounded Data Retrieval on Server (`server/db.ts` & `server.ts`)
-- **Remove Arbitrary Clamping**:
-  - In `server/db.ts` (`searchStudents`):
-    - Remove the hardcoded `Math.min(500, ...)` clamp.
-    - If `opts.pageSize` is provided, respect that requested value without an artificial ceiling.
-    - If `opts.pageSize` is omitted or unpaged full-roster retrieval is requested, do not append a `LIMIT` clause so that all records for the institution are returned dynamically.
-  - Review and align `listVouchers`, `listCollections`, `listTransactions`, `listAuditLogs`, and `listStudentAccountHistory` to remove arbitrary upper clamping bounds when fetching institution records.
-- **Client Sync Cleanliness (`src/services/apiSync.ts`)**:
-  - Update `fetchServerState()` in `src/services/apiSync.ts` to request full institution state without passing arbitrary query parameter limits (`?pageSize=5000`), allowing the server to stream the full dataset dynamically.
-
-### B. CSV Preview B-Form Duplicate Detection (`src/components/StudentsView.tsx`)
-- **No Inline Edit Revalidation**: Keep the table clean and straightforward without complex inline revalidation.
-- **Pre-Import Duplicate Detection**:
-  - During the initial CSV parsing loop in `src/components/StudentsView.tsx`:
-    - Track seen B-Forms in `seenBFormInFile` (ignoring empty/unassigned B-Forms).
-    - Check if a student's `bFormNo` already exists in the current system `students` or was already encountered in an earlier row of the same CSV file.
-    - If duplicate: mark `isDuplicate = true` with a clear explanation identifying the conflict (e.g., `"B-Form 37203-7425695-5 duplicated in CSV (already in row for Abdul Ahad)"`).
-    - Uncheck duplicate rows by default so they appear under the **Duplicates** and **Issues** filter tabs for user review prior to saving.
+- **What It Does**: Enables school administrators and accountants to specify whether and how calculated student transportation fares are rounded before appearing on monthly fee vouchers.
+- **Problem Solved**: When transportation assignments feature prorated days (e.g. 17 days out of 31) or one-way trip discounts (50%), calculated amounts often result in awkward odd rupee figures (e.g. Rs. 1,645.16 or Rs. 1,827). Transport rounding cleanses these line items to cash-friendly increments (e.g. Rs. 1,650) prior to voucher generation.
+- **Target Persona**: School finance managers, accountants, and transport coordinators seeking neat cash denominations on printed vouchers and receipts.
 
 ---
 
-## 3. Verification & Scope
+## 2. User Experience & Visual Design
 
-1. **Compilation Only**:
-   - Run `compile_applet` and verify zero TypeScript, Vite bundler, or syntax errors.
-   - Run `lint_applet` to verify clean code hygiene.
-2. **No Data Testing by Agent**:
-   - As directed, the agent will **not** seed, test, or modify live user data. All data verification and CSV upload testing will be conducted directly by the user.
+### Key User Flows
+
+1. **Configuring Transport Rounding Policy**:
+   - The user navigates to **Settings > Policies** subtab.
+   - A dedicated **Transport Fee Rounding Policy** card sits directly adjacent to the **Net Due Rounding Policy** card.
+   - The card features:
+     - Clear iconography (`Bus` icon in a styled indigo/teal container) and explanatory subtitle: *"Rounds calculated transportation fares up to the nearest multiple before adding to the fee voucher. Enter 1 or choose exact for no rounding."*
+     - An integrated numeric input with `Rs.` prefix and a dropdown chevron opening quick presets: **Exact (1)**, **Rs. 5**, **Rs. 10**, **Rs. 50**, **Rs. 100**.
+     - A dynamic **Modified** status badge if the draft differs from the saved policy.
+     - Live summary in the **Save Policy Changes** confirmation modal.
+
+2. **Voucher Generation & Calculation**:
+   - During voucher preview and generation (single student, batch generation, and monthly voucher issuance), the transport line item is computed with the effective transport rounding multiple.
+   - If a student has no active transport assignment, the transport amount is Rs. 0.
+   - If a student has an active transport assignment, the prorated fare is rounded according to the policy before being added to the voucher particulars.
+
+3. **Transport Assignment View**:
+   - In **Transport Management > Student Assignments**, the calculated fare column reflects the effective transport rounding setting, ensuring complete consistency between what the transport coordinator sees and what appears on the generated voucher.
+
+### Visual Identity & Theme Alignment
+- Built strictly with Tailwind CSS tokens and consistent with existing design patterns (`PoliciesPanel.tsx` and `SettingsView.tsx`).
+- Styled with single-elevation border cards, tabular numerals (`tabular-nums font-mono`) for currency values, clean typography with no mechanical clutter or pill badge sandwiches, and full keyboard/click accessibility.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Transport Line-Item Rounding vs. Net Voucher Rounding**:
+  - *Chosen Approach*: Round the transport line item at calculation time before it joins the particulars array. The voucher's overall net due is then independently rounded by the voucher net due rounding rule.
+  - *Rationale*: Guarantees that the printed transport line item on the voucher voucher slip is clean and legible (e.g. "Transport Fee: Rs. 1,850" rather than "Rs. 1,842.50").
+- **Decision 2: Strict Assignment Derivation**:
+  - *Chosen Approach*: Since transport amounts derive strictly from student assignments (stop monthly fare, discount, days charged, trip type), the rounding applies uniformly across all students with transport assignments.
+  - *Rationale*: Aligns with the app's established separation of concerns where fee template customization covers tuition, fines, and the 4 flex items, while transport charges remain centrally managed by the transport assignment engine.
+- **Decision 3: Storage & Persistence (Database Single Source of Truth)**:
+  - *Chosen Approach*: Store `transportRoundingMultiple` (number) and `transportRoundingEnabled` (boolean) directly within `Institution.settings` in the database, saved via `apiUpdateInstituteSettings`.
+  - *Rationale*: Eliminates local storage divergence so that all school operators (admin, accountant, transport manager) across all workstations share the identical authoritative policy. No local cache needed.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### Complete Fee Calculation & Transport Rounding Formula
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                   Transport Assignment                      │
+│     (stop.monthlyFare, discount, daysCharged, tripType)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Raw Fare Calculation                        │
+│   raw = max(0, fare - discount) * (days / daysInMonth)      │
+│         * (tripType === 'OneWay' ? 0.5 : 1.0)               │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│             User-Selectable Transport Rounding              │
+│       transportFee = roundUpToMultiple(raw, transportMult)  │
+│       (where transportMult === 1 means exact / no rounding) │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Fee Voucher Particulars                     │
+│          kind: 'Transport', amount: transportFee            │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Gross Total & Net Due                       │
+│    grossTotal = Tuition + Transport + Flex1-4 + Fine        │
+│    netDue = roundUpToMultiple(gross - discount + prev,      │
+│                               voucherRoundingMult)          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Components and Files to Update
+
+1. **`src/types.ts`**:
+   - Extend `Institution.settings` typing with `transportRoundingMultiple?: number` and `transportRoundingEnabled?: boolean`.
+2. **`src/utils/feeMath.ts`**:
+   - Update `calculateTransportFee(assignment, stop, transportRoundingMultiple = 1): number` to apply `roundUpToMultiple(rawFare, transportRoundingMultiple)`.
+   - Update `buildVoucherPreview` to pass `transportRoundingMultiple` into `calculateTransportFee`.
+3. **`src/context/AppContext.tsx`**:
+   - Add state: `transportRoundingMultiple` (default 1) and `transportRoundingEnabled` (default false/true based on value > 1).
+   - Add setters: `setTransportRoundingMultiple` and `setTransportRoundingEnabled` with backend institution settings persistence (`apiUpdateInstituteSettings`).
+   - Pass `transportRoundingMultiple` into all voucher generation routines (`generateVouchersForClass`, `generateMonthlyVouchers`, preview calculations).
+4. **`src/components/settings/PoliciesPanel.tsx`**:
+   - Add the **Transport Fee Rounding Policy** card with input and dropdown presets (Exact 1, Rs. 5, Rs. 10, Rs. 50, Rs. 100).
+5. **`src/components/SettingsView.tsx`**:
+   - Wire draft state, change detection (`hasPolicyChanges`), reset handler, and save confirmation modal for transport rounding.
+6. **`src/components/TransportView.tsx`**:
+   - Pass the configured `transportRoundingMultiple` to `calculateTransportFee` so the transport management table accurately displays the rounded fare that will appear on vouchers.

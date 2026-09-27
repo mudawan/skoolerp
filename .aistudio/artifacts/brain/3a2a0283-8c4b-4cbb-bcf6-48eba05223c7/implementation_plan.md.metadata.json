@@ -1,6 +1,6 @@
 {
-  "summary":  "Updated implementation plan confirming that the Dashboard 'Enrolled Students' card and all views displaying full roster metrics (Students Directory, Class breakdowns, Fee Ledger, Defaulters) derive directly from the student dataset, which was previously truncated to 500 by the backend query clamp. Lifting the clamp ensures all cards and roster counters display the exact, actual student population.",
-  "updatedAt":  "2026-09-26T11:27:34.226762062Z",
+  "summary":  "Revised implementation plan to reflect that transport fee is strictly derived from transport assignments (not exposed as manual fee template overrides or CSV imports) and is rounded via user-selectable transport rounding before entering the voucher total.",
+  "updatedAt":  "2026-09-27T08:57:33.457666520Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -303,12 +303,13 @@ export function getDaysInMonth(month: string): number {
 /**
  * Calculates transport fee for a student in a month based on assignment & stop fare.
  * Exact formula: (baseStopFare - discount) * (daysAvailed / daysInMonth) * tripFactor
- * The raw figure is returned; the voucher's final net due is rounded up to the
- * configured multiple at voucher-generation time.
+ * User selectable transport rounding is applied to this line item before it becomes
+ * part of the voucher particulars. A multiple of 1 means exact PKR (no rounding).
  */
 export function calculateTransportFee(
   assignment: TransportAssignment | undefined,
-  stop: TransportStop | undefined
+  stop: TransportStop | undefined,
+  transportRoundingMultiple: number = 1
 ): number {
   if (!assignment || !assignment.active || !stop) return 0;
 
@@ -323,7 +324,8 @@ export function calculateTransportFee(
 
   const tripFactor = assignment.tripType === 'OneWay' ? 0.5 : 1.0;
 
-  return baseDiscounted * daysRatio * tripFactor;
+  const rawFare = baseDiscounted * daysRatio * tripFactor;
+  return roundUpToMultiple(rawFare, transportRoundingMultiple > 0 ? transportRoundingMultiple : 1);
 }
 
 export interface VoucherPreviewCalculation {
@@ -558,7 +560,8 @@ export function calculateStudentVoucherPreview(
   existingVouchers: FeeVoucher[],
   priorMonthRule: PriorMonthVoucherRule = 'strict',
   skippedMonthRule: SkippedMonthVoucherRule = 'warning',
-  roundingMultiple: number = 10
+  roundingMultiple: number = 10,
+  transportRoundingMultiple: number = 1
 ): VoucherPreviewCalculation {
   const existingVoucher = existingVouchers.find(
     (v) => v.studentId === student.id && v.month === month && v.status !== 'Reversed'
@@ -711,7 +714,7 @@ export function calculateStudentVoucherPreview(
     templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isMonthMatch(t.month)) ||
     templates.find((t) => !t.studentId && t.classId === student.classId && t.kind === 'Transport' && isAllMatch(t.month));
 
-  const calculatedTransportFee = calculateTransportFee(assignment, stop);
+  const calculatedTransportFee = calculateTransportFee(assignment, stop, transportRoundingMultiple);
 
   let transportFee = calculatedTransportFee;
   if (transportStudentOverride && transportStudentOverride.defaultAmount > 0) {

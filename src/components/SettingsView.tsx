@@ -44,6 +44,7 @@ import {
   AlertTriangle,
   BookOpen,
   Building2,
+  Bus,
   Calendar,
   CalendarCheck,
   Check,
@@ -120,6 +121,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setRoundingMultiple,
     roundingEnabled,
     setRoundingEnabled,
+    transportRoundingMultiple,
+    setTransportRoundingMultiple,
     defaultDueDateEnabled,
     defaultDueDay,
     setDefaultDueDateSettings,
@@ -161,6 +164,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [selectedLateFeeRate, setSelectedLateFeeRate] = useState<number>(defaultLateFeeRate);
   const [selectedRoundingMultiple, setSelectedRoundingMultiple] = useState<number>(roundingMultiple);
   const [selectedRoundingEnabled, setSelectedRoundingEnabled] = useState<boolean>(roundingEnabled);
+  const [selectedTransportRoundingMultiple, setSelectedTransportRoundingMultiple] = useState<number>(transportRoundingMultiple);
   const [selectedDefaultDueDateEnabled, setSelectedDefaultDueDateEnabled] = useState<boolean>(defaultDueDateEnabled);
   const [selectedDefaultDueDay, setSelectedDefaultDueDay] = useState<number>(defaultDueDay);
   const [selectedVoucherCopyOrder, setSelectedVoucherCopyOrder] = useState<VoucherCopyType[]>(voucherCopyOrder);
@@ -206,6 +210,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [roundingEnabled]);
 
   useEffect(() => {
+    setSelectedTransportRoundingMultiple(transportRoundingMultiple);
+  }, [transportRoundingMultiple]);
+
+  useEffect(() => {
     setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
   }, [defaultDueDateEnabled]);
 
@@ -234,6 +242,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     selectedLateFeeRate !== defaultLateFeeRate ||
     selectedRoundingMultiple !== roundingMultiple ||
     selectedRoundingEnabled !== roundingEnabled ||
+    selectedTransportRoundingMultiple !== transportRoundingMultiple ||
     isDefaultDueDateModified ||
     JSON.stringify(selectedVoucherCopyOrder) !== JSON.stringify(voucherCopyOrder) ||
     JSON.stringify(selectedVoucherDefaultCopies) !== JSON.stringify(voucherDefaultCopies);
@@ -253,6 +262,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setDefaultLateFeeRate(selectedLateFeeRate);
     setRoundingMultiple(selectedRoundingMultiple);
     setRoundingEnabled(selectedRoundingEnabled);
+    setTransportRoundingMultiple(selectedTransportRoundingMultiple);
     setDefaultDueDateSettings({
       enabled: selectedDefaultDueDateEnabled,
       day: selectedDefaultDueDay,
@@ -271,6 +281,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setSelectedLateFeeRate(defaultLateFeeRate);
     setSelectedRoundingMultiple(roundingMultiple);
     setSelectedRoundingEnabled(roundingEnabled);
+    setSelectedTransportRoundingMultiple(transportRoundingMultiple);
     setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
     setSelectedDefaultDueDay(defaultDueDay);
     setSelectedVoucherCopyOrder(voucherCopyOrder);
@@ -529,7 +540,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const handleRosterAmountChange = (kind: ParticularKind, amount: number) => {
+  const handleRosterAmountChange = (kind: ParticularKind, amount: number | string) => {
     setRosterState((prev) =>
       prev.map((item) => (item.kind === kind ? { ...item, defaultAmount: amount } : item))
     );
@@ -616,7 +627,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     Array<{
       kind: ParticularKind;
       label: string;
-      defaultAmount: number;
+      defaultAmount: number | string;
       isOverridden: boolean;
     }>
   >([]);
@@ -626,7 +637,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     Array<{
       kind: ParticularKind;
       label: string;
-      defaultAmount: number;
+      defaultAmount: number | string;
       isOverridden: boolean;
     }>
   >([]);
@@ -661,8 +672,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // OWN template slice (never the whole store), and capture a baseline key at
   // build time so unsaved edits can be detected before destructive switches.
   const draftKeyOf = (
-    rows: Array<{ kind: ParticularKind; label: string; defaultAmount: number; isOverridden?: boolean }>
-  ) => JSON.stringify(rows.map((r) => [r.kind, r.label.trim(), Math.max(0, Number(r.defaultAmount) || 0), !!r.isOverridden]));
+    rows: Array<{ kind: ParticularKind; label: string; defaultAmount: number | string; isOverridden?: boolean }>
+  ) =>
+    JSON.stringify(
+      rows.map((r) => [
+        r.kind,
+        r.label.trim(),
+        allowNegativeAmount(r.kind) ? Number(r.defaultAmount) || 0 : Math.max(0, Number(r.defaultAmount) || 0),
+        !!r.isOverridden,
+      ])
+    );
 
   const classTemplatesKey = useMemo(
     () =>
@@ -815,7 +834,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const handleStudentRosterAmountChange = (kind: ParticularKind, amount: number) => {
+  const handleStudentRosterAmountChange = (kind: ParticularKind, amount: number | string) => {
     setStudentRosterState((prev) =>
       prev.map((item) =>
         item.kind === kind ? { ...item, defaultAmount: amount, isOverridden: true } : item
@@ -829,7 +848,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const handleClassRosterAmountChange = (kind: ParticularKind, amount: number) => {
+  const handleClassRosterAmountChange = (kind: ParticularKind, amount: number | string) => {
     setClassRosterState((prev) =>
       prev.map((item) =>
         item.kind === kind ? { ...item, defaultAmount: amount, isOverridden: true } : item
@@ -916,6 +935,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleSaveStudentOverrides = (e: React.FormEvent) => {
     e.preventDefault();
     saveStudentRoster();
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (templateScopeMode === 'student') {
+      if (!selectedStudent) {
+        setToastMessage('Please search and select a student from the picker above before saving.');
+        setTimeout(() => setToastMessage(null), 3000);
+        return;
+      }
+      handleSaveStudentOverrides(e);
+    } else if (templateScopeMode === 'class') {
+      if (!selectedClass) {
+        setToastMessage('Please select a class from the dropdown above before saving.');
+        setTimeout(() => setToastMessage(null), 3000);
+        return;
+      }
+      handleSaveClassOverrides(e);
+    } else {
+      handleSaveAllParticulars(e);
+    }
   };
 
   const handleClearStudentOverrides = (studentIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
@@ -1500,17 +1540,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const globalFlex4 =
       templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex4')?.label || 'Other';
 
-    const activeStudents = students.filter((s) => s.status === 'Active');
-    const sampleList = activeStudents.length > 0 ? activeStudents : students;
+    // 2-3 clean dummy sample rows demonstrating format and column conventions (not an export of students)
+    const dummySampleRows = [
+      ['1001', '0', `"${globalFlex1}"`, '1500', `"${globalFlex2}"`, '500', `"${globalFlex3}"`, '0', `"${globalFlex4}"`, '0'].join(','),
+      ['1002', '100', `"${globalFlex1}"`, '0', `"${globalFlex2}"`, '0', `"${globalFlex3}"`, '300', `"${globalFlex4}"`, '200'].join(','),
+      ['1003', '0', `"${globalFlex1}"`, '0', `"${globalFlex2}"`, '500', `"${globalFlex3}"`, '0', `"${globalFlex4}"`, '0'].join(','),
+    ];
 
-    const sampleRows = sampleList.map((s) => {
-      const sTemplates = templates.filter((t) => {
-        if (t.studentId !== s.id) return false;
-        if (effectiveTemplateMonth === 'all') {
-          return !t.month || t.month === 'all';
-        }
-        return t.month === effectiveTemplateMonth;
-      });
+    const csvContent = [headers.join(','), ...dummySampleRows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `fee_template_sample_format.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportStudentOverridesCsv = () => {
+    const headers = [
+      'reg #',
+      'student name',
+      'class',
+      'schedule',
+      'fine',
+      'flex1 label',
+      'flex1 value',
+      'flex2 label',
+      'flex2 value',
+      'flex3 label',
+      'flex3 value',
+      'flex4 label',
+      'flex4 value',
+    ];
+
+    const globalFlex1 =
+      templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex1')?.label || 'Admission Fee';
+    const globalFlex2 =
+      templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex2')?.label || 'Registration Fee';
+    const globalFlex3 =
+      templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex3')?.label || 'Exam Fee';
+    const globalFlex4 =
+      templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex4')?.label || 'Other';
+
+    const rowsToExport = activeStudentOverridesList.map((item) => {
+      const student = item.student;
+      const sTemplates = item.overrides;
       const fineTpl = sTemplates.find((t) => t.kind === 'Fine');
       const f1Tpl = sTemplates.find((t) => t.kind === 'Flex1');
       const f2Tpl = sTemplates.find((t) => t.kind === 'Flex2');
@@ -1518,7 +1594,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const f4Tpl = sTemplates.find((t) => t.kind === 'Flex4');
 
       return [
-        s.regNo,
+        student?.regNo || item.studentId,
+        `"${(student?.name || 'Unknown Student').replace(/"/g, '""')}"`,
+        `"${item.className || ''}"`,
+        item.month === 'all' ? 'All Months' : formatMonthName(item.month),
         fineTpl ? fineTpl.defaultAmount : 0,
         `"${f1Tpl?.label || globalFlex1}"`,
         f1Tpl ? f1Tpl.defaultAmount : 0,
@@ -1531,12 +1610,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       ].join(',');
     });
 
-    const csvContent = [headers.join(','), ...sampleRows].join('\n');
+    const csvContent = [headers.join(','), ...rowsToExport].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `fee_template_overrides_${effectiveTemplateMonth}.csv`);
+    link.setAttribute('download', `student_fee_overrides_${effectiveTemplateMonth}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1951,6 +2030,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           setSelectedRoundingEnabled={setSelectedRoundingEnabled}
           roundingMultiple={roundingMultiple}
           roundingEnabled={roundingEnabled}
+          selectedTransportRoundingMultiple={selectedTransportRoundingMultiple}
+          setSelectedTransportRoundingMultiple={setSelectedTransportRoundingMultiple}
+          transportRoundingMultiple={transportRoundingMultiple}
           isDefaultDueDateModified={isDefaultDueDateModified}
           selectedDefaultDueDateEnabled={selectedDefaultDueDateEnabled}
           setSelectedDefaultDueDateEnabled={setSelectedDefaultDueDateEnabled}
@@ -2521,13 +2603,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {templateScopeMode !== 'overrides' && (
             <>
               <form
-                onSubmit={
-                  selectedStudent
-                    ? handleSaveStudentOverrides
-                    : selectedClass
-                    ? handleSaveClassOverrides
-                    : handleSaveAllParticulars
-                }
+                onSubmit={handleFormSubmit}
                 className="space-y-4"
               >
             {/* Selected Student Banner (if a student is active) */}
@@ -2602,6 +2678,44 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
+            {/* Empty Student Selection Prompt Banner */}
+            {templateScopeMode === 'student' && !selectedStudent && (
+              <div className="bg-teal-50/70 rounded-2xl border border-teal-200/90 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-800 font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+                    <GraduationCap className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      Please Select a Student to Configure Overrides
+                      <span className="text-xs font-semibold text-teal-800 bg-white border border-teal-200 px-2 py-0.5 rounded-md">
+                        Student Tier
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-600 mt-0.5">
+                      Search and choose a student from the picker above to view, customize, and save individual fee template overrides for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring Baseline)' : formatMonthName(effectiveTemplateMonth)}.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestTransition({
+                      kind: 'scope',
+                      label: scopeLabel,
+                      apply: () => {
+                        setTemplateScopeMode('global');
+                      },
+                    });
+                  }}
+                  className="text-xs font-semibold text-teal-700 hover:text-teal-900 bg-white hover:bg-teal-100/50 border border-teal-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer self-start sm:self-auto shrink-0"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  Return to Global
+                </button>
+              </div>
+            )}
+
             {/* Selected Class Banner (if in class override mode) */}
             {!selectedStudent && selectedClass && (
               <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
@@ -2661,15 +2775,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
 
+            {/* Empty Class Selection Prompt Banner */}
+            {templateScopeMode === 'class' && !selectedClass && (
+              <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200/90 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-800 font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      Please Select a Class to Configure Overrides
+                      <span className="text-xs font-semibold text-indigo-800 bg-white border border-indigo-200 px-2 py-0.5 rounded-md">
+                        Class Tier
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-600 mt-0.5">
+                      Choose a class from the dropdown above to view, customize, and save class-level fee template overrides for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring Baseline)' : formatMonthName(effectiveTemplateMonth)}.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    requestTransition({
+                      kind: 'scope',
+                      label: scopeLabel,
+                      apply: () => {
+                        setTemplateScopeMode('global');
+                      },
+                    });
+                  }}
+                  className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-100/50 border border-indigo-200 px-3 py-1.5 rounded-xl transition flex items-center gap-1 cursor-pointer self-start sm:self-auto shrink-0"
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  Return to Global
+                </button>
+              </div>
+            )}
+
             {/* Unified Fee Particulars Table */}
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
               <div className="p-3 bg-slate-50/80 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span className="text-xs font-semibold text-slate-600">
-                  {selectedStudent
-                    ? `💡 Fee Particulars Customization for ${selectedStudent.name} (${selectedStudent.regNo}) (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)}). Overrides class & global template.`
-                    : selectedClass
-                    ? `💡 Fee Particulars Customization for Class ${selectedClass.name} (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)}). Overrides global defaults for all students in this class.`
-                    : `💡 Drag rows by the handle (⠿) to reorder line items for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. PDF and voucher printouts will follow this exact order.`}
+                  {templateScopeMode === 'student' ? (
+                    selectedStudent ? (
+                      `💡 Fee Particulars Customization for ${selectedStudent.name} (${selectedStudent.regNo}) (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)}). Overrides class & global template.`
+                    ) : (
+                      `⚠️ No student selected. Please search and select a student above to configure individual fee overrides for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}.`
+                    )
+                  ) : templateScopeMode === 'class' ? (
+                    selectedClass ? (
+                      `💡 Fee Particulars Customization for Class ${selectedClass.name} (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)}). Overrides global defaults for all students in this class.`
+                    ) : (
+                      `⚠️ No class selected. Please select a class from the dropdown above to configure class-level fee overrides for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}.`
+                    )
+                  ) : (
+                    `💡 Drag rows by the handle (⠿) to reorder line items for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. PDF and voucher printouts will follow this exact order.`
+                  )}
                 </span>
                 <span className="text-[11px] text-teal-800 font-bold bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-md shrink-0 self-start sm:self-auto flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-teal-600" />
@@ -2715,19 +2877,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         ? classItem?.defaultAmount ?? r.defaultAmount
                         : r.defaultAmount;
 
-                      const isScopeSpecific = !!(selectedStudent || selectedClass);
+                      const isScopeSpecific = templateScopeMode !== 'global';
+                      const isDragAllowed = templateScopeMode === 'global' && hasPermission('settings.manage');
+                      const isInputDisabled =
+                        !hasPermission('settings.manage') ||
+                        (templateScopeMode === 'student' && !selectedStudent) ||
+                        (templateScopeMode === 'class' && !selectedClass);
 
                       return (
                         <tr
                           key={r.kind}
-                          draggable={!isScopeSpecific && hasPermission('settings.manage')}
+                          draggable={isDragAllowed}
                           onDragStart={(e) => {
-                            if (isScopeSpecific) return;
+                            if (!isDragAllowed) return;
                             setDraggedIndex(index);
                             e.dataTransfer.effectAllowed = 'move';
                           }}
                           onDragOver={(e) => {
-                            if (isScopeSpecific) return;
+                            if (!isDragAllowed) return;
                             e.preventDefault();
                             e.dataTransfer.dropEffect = 'move';
                             if (dragOverIndex !== index) {
@@ -2735,18 +2902,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             }
                           }}
                           onDragLeave={() => {
-                            if (isScopeSpecific) return;
+                            if (!isDragAllowed) return;
                             if (dragOverIndex === index) {
                               setDragOverIndex(null);
                             }
                           }}
                           onDrop={(e) => {
-                            if (isScopeSpecific) return;
+                            if (!isDragAllowed) return;
                             e.preventDefault();
                             handleDropReorder(index);
                           }}
                           onDragEnd={() => {
-                            if (isScopeSpecific) return;
+                            if (!isDragAllowed) return;
                             setDraggedIndex(null);
                             setDragOverIndex(null);
                           }}
@@ -2759,7 +2926,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           }`}
                         >
                           <td className="p-3 text-center">
-                            {!isScopeSpecific && hasPermission('settings.manage') ? (
+                            {isDragAllowed ? (
                               <button
                                 type="button"
                                 title="Drag to reorder"
@@ -2788,8 +2955,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                     handleRosterLabelChange(r.kind, e.target.value);
                                   }
                                 }}
-                                placeholder={spec.defaultLabel}
-                                disabled={!hasPermission('settings.manage')}
+                                placeholder={isInputDisabled ? '-' : spec.defaultLabel}
+                                disabled={isInputDisabled}
                                 className="w-full max-w-xs p-2 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 transition text-xs disabled:opacity-60 disabled:cursor-not-allowed"
                               />
                             ) : (
@@ -2807,9 +2974,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                 <span className="text-slate-400 font-semibold text-xs">Rs.</span>
                                 <input
                                   type="number"
-                                  value={currentAmount === 0 ? '' : currentAmount}
+                                  value={currentAmount === 0 ? '0' : (currentAmount ?? '')}
+                                  onWheel={(e) => (e.target as HTMLElement).blur()}
                                   onChange={(e) => {
-                                    const val = Number(e.target.value) || 0;
+                                    const raw = e.target.value;
+                                    const val = raw === '' ? '' : Number(raw);
                                     if (selectedStudent) {
                                       handleStudentRosterAmountChange(r.kind, val);
                                     } else if (selectedClass) {
@@ -2819,7 +2988,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                     }
                                   }}
                                   placeholder="0"
-                                  disabled={!hasPermission('settings.manage')}
+                                  disabled={isInputDisabled}
                                   className="w-24 p-1.5 text-right bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 text-xs transition disabled:opacity-60 disabled:cursor-not-allowed"
                                 />
                               </div>
@@ -2839,48 +3008,84 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {/* Bottom Action Bar */}
               {hasPermission('settings.manage') && (
                 <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                  {selectedStudent ? (
-                    <>
-                      <button
-                        type="button"
-                        id="btn-revert-student-overrides"
-                        onClick={() => handleClearStudentOverrides(selectedStudent.id, effectiveTemplateMonth)}
-                        className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Revert ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
-                      </button>
+                  {templateScopeMode === 'student' ? (
+                    selectedStudent ? (
+                      <>
+                        <button
+                          type="button"
+                          id="btn-revert-student-overrides"
+                          onClick={() => handleClearStudentOverrides(selectedStudent.id, effectiveTemplateMonth)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Revert ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
+                        </button>
 
-                      <button
-                        type="submit"
-                        id="btn-save-student-overrides"
-                        className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
-                      >
-                        <Save className="w-4 h-4" />
-                        Save Overrides for {selectedStudent.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
-                      </button>
-                    </>
-                  ) : selectedClass ? (
-                    <>
-                      <button
-                        type="button"
-                        id="btn-revert-class-overrides"
-                        onClick={() => handleClearClassOverrides(selectedClass.id, effectiveTemplateMonth)}
-                        className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Revert Class ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
-                      </button>
+                        <button
+                          type="submit"
+                          id="btn-save-student-overrides"
+                          className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
+                        >
+                          <Save className="w-4 h-4" />
+                          Save Overrides for {selectedStudent.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs text-amber-700 font-medium flex items-center gap-1.5">
+                          ⚠️ Select a student from the picker above to enable configuring and saving overrides.
+                        </span>
+                        <button
+                          type="button"
+                          disabled={true}
+                          id="btn-save-student-overrides"
+                          title="Please search and select a student from the picker above first"
+                          className="flex items-center gap-2 bg-slate-200 text-slate-400 font-bold px-5 py-2.5 rounded-xl text-xs shadow-none cursor-not-allowed border border-slate-300"
+                        >
+                          <Save className="w-4 h-4" />
+                          Save Student Overrides (No Student Selected)
+                        </button>
+                      </>
+                    )
+                  ) : templateScopeMode === 'class' ? (
+                    selectedClass ? (
+                      <>
+                        <button
+                          type="button"
+                          id="btn-revert-class-overrides"
+                          onClick={() => handleClearClassOverrides(selectedClass.id, effectiveTemplateMonth)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Revert Class ({effectiveTemplateMonth === 'all' ? 'All Months' : formatMonthName(effectiveTemplateMonth)})
+                        </button>
 
-                      <button
-                        type="submit"
-                        id="btn-save-class-overrides"
-                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
-                      >
-                        <Save className="w-4 h-4" />
-                        Save Overrides for Class {selectedClass.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
-                      </button>
-                    </>
+                        <button
+                          type="submit"
+                          id="btn-save-class-overrides"
+                          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition cursor-pointer"
+                        >
+                          <Save className="w-4 h-4" />
+                          Save Overrides for Class {selectedClass.name} ({effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs text-amber-700 font-medium flex items-center gap-1.5">
+                          ⚠️ Select a class from the dropdown above to enable configuring and saving overrides.
+                        </span>
+                        <button
+                          type="button"
+                          disabled={true}
+                          id="btn-save-class-overrides"
+                          title="Please select a class from the dropdown above first"
+                          className="flex items-center gap-2 bg-slate-200 text-slate-400 font-bold px-5 py-2.5 rounded-xl text-xs shadow-none cursor-not-allowed border border-slate-300"
+                        >
+                          <Save className="w-4 h-4" />
+                          Save Class Overrides (No Class Selected)
+                        </button>
+                      </>
+                    )
                   ) : (
                     <>
                       <span className="text-xs text-slate-500">
@@ -3156,13 +3361,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </button>
                     <button
                       type="button"
+                      id="btn-export-overrides-csv-section"
+                      onClick={handleExportStudentOverridesCsv}
+                      className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
+                      title="Export current active student fee overrides to CSV"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-600" />
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
                       id="btn-sample-overrides-csv-section"
                       onClick={handleDownloadSampleCsv}
                       className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
-                      title="Download template CSV with current students"
+                      title="Download sample CSV format with dummy rows"
                     >
-                      <Download className="w-3.5 h-3.5 text-slate-600" />
-                      CSV Template
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-slate-600" />
+                      Sample CSV
                     </button>
                   </>
                 )}
@@ -3516,14 +3731,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   Upload a CSV file with student fee template overrides for <strong>{effectiveTemplateMonth === 'all' ? 'All Months (Recurring Baseline)' : `${formatMonthName(effectiveTemplateMonth)} (${effectiveTemplateMonth})`}</strong>. First row must contain column headers.
                 </p>
 
-                <button
-                  type="button"
-                  onClick={handleDownloadSampleCsv}
-                  className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  Download Sample CSV Format
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={handleDownloadSampleCsv}
+                    className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer self-start"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Download Sample CSV Format (2–3 Dummy Rows)
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    Provides 2–3 dummy example rows demonstrating column headers and values. To export current active student overrides, use <strong>Export CSV</strong> in the Overrides Directory.
+                  </span>
+                </div>
 
                 {/* Status / Error alerts */}
                 {csvParseError && (
@@ -4034,6 +4254,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     {selectedRoundingMultiple <= 1
                       ? 'Net due rounding is turned OFF — new vouchers are billed at their exact amounts; late fines are not rounded.'
                       : `Voucher net due amounts round up to the nearest multiple of ${selectedRoundingMultiple}; late fines carried forward round the same way. Negative balances remain unrounded.`}
+                  </div>
+                </div>
+              )}
+
+              {/* Transport Fee Rounding Multiple */}
+              {selectedTransportRoundingMultiple !== transportRoundingMultiple && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Bus className="w-3.5 h-3.5 text-amber-600" />
+                      Transport Fee Rounding
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {transportRoundingMultiple > 1 ? `Nearest Rs. ${transportRoundingMultiple}` : 'Exact (1)'}{' '}
+                      &rarr;{' '}
+                      <span className="text-amber-700 font-extrabold">
+                        {selectedTransportRoundingMultiple > 1 ? `Nearest Rs. ${selectedTransportRoundingMultiple}` : 'Exact (1)'}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
+                    <strong>Impact:</strong>{' '}
+                    {selectedTransportRoundingMultiple <= 1
+                      ? 'Transport rounding is set to Exact (1) — calculated transportation fares are billed at exact amounts with no rounding.'
+                      : `Calculated transportation fares round up to the nearest multiple of Rs. ${selectedTransportRoundingMultiple} before adding to vouchers.`}
                   </div>
                 </div>
               )}

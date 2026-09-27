@@ -655,7 +655,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             if (existsInDb) {
               isDuplicate = true;
               const existingLabel = [existsInDb.regNo, existsInDb.name].filter(Boolean).join(' ');
-              duplicateReason = `Reg # "${rawRegNo}" already exists in system with '${existingLabel}'`;
+              duplicateReason = `Reg # "${rawRegNo}" already exists in system as '${existingLabel}'`;
             } else if (existsInFileStudent) {
               isDuplicate = true;
               duplicateReason = `Reg # "${rawRegNo}" duplicated in CSV with '${existsInFileStudent}'`;
@@ -676,7 +676,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             if (existsInDb) {
               isDuplicate = true;
               const existingLabel = [existsInDb.regNo, existsInDb.name].filter(Boolean).join(' ');
-              duplicateReason = `B-Form "${bFormNo}" already exists in system with '${existingLabel}'`;
+              duplicateReason = `B-Form "${bFormNo}" already exists in system as '${existingLabel}'`;
             } else if (existsInFileStudent) {
               isDuplicate = true;
               duplicateReason = `B-Form "${bFormNo}" duplicated in CSV with '${existsInFileStudent}'`;

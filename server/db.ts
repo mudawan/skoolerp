@@ -695,7 +695,7 @@ class DatabaseService {
         );
 
         CREATE TABLE IF NOT EXISTS fee_templates (
-          id VARCHAR(64) PRIMARY KEY,
+          id VARCHAR(128) PRIMARY KEY,
           institution_id VARCHAR(64) NOT NULL REFERENCES institutions(id) ON DELETE CASCADE,
           kind VARCHAR(32) NOT NULL,
           label VARCHAR(255) NOT NULL,
@@ -707,6 +707,7 @@ class DatabaseService {
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+        ALTER TABLE fee_templates ALTER COLUMN id TYPE VARCHAR(128);
 
         CREATE TABLE IF NOT EXISTS vouchers (
           id VARCHAR(64) PRIMARY KEY,

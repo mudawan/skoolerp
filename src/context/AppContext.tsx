@@ -328,6 +328,8 @@ interface AppContextType {
   setRoundingMultiple: (multiple: number) => void;
   roundingEnabled: boolean;
   setRoundingEnabled: (enabled: boolean) => void;
+  transportRoundingMultiple: number;
+  setTransportRoundingMultiple: (multiple: number) => void;
   defaultDueDateEnabled: boolean;
   defaultDueDay: number;
   setDefaultDueDateSettings: (settings: {
@@ -704,6 +706,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRoundingEnabledState(enabled);
     setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, roundingEnabled: enabled } }));
     apiUpdateInstituteSettings({ roundingEnabled: enabled });
+  };
+
+  const [transportRoundingMultiple, setTransportRoundingMultipleState] = useState<number>(1);
+
+  const setTransportRoundingMultiple = (multiple: number) => {
+    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 1;
+    setTransportRoundingMultipleState(clean);
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, transportRoundingMultiple: clean } }));
+    apiUpdateInstituteSettings({ transportRoundingMultiple: clean });
   };
 
   const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(false);
@@ -1158,6 +1169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (s.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(s.defaultLateFeeRate));
       if (s.roundingMultiple !== undefined) setRoundingMultipleState(Number(s.roundingMultiple));
       if (s.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(s.roundingEnabled));
+      if (s.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(s.transportRoundingMultiple));
       if (s.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(s.defaultDueDateEnabled));
       if (s.defaultDueDay !== undefined) setDefaultDueDayState(Number(s.defaultDueDay));
       if (Array.isArray(s.voucherCopyOrder) && s.voucherCopyOrder.length > 0) setVoucherCopyOrderState(s.voucherCopyOrder);
@@ -1506,6 +1518,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (instSettings.defaultLateFeeRate !== undefined) setDefaultLateFeeRateState(Number(instSettings.defaultLateFeeRate));
             if (instSettings.roundingMultiple !== undefined) setRoundingMultipleState(Number(instSettings.roundingMultiple));
             if (instSettings.roundingEnabled !== undefined) setRoundingEnabledState(Boolean(instSettings.roundingEnabled));
+            if (instSettings.transportRoundingMultiple !== undefined) setTransportRoundingMultipleState(Number(instSettings.transportRoundingMultiple));
             if (instSettings.defaultDueDateEnabled !== undefined) setDefaultDueDateEnabledState(Boolean(instSettings.defaultDueDateEnabled));
             if (instSettings.defaultDueDay !== undefined) setDefaultDueDayState(Number(instSettings.defaultDueDay));
             if (Array.isArray(instSettings.voucherCopyOrder) && instSettings.voucherCopyOrder.length > 0) setVoucherCopyOrderState(instSettings.voucherCopyOrder);
@@ -3057,6 +3070,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
+      // Find existing overrides for this class in this scope to reuse IDs and avoid churn
+      const existingScopeMap = new Map<string, FeeTemplate>();
+      prev.forEach((t) => {
+        if (!t.studentId && t.classId === classId) {
+          const tplIsAll = !t.month || t.month === 'all';
+          if ((isAll && tplIsAll) || (!isAll && t.month === month)) {
+            existingScopeMap.set(t.kind, t);
+          }
+        }
+      });
+
       // Remove existing overrides for this class in this scope
       const filtered = prev.filter((t) => {
         if (t.studentId || t.classId !== classId) return true;
@@ -3064,15 +3088,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (isAll) return !tplIsAll;
         return t.month !== month;
       });
-      const newOverrides: FeeTemplate[] = items.map((item, idx) => ({
-        id: `tpl-class-override-${classId}-${item.kind}-${targetMonth}-${Date.now()}-${idx}`,
-        classId,
-        month: targetMonth,
-        kind: item.kind,
-        label: item.label,
-        defaultAmount: item.defaultAmount,
-        sortOrder: item.sortOrder,
-      }));
+
+      const cleanClassId = classId.replace(/^cls-/, '');
+      const newOverrides: FeeTemplate[] = items.map((item) => {
+        const existing = existingScopeMap.get(item.kind);
+        const candidateId = existing?.id && existing.id.length <= 64
+          ? existing.id
+          : `tpl-c-${cleanClassId}-${item.kind.toLowerCase()}-${targetMonth}`;
+        const id = candidateId.length <= 64 ? candidateId : candidateId.slice(0, 64);
+        return {
+          id,
+          classId,
+          month: targetMonth,
+          kind: item.kind,
+          label: item.label,
+          defaultAmount: item.defaultAmount,
+          sortOrder: item.sortOrder,
+        };
+      });
       return [...filtered, ...newOverrides];
     });
   };
@@ -3103,6 +3136,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
     setTemplates((prev) => {
+      // Find existing overrides for this student in this scope to reuse IDs and avoid churn
+      const existingScopeMap = new Map<string, FeeTemplate>();
+      prev.forEach((t) => {
+        if (t.studentId === studentId) {
+          const tplIsAll = !t.month || t.month === 'all';
+          if ((isAll && tplIsAll) || (!isAll && t.month === month)) {
+            existingScopeMap.set(t.kind, t);
+          }
+        }
+      });
+
       // Remove existing overrides for this student in this scope
       const filtered = prev.filter((t) => {
         if (t.studentId !== studentId) return true;
@@ -3110,15 +3154,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (isAll) return !tplIsAll;
         return t.month !== month;
       });
-      const newOverrides: FeeTemplate[] = items.map((item, idx) => ({
-        id: `tpl-override-${studentId}-${item.kind}-${targetMonth}-${Date.now()}-${idx}`,
-        studentId,
-        month: targetMonth,
-        kind: item.kind,
-        label: item.label,
-        defaultAmount: item.defaultAmount,
-        sortOrder: item.sortOrder,
-      }));
+
+      const cleanStudentId = studentId.replace(/^stu-/, '');
+      const newOverrides: FeeTemplate[] = items.map((item) => {
+        const existing = existingScopeMap.get(item.kind);
+        const candidateId = existing?.id && existing.id.length <= 64
+          ? existing.id
+          : `tpl-s-${cleanStudentId}-${item.kind.toLowerCase()}-${targetMonth}`;
+        const id = candidateId.length <= 64 ? candidateId : candidateId.slice(0, 64);
+        return {
+          id,
+          studentId,
+          month: targetMonth,
+          kind: item.kind,
+          label: item.label,
+          defaultAmount: item.defaultAmount,
+          sortOrder: item.sortOrder,
+        };
+      });
       return [...filtered, ...newOverrides];
     });
   };
@@ -3144,11 +3197,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return t.month !== month;
       });
       const newOverrides: FeeTemplate[] = [];
-      const timestamp = Date.now();
-      entries.forEach(({ studentId, items }, sIdx) => {
-        items.forEach((item, idx) => {
+      entries.forEach(({ studentId, items }) => {
+        const cleanStudentId = studentId.replace(/^stu-/, '');
+        items.forEach((item) => {
+          const candidateId = `tpl-s-${cleanStudentId}-${item.kind.toLowerCase()}-${targetMonth}`;
           newOverrides.push({
-            id: `tpl-override-${studentId}-${item.kind}-${targetMonth}-${timestamp}-${sIdx}-${idx}`,
+            id: candidateId.length <= 64 ? candidateId : candidateId.slice(0, 64),
             studentId,
             month: targetMonth,
             kind: item.kind,
@@ -3331,7 +3385,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         vouchers,
         priorMonthRule,
         skippedMonthRule,
-        roundingEnabled ? roundingMultiple : 1
+        roundingEnabled ? roundingMultiple : 1,
+        transportRoundingMultiple
       );
     });
 
@@ -5767,6 +5822,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setRoundingMultiple,
         roundingEnabled,
         setRoundingEnabled,
+        transportRoundingMultiple,
+        setTransportRoundingMultiple,
         defaultDueDateEnabled,
         defaultDueDay,
         setDefaultDueDateSettings,

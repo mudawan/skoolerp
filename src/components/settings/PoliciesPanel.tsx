@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Bus,
   Calculator,
   Calendar,
   Check,
@@ -48,6 +49,14 @@ const ROUNDING_QUICK_PRESETS: { value: number; label: string; description?: stri
   { value: 50, label: '50', description: 'Round up net due to nearest Rs. 50' },
 ];
 
+const TRANSPORT_ROUNDING_PRESETS: { value: number; label: string; description?: string }[] = [
+  { value: 1, label: 'Exact (1)', description: 'Exact transport fare (no round up)' },
+  { value: 5, label: '5', description: 'Round up transport fare to nearest Rs. 5' },
+  { value: 10, label: '10', description: 'Round up transport fare to nearest Rs. 10' },
+  { value: 50, label: '50', description: 'Round up transport fare to nearest Rs. 50' },
+  { value: 100, label: '100', description: 'Round up transport fare to nearest Rs. 100' },
+];
+
 export interface PoliciesPanelProps {
   selectedLateFeeRate: number;
   setSelectedLateFeeRate: (v: number) => void;
@@ -58,6 +67,9 @@ export interface PoliciesPanelProps {
   setSelectedRoundingEnabled: (v: boolean) => void;
   roundingMultiple: number;
   roundingEnabled: boolean;
+  selectedTransportRoundingMultiple: number;
+  setSelectedTransportRoundingMultiple: (v: number) => void;
+  transportRoundingMultiple: number;
   isDefaultDueDateModified: boolean;
   selectedDefaultDueDateEnabled: boolean;
   setSelectedDefaultDueDateEnabled: (v: boolean) => void;
@@ -94,6 +106,9 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
     setSelectedRoundingEnabled,
     roundingMultiple,
     roundingEnabled,
+    selectedTransportRoundingMultiple,
+    setSelectedTransportRoundingMultiple,
+    transportRoundingMultiple,
     isDefaultDueDateModified,
     selectedDefaultDueDateEnabled,
     setSelectedDefaultDueDateEnabled,
@@ -125,6 +140,10 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
   const [roundingPlacement, setRoundingPlacement] = React.useState<'bottom' | 'top'>('bottom');
   const [isRoundingDropdownOpen, setIsRoundingDropdownOpen] = React.useState<boolean>(false);
   const roundingDropdownRef = React.useRef<HTMLDivElement>(null);
+
+  const [transportRoundingPlacement, setTransportRoundingPlacement] = React.useState<'bottom' | 'top'>('bottom');
+  const [isTransportRoundingDropdownOpen, setIsTransportRoundingDropdownOpen] = React.useState<boolean>(false);
+  const transportRoundingDropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Position calculation for due date dropdown
   React.useEffect(() => {
@@ -176,6 +195,31 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
     };
   }, [isRoundingDropdownOpen]);
 
+  // Position calculation for transport rounding dropdown
+  React.useEffect(() => {
+    if (!isTransportRoundingDropdownOpen || !transportRoundingDropdownRef.current) return;
+    const updatePlacement = () => {
+      if (!transportRoundingDropdownRef.current) return;
+      const rect = transportRoundingDropdownRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const neededHeight = 260;
+      if (spaceBelow < neededHeight && spaceAbove > spaceBelow) {
+        setTransportRoundingPlacement('top');
+      } else {
+        setTransportRoundingPlacement('bottom');
+      }
+    };
+
+    updatePlacement();
+    window.addEventListener('resize', updatePlacement);
+    window.addEventListener('scroll', updatePlacement, true);
+    return () => {
+      window.removeEventListener('resize', updatePlacement);
+      window.removeEventListener('scroll', updatePlacement, true);
+    };
+  }, [isTransportRoundingDropdownOpen]);
+
   // Click outside handling for rounding and due date dropdowns
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -184,6 +228,12 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
         !roundingDropdownRef.current.contains(e.target as Node)
       ) {
         setIsRoundingDropdownOpen(false);
+      }
+      if (
+        transportRoundingDropdownRef.current &&
+        !transportRoundingDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsTransportRoundingDropdownOpen(false);
       }
     };
 
@@ -339,6 +389,121 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                             )}
                           </div>
                           {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0 ml-2" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Section: Transport Fee Rounding Policy */}
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-200/60 shrink-0">
+              <Bus className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-2">
+                Round Transport Fee Up to Nearest Multiple
+                {selectedTransportRoundingMultiple !== transportRoundingMultiple && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                    Modified
+                  </span>
+                )}
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Rounds calculated transportation fares up to the nearest multiple before adding to the fee voucher. Enter <strong>1</strong> or choose exact for no rounding.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            {/* Integrated Text & Dropdown Combo */}
+            <div ref={transportRoundingDropdownRef} className="relative w-36">
+              <span className="absolute left-3 top-2 text-xs font-bold text-slate-400 pointer-events-none select-none">
+                Rs.
+              </span>
+              <input
+                type="number"
+                min="1"
+                max="10000"
+                id="input-transport-rounding-multiple"
+                disabled={!hasPermission('settings.manage')}
+                value={selectedTransportRoundingMultiple}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) {
+                    const cleanVal = Math.min(10000, Math.max(1, val));
+                    setSelectedTransportRoundingMultiple(cleanVal);
+                  } else if (e.target.value === '') {
+                    setSelectedTransportRoundingMultiple(1);
+                  }
+                }}
+                onFocus={() => {
+                  if (hasPermission('settings.manage')) {
+                    setIsTransportRoundingDropdownOpen(true);
+                  }
+                }}
+                className="w-full pl-9 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-amber-500 transition"
+                placeholder="1"
+              />
+              <button
+                type="button"
+                id="btn-transport-rounding-presets"
+                tabIndex={-1}
+                disabled={!hasPermission('settings.manage')}
+                onClick={() => setIsTransportRoundingDropdownOpen(!isTransportRoundingDropdownOpen)}
+                className="absolute right-2 top-2 p-0.5 text-slate-400 hover:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition"
+                title="Open transport rounding presets dropdown"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform duration-150 ${
+                    isTransportRoundingDropdownOpen ? 'rotate-180 text-amber-600' : ''
+                  }`}
+                />
+              </button>
+
+              {/* Integrated Dropdown Menu */}
+              {isTransportRoundingDropdownOpen && (
+                <div
+                  className={`absolute ${
+                    transportRoundingPlacement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+                  } right-0 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs z-50 animate-in fade-in zoom-in-95 duration-100`}
+                >
+                  {/* Detailed List */}
+                  <div className="max-h-56 overflow-y-auto py-0.5">
+                    {TRANSPORT_ROUNDING_PRESETS.map((preset) => {
+                      const isSelected = selectedTransportRoundingMultiple === preset.value;
+                      return (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          id={`preset-transport-rounding-${preset.value}`}
+                          disabled={!hasPermission('settings.manage')}
+                          onClick={() => {
+                            setSelectedTransportRoundingMultiple(preset.value);
+                            setIsTransportRoundingDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-1.5 font-medium transition flex items-center justify-between cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-50 text-amber-800 font-bold'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div>
+                            <span className="font-bold font-mono">
+                              {preset.value === 1 ? 'Exact (1)' : `Rs. ${preset.value}`}
+                            </span>
+                            {preset.description && (
+                              <p className="text-[10px] text-slate-500">{preset.description}</p>
+                            )}
+                          </div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-amber-600 shrink-0 ml-2" />}
                         </button>
                       );
                     })}
