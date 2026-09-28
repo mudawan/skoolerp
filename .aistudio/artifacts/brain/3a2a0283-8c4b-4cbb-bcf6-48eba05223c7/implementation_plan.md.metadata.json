@@ -1,6 +1,6 @@
 {
-  "summary":  "Revised implementation plan to reflect that transport fee is strictly derived from transport assignments (not exposed as manual fee template overrides or CSV imports) and is rounded via user-selectable transport rounding before entering the voucher total.",
-  "updatedAt":  "2026-09-27T08:57:33.457666520Z",
+  "summary":  "Implementation plan to fix the Carried Forward card and table in DefaultersView so that actual outstanding balances (netDue - amountPaid) are computed and displayed instead of full voucher net due.",
+  "updatedAt":  "2026-09-28T07:12:28.977499047Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

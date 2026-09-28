@@ -187,6 +187,32 @@ export const VouchersView: React.FC = () => {
     return Math.max(0, collectDynamicNetDue - collectingVoucher.amountPaid);
   }, [collectDynamicNetDue, collectingVoucher]);
 
+  // Generator Preview Sorting state (default: Reg # ascending)
+  const [previewSortField, setPreviewSortField] = useState<string>('regNo');
+  const [previewSortDirection, setPreviewSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleTogglePreviewSort = (field: string) => {
+    if (previewSortField === field) {
+      setPreviewSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setPreviewSortField(field);
+      setPreviewSortDirection('asc');
+    }
+  };
+
+  const renderPreviewSortIcon = (field: string) => {
+    if (previewSortField === field) {
+      return previewSortDirection === 'asc' ? (
+        <ArrowUp className="w-3.5 h-3.5 text-teal-600 shrink-0 inline-block" />
+      ) : (
+        <ArrowDown className="w-3.5 h-3.5 text-teal-600 shrink-0 inline-block" />
+      );
+    }
+    return (
+      <ArrowUpDown className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 shrink-0 inline-block transition" />
+    );
+  };
+
   // Voucher Detail Modal
   const [detailVoucher, setDetailVoucher] = useState<FeeVoucher | null>(null);
 
@@ -195,6 +221,96 @@ export const VouchersView: React.FC = () => {
       .filter((t) => !t.studentId && !t.classId)
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [templates]);
+
+  // Deduplicated unique fee columns for preview modal
+  const previewFeeColumns = useMemo(() => {
+    const kindMap = new Map<string, { id: string; kind: ParticularKind; label: string; sortOrder: number }>();
+
+    const CANONICAL_ORDER: Record<string, number> = {
+      Tuition: 10,
+      Flex1: 20,
+      Flex2: 30,
+      Transport: 40,
+      Flex3: 50,
+      Flex4: 60,
+      Fine: 70,
+      PreviousBalance: 80,
+      Discount: 90,
+    };
+
+    const globals = (templates || []).filter((t) => !t.studentId && !t.classId);
+
+    // Prefer template with targetMonth over generic 'all' or empty month
+    globals.forEach((t) => {
+      const existing = kindMap.get(t.kind);
+      if (!existing || t.month === targetMonth) {
+        kindMap.set(t.kind, {
+          id: t.id,
+          kind: t.kind,
+          label: t.label,
+          sortOrder: t.sortOrder ?? CANONICAL_ORDER[t.kind] ?? 99,
+        });
+      }
+    });
+
+    // Also include any particulars kind present in calculated previews
+    if (previewsData?.previews) {
+      previewsData.previews.forEach((p) => {
+        p.particulars.forEach((item) => {
+          if (!kindMap.has(item.kind)) {
+            kindMap.set(item.kind, {
+              id: item.kind,
+              kind: item.kind,
+              label: item.label,
+              sortOrder: CANONICAL_ORDER[item.kind] ?? 99,
+            });
+          }
+        });
+      });
+    }
+
+    return Array.from(kindMap.values()).sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [templates, targetMonth, previewsData]);
+
+  // Generator Preview sorted list (default sorted by Reg #)
+  const sortedPreviews = useMemo(() => {
+    if (!previewsData?.previews) return [];
+    return [...previewsData.previews].sort((a, b) => {
+      let comp = 0;
+      if (previewSortField === 'regNo') {
+        const regA = a.student.regNo || a.student.studentNo || '';
+        const regB = b.student.regNo || b.student.studentNo || '';
+        comp = regA.localeCompare(regB, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (previewSortField === 'name') {
+        comp = (a.student.name || '').localeCompare(b.student.name || '');
+      } else if (previewSortField === 'class') {
+        const clsA = a.schoolClass?.name || '';
+        const clsB = b.schoolClass?.name || '';
+        comp = clsA.localeCompare(clsB, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (previewSortField === 'netDue') {
+        comp = a.netDue - b.netDue;
+      } else if (previewSortField === 'status') {
+        const getStatusRank = (p: VoucherPreviewCalculation) => {
+          if (p.isBlockedByPriorRule || p.isBlockedBySkippedRule || p.isBeforeFirstBillingMonth) return 1;
+          if (p.isAlreadyGenerated) return 2;
+          return 3;
+        };
+        comp = getStatusRank(a) - getStatusRank(b);
+      } else {
+        const amtA = a.particulars.find((it) => it.kind === previewSortField)?.amount ?? 0;
+        const amtB = b.particulars.find((it) => it.kind === previewSortField)?.amount ?? 0;
+        comp = amtA - amtB;
+      }
+
+      if (comp === 0 && previewSortField !== 'regNo') {
+        const regA = a.student.regNo || a.student.studentNo || '';
+        const regB = b.student.regNo || b.student.studentNo || '';
+        comp = regA.localeCompare(regB, undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      return previewSortDirection === 'asc' ? comp : -comp;
+    });
+  }, [previewsData?.previews, previewSortField, previewSortDirection]);
 
   const sortedDetailParticulars = useMemo(() => {
     if (!detailVoucher) return [];
@@ -472,6 +588,8 @@ export const VouchersView: React.FC = () => {
   const handleOpenGenerator = () => {
     const monthToUse = activeMonth;
     setTargetMonth(monthToUse);
+    setPreviewSortField('regNo');
+    setPreviewSortDirection('asc');
     const initialDue = defaultDueDateEnabled ? getComputedDefaultDueDate(monthToUse) : '';
     setDueDateInput(initialDue);
     const { data, selected } = buildGeneratorPreview(scope, scopeClassId, monthToUse);
@@ -1684,11 +1802,7 @@ export const VouchersView: React.FC = () => {
                       <div className="inline-flex items-center gap-1 bg-teal-50 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg border border-teal-200/80 text-[10px] sm:text-[11px] shadow-2xs">
                         <span className="text-teal-700 font-semibold">
                           <span className="sm:hidden">Net:</span>
-                          <span className="hidden sm:inline">
-                            {roundingEnabled
-                              ? `Est. Net Due (${roundingMultiple ?? 10}):`
-                              : 'Est. Net Due:'}
-                          </span>
+                          <span className="hidden sm:inline">Est. Net Due:</span>
                         </span>
                         <span className="font-bold text-teal-800 font-mono">{formatCurrency(selectedTotalNetDue)}</span>
                       </div>
@@ -1736,24 +1850,73 @@ export const VouchersView: React.FC = () => {
                               title="Select / Deselect all eligible active students"
                             />
                           </th>
-                          <th className="py-2 px-2.5 w-20 whitespace-nowrap bg-slate-50">Reg #</th>
-                          <th className="py-2 px-2.5 min-w-[160px] whitespace-nowrap bg-slate-50">Student Name</th>
-                          <th className="py-2 px-2.5 whitespace-nowrap bg-slate-50">Class</th>
-                          {globalTemplates.map((tpl) => (
-                            <th key={tpl.id} className="py-2 px-2.5 text-right whitespace-nowrap bg-slate-50 min-w-[90px]">
-                              {tpl.label}
+                          <th
+                            onClick={() => handleTogglePreviewSort('regNo')}
+                            className="py-2 px-2.5 w-20 whitespace-nowrap bg-slate-50 cursor-pointer hover:bg-slate-100 select-none group"
+                            title="Click to sort by Reg #"
+                          >
+                            <div className="inline-flex items-center gap-1">
+                              <span>Reg #</span>
+                              {renderPreviewSortIcon('regNo')}
+                            </div>
+                          </th>
+                          <th
+                            onClick={() => handleTogglePreviewSort('name')}
+                            className="py-2 px-2.5 min-w-[160px] whitespace-nowrap bg-slate-50 cursor-pointer hover:bg-slate-100 select-none group"
+                            title="Click to sort by Student Name"
+                          >
+                            <div className="inline-flex items-center gap-1">
+                              <span>Student Name</span>
+                              {renderPreviewSortIcon('name')}
+                            </div>
+                          </th>
+                          <th
+                            onClick={() => handleTogglePreviewSort('class')}
+                            className="py-2 px-2.5 whitespace-nowrap bg-slate-50 cursor-pointer hover:bg-slate-100 select-none group"
+                            title="Click to sort by Class"
+                          >
+                            <div className="inline-flex items-center gap-1">
+                              <span>Class</span>
+                              {renderPreviewSortIcon('class')}
+                            </div>
+                          </th>
+                          {previewFeeColumns.map((col) => (
+                            <th
+                              key={col.kind}
+                              onClick={() => handleTogglePreviewSort(col.kind)}
+                              className="py-2 px-2.5 text-right whitespace-nowrap bg-slate-50 min-w-[90px] cursor-pointer hover:bg-slate-100 select-none group"
+                              title={`Click to sort by ${col.label}`}
+                            >
+                              <div className="inline-flex items-center gap-1 justify-end w-full">
+                                <span>{col.label}</span>
+                                {renderPreviewSortIcon(col.kind)}
+                              </div>
                             </th>
                           ))}
-                          <th className="py-2 px-2.5 text-right font-bold whitespace-nowrap bg-slate-50 min-w-[100px]">
-                          {roundingEnabled
-                            ? `Net Due (Rounded to ${roundingMultiple ?? 10})`
-                            : 'Net Due'}
-                        </th>
-                          <th className="py-2 px-2.5 text-center whitespace-nowrap bg-slate-50 min-w-[140px]">Status</th>
+                          <th
+                            onClick={() => handleTogglePreviewSort('netDue')}
+                            className="py-2 px-2.5 text-right font-bold whitespace-nowrap bg-slate-50 min-w-[100px] cursor-pointer hover:bg-slate-100 select-none group"
+                            title="Click to sort by Net Due"
+                          >
+                            <div className="inline-flex items-center gap-1 justify-end w-full">
+                              <span>Net Due</span>
+                              {renderPreviewSortIcon('netDue')}
+                            </div>
+                          </th>
+                          <th
+                            onClick={() => handleTogglePreviewSort('status')}
+                            className="py-2 px-2.5 text-center whitespace-nowrap bg-slate-50 min-w-[140px] cursor-pointer hover:bg-slate-100 select-none group"
+                            title="Click to sort by Status"
+                          >
+                            <div className="inline-flex items-center gap-1 justify-center w-full">
+                              <span>Status</span>
+                              {renderPreviewSortIcon('status')}
+                            </div>
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {previewsData.previews.map((p) => {
+                        {sortedPreviews.map((p) => {
                           const isSelected = selectedGenStudentIds.includes(p.student.id);
 
                           return (
@@ -1788,16 +1951,16 @@ export const VouchersView: React.FC = () => {
                                 </div>
                               </td>
                               <td className="py-1.5 px-2.5 text-slate-600 whitespace-nowrap">{p.schoolClass?.name}</td>
-                              {globalTemplates.map((tpl) => {
-                                const part = p.particulars.find((item) => item.kind === tpl.kind);
+                              {previewFeeColumns.map((col) => {
+                                const part = p.particulars.find((item) => item.kind === col.kind);
                                 const amt = part ? part.amount : 0;
                                 return (
                                   <td
-                                    key={tpl.id}
+                                    key={col.kind}
                                     className={`py-1.5 px-2.5 text-right font-mono whitespace-nowrap ${
                                       amt < 0
                                         ? 'text-emerald-700 font-semibold'
-                                        : tpl.kind === 'PreviousBalance' && amt > 0
+                                        : col.kind === 'PreviousBalance' && amt > 0
                                         ? 'text-rose-700 font-semibold'
                                         : 'text-slate-700'
                                     }`}

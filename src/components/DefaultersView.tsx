@@ -435,7 +435,7 @@ export const DefaultersView: React.FC = () => {
     if (activeTab === 'zeroDue') {
       return filteredVouchers.reduce((sum, v) => sum + (v.discountTotal || 0), 0);
     }
-    return filteredVouchers.reduce((sum, v) => sum + v.netDue, 0);
+    return filteredVouchers.reduce((sum, v) => sum + Math.max(0, v.netDue - v.amountPaid), 0);
   }, [activeTab, filteredVouchers]);
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
@@ -449,7 +449,7 @@ export const DefaultersView: React.FC = () => {
   }, [zeroDueVouchers]);
 
   const totalCarriedArrears = useMemo(() => {
-    return carriedVouchers.reduce((sum, v) => sum + v.netDue, 0);
+    return carriedVouchers.reduce((sum, v) => sum + Math.max(0, v.netDue - v.amountPaid), 0);
   }, [carriedVouchers]);
 
   return (
@@ -948,7 +948,7 @@ export const DefaultersView: React.FC = () => {
               <span className="text-slate-500 font-medium text-[11px]">
                 {activeTab === 'uncarried' ? 'Total Arrears:' : activeTab === 'zeroDue' ? 'Concessions:' : 'Total Carried:'}
               </span>
-              <span className={`font-mono font-bold ${activeTab === 'uncarried' ? 'text-rose-600' : 'text-emerald-700'}`}>
+              <span className={`font-mono font-bold ${activeTab === 'uncarried' ? 'text-rose-600' : activeTab === 'carried' ? 'text-amber-700' : 'text-emerald-700'}`}>
                 {formatCurrency(totalArrearsActiveTab)}
               </span>
             </div>
@@ -1220,7 +1220,7 @@ export const DefaultersView: React.FC = () => {
                   <th className="p-3">Voucher #</th>
                   <th className="p-3">Student Name</th>
                   <th className="p-3">Class</th>
-                  <th className="p-3 text-right">Net Due</th>
+                  <th className="p-3 text-right">Carried Balance</th>
                   <th className="p-3">Carried To Month</th>
                   <th className="p-3 text-right">Carried Late Surcharge</th>
                   <th className="p-3 text-right">Actions</th>
@@ -1255,7 +1255,14 @@ export const DefaultersView: React.FC = () => {
                             {cls?.name}
                           </span>
                         </td>
-                        <td className="p-3 font-bold text-slate-800 font-mono text-right">{formatCurrency(v.netDue)}</td>
+                        <td className="p-3 font-bold text-amber-800 font-mono text-right">
+                          <div>{formatCurrency(Math.max(0, v.netDue - v.amountPaid))}</div>
+                          {v.amountPaid > 0 && (
+                            <div className="text-[10px] text-slate-500 font-normal">
+                              Paid: {formatCurrency(v.amountPaid)} / Total: {formatCurrency(v.netDue)}
+                            </div>
+                          )}
+                        </td>
                         <td className="p-3">
                           <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full text-[11px]">
                             <ArrowRight className="w-3 h-3" />
