@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for standardizing negative currency formatting across the application to \"Rs. -500\" instead of \"- Rs. 500\", covering fee math formatting utilities, voucher preview modals, fee ledgers, particular editors, transport assignment modals, and printable voucher/receipt views.",
-  "updatedAt":  "2026-09-29T12:19:27.137077934Z",
+  "summary":  "Implementation plan to fix the Docker build error '[vite:build-html] Failed to resolve ./src/main.tsx from /app/index.html' by adding a production .dockerignore, anchoring Vite root in vite.config.ts, verifying index.html entry script resolution, and updating Dockerfile build layer hygiene.",
+  "updatedAt":  "2026-09-29T13:02:30.550628119Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
