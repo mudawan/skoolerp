@@ -19,7 +19,6 @@ import {
 } from './server/db';
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
-import { parseDocumentNumber } from './src/utils/sequence';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
@@ -1733,19 +1732,9 @@ async function startServer() {
   app.post('/api/sequences/next', requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { prefix, year, digits = 6, count = 1 } = req.body;
+      const { prefix, year, digits = 6 } = req.body;
       if (!prefix || !year) {
         return res.status(400).json({ success: false, error: 'Both prefix and year are required.' });
-      }
-      const numCount = Math.max(1, parseInt(count, 10) || 1);
-      if (numCount > 1) {
-        const block = await dbService.nextSequenceBlock(institutionId, prefix, year, numCount);
-        const cleanPrefix = prefix.toUpperCase();
-        const documentNumbers = [];
-        for (let i = block.start; i <= block.end; i++) {
-          documentNumbers.push(`${cleanPrefix}${year}-${String(i).padStart(digits, '0')}`);
-        }
-        return res.json({ success: true, documentNumbers, start: block.start, end: block.end, prefix, year });
       }
       const documentNumber = await dbService.nextDocumentNumber(institutionId, prefix, year, digits);
       res.json({ success: true, documentNumber, prefix, year });
@@ -1788,13 +1777,6 @@ async function startServer() {
             .map((v: any) => `${v.studentId}:${v.month}`)
         );
 
-        // Track all existing voucher numbers across this tenant to ensure zero duplicates
-        const existingVoucherNoSet = new Set<string>(
-          Array.from(lockedVouchers.values())
-            .map((v: any) => v.voucherNo)
-            .filter(Boolean)
-        );
-
         for (const item of rawVouchers) {
           const key = `${item.studentId}:${item.month}`;
           if (existingKeySet.has(key)) {
@@ -1802,23 +1784,10 @@ async function startServer() {
           }
 
           const yearStr = item.month.split('-')[0];
-          let voucherNo = item.voucherNo;
-
-          // DIRECTIVE: Backend endpoints should only reissue voucher number if duplicate. Do not reject.
-          if (!voucherNo || voucherNo.startsWith('TEMP_') || existingVoucherNoSet.has(voucherNo)) {
-            voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
-            while (existingVoucherNoSet.has(voucherNo)) {
-              voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
-            }
-          }
-
-          existingVoucherNoSet.add(voucherNo);
-
-          // Reconcile high-water mark sequence in database
-          const parsed = parseDocumentNumber(voucherNo);
-          if (parsed) {
-            await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
-          }
+          const voucherNo =
+            item.voucherNo && !item.voucherNo.startsWith('TEMP_')
+              ? item.voucherNo
+              : await helpers.mintDocumentNumber('FE', yearStr);
 
           const newVoucher = {
             ...item,
@@ -2352,18 +2321,7 @@ async function startServer() {
 
         const upserts: Record<string, any> = {};
         for (const v of voucherUpserts) {
-          if (v?.id) {
-            let voucherNo = v.voucherNo;
-            if (!voucherNo || voucherNo.startsWith('TEMP_')) {
-              const vYear = (v.month || '').split('-')[0] || yearStr;
-              voucherNo = await helpers.mintDocumentNumber('FE', vYear);
-            }
-            upserts[v.id] = { ...v, voucherNo };
-            const parsed = parseDocumentNumber(voucherNo);
-            if (parsed) {
-              await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
-            }
-          }
+          if (v?.id) upserts[v.id] = v;
         }
         const collectionUpdatesMap: Record<string, { totalAmount: number; transactionCount: number }> = {};
         for (const c of collectionUpdates) {

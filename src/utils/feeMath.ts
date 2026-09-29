@@ -27,7 +27,7 @@ export function roundUpToMultiple(amount: number, multiple: number): number {
 export function formatCurrency(amount: number): string {
   const isNegative = amount < 0;
   const absVal = Math.round(Math.abs(amount)).toLocaleString('en-PK');
-  return isNegative ? `Rs. -${absVal}` : `Rs. ${absVal}`;
+  return isNegative ? `- Rs. ${absVal}` : `Rs. ${absVal}`;
 }
 
 /**

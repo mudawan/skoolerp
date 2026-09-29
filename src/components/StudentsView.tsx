@@ -1,4 +1,3 @@
-// School Management System - Students Directory View
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';

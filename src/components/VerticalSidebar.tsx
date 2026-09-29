@@ -1,4 +1,3 @@
-// School Management System - Primary Navigation Sidebar
 import React from 'react';
 import { ActiveTab } from '../types';
 import { useApp } from '../context/AppContext';
