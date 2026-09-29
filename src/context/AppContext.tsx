@@ -3653,6 +3653,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // voucher rolling into the first regular monthly voucher). Without
     // marking these Carried, they'd remain as permanent "ghost" unpaid
     // records even after their balance has already moved to the new voucher.
+    const priorVouchersToCarry = new Map<string, string>();
     const instId = currentInstitution?.id || 'default';
     const allocatedNos = allocateDocumentNumbers('FE', yearStr, ungenerated.length, 6, instId);
 

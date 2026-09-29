@@ -221,7 +221,7 @@ Class: ${schoolClass?.name || 'General'}
 Voucher #: ${voucher?.voucherNo} (${formatMonthName(voucher?.month || '')})
 Amount Paid: Rs. ${txn?.amount?.toLocaleString('en-PK')}
 Payment Mode: ${txn?.paymentMode}${txn?.referenceNo ? ` [Ref: ${txn.referenceNo}]` : ''}
-Status: ${isFullyPaid ? 'FULLY PAID' : `PARTIAL (Remaining: Rs. ${remaining?.toLocaleString('en-PK')})`}
+Status: ${isFullyPaid ? 'FULLY PAID' : `PARTIAL (Remaining: ${formatCurrency(remaining || 0)})`}
 Amount in Words: ${numberToWords(txn?.amount || 0)}
 Thank you for your payment!`;
 
@@ -488,7 +488,7 @@ Thank you for your payment!`;
           ))}
           <div className="flex justify-between font-bold border-t border-slate-300 pt-1 mt-1">
             <span>Net Due:</span>
-            <span>Rs. {voucher?.netDue.toLocaleString('en-PK')}</span>
+            <span>{formatCurrency(voucher?.netDue || 0)}</span>
           </div>
         </div>
 
@@ -497,7 +497,7 @@ Thank you for your payment!`;
           <span className="text-base font-black font-mono block">Rs. {txn?.amount.toLocaleString('en-PK')}</span>
           <span className="text-[9px] block text-slate-600 mt-0.5">{numberToWords(txn?.amount || 0)}</span>
           <div className="mt-1 text-[10px] font-bold">
-            {isFullyPaid ? '*** FULLY PAID ***' : `Remaining: Rs. ${remaining.toLocaleString('en-PK')}`}
+            {isFullyPaid ? '*** FULLY PAID ***' : `Remaining: ${formatCurrency(remaining)}`}
           </div>
         </div>
 

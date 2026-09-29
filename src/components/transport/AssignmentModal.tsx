@@ -504,7 +504,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                       <div className="flex justify-between">
                         <span>Discount:</span>
                         <span className={`font-semibold ${discount > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
-                          {discount > 0 ? `- ${formatCurrency(discount)}` : 'Rs. 0'}
+                          {discount > 0 ? formatCurrency(-discount) : 'Rs. 0'}
                         </span>
                       </div>
                       <div className="flex justify-between">

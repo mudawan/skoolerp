@@ -1,111 +1,89 @@
-# Scalable & Monotonic Fee Voucher Numbering Architecture (Revised)
+# Standardize Negative Currency Formatting to "Rs. -500"
 
-Delivers strictly unique, monotonic, non-colliding fee voucher numbering across sessions, users, and workflows using an **O(1)** atomic sequence allocator and backend silent reissuance.
+Standardize the representation of negative monetary amounts across all voucher generation preview modals, particulars editors, fee ledgers, reports, and print/PDF views so negative balances and concessions display consistently as **"Rs. -500"** rather than **"- Rs. 500"** or **"-Rs. 500"**.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following requirements and user directives govern this revised architecture:
+> The following formatting conventions were confirmed via interactive clarification:
+> - **Global Formatting Scope**: The `"Rs. -500"` display standard applies across all screen previews, fee ledgers, table summaries, and printable voucher / receipt documents.
+> - **Line Item Consistency**: Discounts, concessions, credit balances, and negative adjustments in fee breakdowns and particular lists will uniformly use `"Rs. -{amount}"` (e.g. `Rs. -500` for a Rs. 500 discount).
 
-- **Confirmed Directive 1 (Silent Reissuance, No Rejections)**: If a backend endpoint detects a duplicate or colliding voucher number, it **must not reject** the request. Instead, it will automatically reissue the next monotonic voucher number from the sequence, commit the voucher, and return the updated voucher record to the client.
-- **Confirmed Directive 2 (Monotonic Audit Permanence)**: When a fee voucher is deleted, its number is permanently retired. The sequence counter never rolls backwards or reuses deleted voucher numbers.
-- **Confirmed Directive 3 (Zero Historical Voucher Scan / O(1) Scalability)**: Allocation will **not** loop through historical vouchers. The system will use an O(1) monotonic counter (advancing `last_value` by `N` in a single operation), ensuring identical instant performance whether generating vouchers in 2026 or 2036 with 50,000+ historical records.
-- **Confirmed Directive 4 (Multi-User Cognizance)**: Atomic reservation on the central server sequence prevents duplicate numbers between multiple concurrent operators and across sessions.
+- **Confirmed Decision 1**: Update `formatCurrency(amount)` in `src/utils/feeMath.ts` to return `Rs. -${absVal}` whenever `amount < 0`, serving as the single authoritative source of truth for currency rendering.
+- **Confirmed Decision 2**: Eliminate manual prefixing patterns like `-${formatCurrency(val)}` or `- ${formatCurrency(val)}` in components (such as `VoucherParticularsEditor` and `AssignmentModal`), replacing them with standard calls to `formatCurrency(-Math.abs(val))` or `formatCurrency(item.amount)`.
 
----
-
-## 1. Evaluation & Engineering Feedback
-
-### 1. Eliminating Historical Scans (O(1) vs. O(N × M))
-The user's critique is completely accurate: looping candidate numbers against all historical vouchers creates an $O(N \times M)$ bottleneck (e.g. 500 batch vouchers compared against 60,000 historical records = 30 million comparisons).
-
-In standard database systems (e.g., PostgreSQL sequences, Oracle sequences), sequence generation is strictly **$O(1)$**:
-- We maintain a single scalar integer: `last_issued_number` per tenant, prefix, and year.
-- For a single voucher: `next = ++last_issued_number`.
-- For a batch of $N$ vouchers: `start = last_issued_number + 1`, `last_issued_number += N`. All $N$ numbers `[start, ..., start + N - 1]` are allocated in a single atomic step without examining past records.
-
-### 2. Multi-User & Multi-Session Cognizance
-Because multiple operators may be logged in simultaneously or one operator may switch tabs/devices:
-- Client-side local heap memory cannot be the sole source of truth.
-- When committing vouchers (`/api/vouchers/generate` or `/api/vouchers/batch-update`), the central server atomically reserves the required sequence block using `UPDATE system_sequences SET last_value = last_value + $count RETURNING ...`.
-- If the client generated optimistic/temporary numbers locally, the server verifies them in $O(1)$ against its atomic sequence; if any number is already taken or invalid, it **silently reissues** the next available numbers without rejecting.
+> [!NOTE]
+> **Status: Executed & Verified**: All negative currency amounts across preview modals, particulars editors, ledger tables, transport assignment dialogs, thermal receipt slips, and printable/PDF vouchers are now uniformly formatted as `"Rs. -500"`. Build and lint validation passed with zero errors.
 
 ---
 
-## 2. Technical Architecture & System Flow
+## 1. Overview & Core Concept
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   O(1) MONOTONIC VOUCHER NUMBER ALLOCATION                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+- **What It Does**: Formats all negative currency figures throughout Skooler (such as family advance credits, sibling discounts, transport fee deductions, and negative ledger balances) with the currency symbol preceding the negative sign (`Rs. -500`).
+- **Target Audience / Persona**: School administrators, accountants, and cashiers who review voucher batch generation previews, edit particulars, inspect ledgers, and print vouchers for parents.
+- **Key Value**: Professional, unified accounting notation across all preview cards and financial reports that eliminates visual discrepancies between various modals and printed receipts.
 
-  Workflow (Batch Monthly, Single Admission, or Defaulter Carry-Forward)
-                                     │
-                                     ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                         Client Generation Layer                         │
-  │                                                                         │
-  │  • Assigns monotonic candidate numbers: FE<YYYY>-<PaddedCounter>        │
-  │  • Counter maintained via persistent high-water mark                    │
-  │  • O(1) increment: no historical array looping                          │
-  └──────────────────────────────────┬──────────────────────────────────────┘
-                                     │ (POST /api/vouchers/generate)
-                                     ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                       Server Transactional Ingestion                    │
-  │                                                                         │
-  │  1. Check incoming voucher numbers in tenant transaction scope.         │
-  │  2. If unique & valid:                                                  │
-  │     Accept number, advance sequence high-water mark past it.            │
-  │  3. If duplicate or missing (DIRECTIVE APPLIED):                        │
-  │     DO NOT REJECT.                                                      │
-  │     Atomically mint next monotonic sequence number(s).                  │
-  │     Assign new number to voucher.                                       │
-  │  4. Save to database & return created vouchers to client.               │
-  │  5. Client state automatically reflects authoritative reissued numbers.  │
-  └─────────────────────────────────────────────────────────────────────────┘
-```
+---
+
+## 2. User Experience & Visual Design
+
+### Key User Flows
+1. **Batch Generation Preview**: When accountants generate monthly fee vouchers, students with advance credits or custom discounts see their concessions rendered cleanly as `Rs. -500` in the breakdown table and calculation summaries.
+2. **Voucher Particulars Editor**: In the modal dialog where individual line items are reviewed or adjusted, discount items display with distinct red/slate styling as `Rs. -500` instead of `-${formatCurrency(val)}` (which previously generated double symbols like `-Rs. 500`).
+3. **Student Fee Ledger & Account History**: Advance payments and negative balances in the running balance column and summary stat cards consistently reflect `Rs. -500`.
+4. **Printable Vouchers & Receipt Modals**: Parents and bank branches receive vouchers where negative line items show as `Rs. -500`, aligning printed documents with screen previews.
+
+### Visual Identity & Theme
+- **Color Discipline**: Negative discount figures and credit adjustments retain their semantic text cues (`text-rose-600` or `text-emerald-700` for credits/advances where applicable).
+- **Tabular Numerals**: All figures continue using `font-mono tabular-nums` to ensure exact column alignment regardless of digit widths or the negative sign.
+- **Single-Line Controls**: Line item amounts remain `whitespace-nowrap font-mono` to prevent wrapping.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: O(1) Batch Block Reservation**
-  - *Chosen Approach*: For batch generation of $K$ vouchers, the sequence table increments by $K$ in one database statement (`last_value = last_value + K`).
-  - *Why*: Instantaneous allocation regardless of database size, zero CPU overhead in 2036.
+- **Decision 1: Centralized Formatter vs. Local Overrides**
+  - *Chosen Approach*: Update `formatCurrency` in `src/utils/feeMath.ts` and audit all component-level string interpolations.
+  - *Why*: Over 80% of views consume `formatCurrency`. Updating the central utility guarantees immediate consistency while fixing any stray hardcoded template literals prevents regression.
+  - *Alternatives Considered*: Overriding in individual preview modal files was rejected because it would lead to drift and inconsistency between preview screens and ledger tables.
 
-- **Decision 2: Backend Silent Reissuance Policy**
-  - *Chosen Approach*: When a duplicate voucher number is submitted, the server replaces it with a newly minted sequence number and responds with `{ success: true, vouchers: [...] }`.
-  - *Why*: Guarantees user operations never fail with jarring 400 errors or duplicate key exceptions, while ensuring the database remains 100% collision-free.
-
-- **Decision 3: Persistent Client Sequence Cache**
-  - *Chosen Approach*: Synchronize the client's current high-water mark with browser storage (`skooler_seq_hwm_v1`) scoped to the active tenant and prefix/year, updating whenever the server returns state or new vouchers.
-  - *Why*: Prevents new tabs, session timeouts, or page refreshes from restarting back at `000001`.
-
-- **Decision 4: Corrected Regex Document Parser**
-  - *Chosen Approach*: Document numbers are parsed via `/^([A-Za-z]+)(\d{4})-(\d+)$/`, reading the exact numeric digits after the hyphen (`FE2026-000042` -> prefix `FE`, year `2026`, number `42`).
-  - *Why*: Fixes the truncation bug where numbers were previously parsed as `26`.
+- **Decision 2: Handling of Explicit Concession Inputs**
+  - *Chosen Approach*: In components where discounts are stored as positive values (e.g. `monthlyDiscount = 500`) but displayed as negative line items, format them using `formatCurrency(-displayAmount)` or direct template `Rs. -${absVal}`.
+  - *Why*: Prevents double negatives or malformed strings like `Rs. --500`.
 
 ---
 
-## 4. Implementation Steps
+## 4. Technical Architecture & Data Strategy
 
-1. **Refactor `src/utils/sequence.ts`**:
-   - Implement persistent high-water mark storage per tenant and prefix/year.
-   - Implement strict regex parser (`parseDocumentNumber`).
-   - Implement $O(1)$ batch allocation: `allocateDocumentNumbers(prefix, year, count, digits)`. No array scanning.
-   - Ensure the high-water mark never rolls back upon voucher deletions.
+### Component & Data Flow Diagram
 
-2. **Update App Context Handlers in `src/context/AppContext.tsx`**:
-   - In `applyServerState`: reconcile the high-water mark with the highest number observed from PostgreSQL.
-   - In `commitVoucherGeneration`, `buildAdmissionVoucher`, and `carryForwardDefaulter`: allocate numbers using the $O(1)$ monotonic allocator.
-   - When `apiGenerateVouchers` returns, update client state with any silently reissued voucher numbers returned by the server.
+```
+┌───────────────────────────────────────────────────────────────┐
+│                    src/utils/feeMath.ts                       │
+│  formatCurrency(amount: number): string                       │
+│    amount < 0  ──►  "Rs. -" + abs(amount).toLocaleString()   │
+│    amount >= 0 ──►  "Rs. "  + abs(amount).toLocaleString()   │
+└───────────────────────────────┬───────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│ Voucher Preview  │  │ Fee Ledger &     │  │ Print & PDF      │
+│ & Editor Modals  │  │ Collections View │  │ Receipts         │
+│ - Particulars    │  │ - Running Bal    │  │ - PrintVoucher   │
+│ - Defaulters     │  │ - Advance Bal    │  │ - PaymentReceipt │
+│ - Batch Wizard   │  │ - Net Due        │  │ - PDF Generator  │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+```
 
-3. **Update Server Ingestion in `server.ts` & `server/db.ts`**:
-   - In `/api/vouchers/generate`, check for existing `voucher_no` in the institution. If any voucher collides or is unassigned, **silently reissue** using `helpers.mintDocumentNumber` instead of rejecting.
-   - Update `dbService.nextSequenceNumber` and add `dbService.nextSequenceBlock(count)` for atomic batch reservation in PostgreSQL and in-memory fallback.
-   - Ensure `POST /api/sequences/next` supports batch count for multi-user coordination.
-
-4. **Verification & Build**:
-   - Validate with `compile_applet` and `lint_applet`.
-   - Verify multi-session voucher generation, cross-workflow creations, and voucher deletion without number recycling or duplicate generation.
+### Component Auditing Checklist
+1. **`src/utils/feeMath.ts`**:
+   - `formatCurrency(amount)`: change line 30 from `return isNegative ? `- Rs. ${absVal}` : `Rs. ${absVal}`;` to `return isNegative ? `Rs. -${absVal}` : `Rs. ${absVal}`;`.
+2. **`src/components/VoucherParticularsEditor.tsx`**:
+   - Lines 417, 421, 451: replace manual `-${formatCurrency(...)}` with `formatCurrency(-Math.abs(amount))` so it outputs `Rs. -500`.
+3. **`src/components/transport/AssignmentModal.tsx`**:
+   - Line 507: replace `{discount > 0 ? `- ${formatCurrency(discount)}` : 'Rs. 0'}` with `{discount > 0 ? formatCurrency(-discount) : 'Rs. 0'}`.
+4. **`src/utils/pdfGenerator.ts` & `src/components/PaymentReceiptModal.tsx`**:
+   - Verify any raw string constructions of negative balances conform to `"Rs. -{amount}"`.
+5. **Verification**:
+   - Run `lint_applet` and `compile_applet` to verify compilation and layout stability.

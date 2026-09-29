@@ -429,5 +429,3 @@ export interface StudentAccountHistoryEntry {
   month?: string; // Optional billing month if applicable
   metadata?: Record<string, any>;
 }
-
-

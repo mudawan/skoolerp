@@ -1,7 +1,6 @@
 import React from 'react';
 import { User, UserRole } from '../types';
 import { UserModal, UserModalProps, UserModalSaveData } from './UserModal';
-
 export { UserModal };
 export type { UserModalProps, UserModalSaveData };
 
