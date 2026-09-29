@@ -1183,7 +1183,10 @@ export async function apiGenerateVouchers(
 }
 
 export async function apiReceiveCollection(params: {
+  collectionId?: string;
   payments: {
+    id?: string;
+    transactionId?: string;
     voucherId: string;
     amount: number;
     paymentMode: string;

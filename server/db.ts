@@ -318,6 +318,7 @@ class DatabaseService {
   private isInitialized = false;
   private revisions: Map<string, { revision: number; lastModified: string }> = new Map();
   private globalRevision: number = 1;
+  private serverSeqMap: Map<string, number> = new Map();
 
   constructor() {
     const host = process.env.POSTGRES_HOST || '127.0.0.1';
@@ -1464,10 +1465,48 @@ class DatabaseService {
       return Number(res.rows[0].last_value);
     }
 
-    return 1;
+    const k = `${tenantId}:${cleanPrefix}:${cleanYear}`;
+    const curr = this.serverSeqMap.get(k) || 0;
+    const next = curr + 1;
+    this.serverSeqMap.set(k, next);
+    return next;
   }
 
-  
+  /**
+   * Atomically reserves a sequential block of `count` sequence numbers (O(1)).
+   */
+  public async nextSequenceBlock(
+    institutionId: string,
+    prefix: string,
+    year: string,
+    count: number
+  ): Promise<{ start: number; end: number }> {
+    if (count <= 0) return { start: 0, end: 0 };
+    await this.init();
+    const tenantId = institutionId || 'default';
+    const now = new Date().toISOString();
+    const cleanPrefix = prefix.trim().toUpperCase();
+    const cleanYear = year.trim();
+
+    if (this.engine === 'postgres' && this.pgPool) {
+      const res = await this.pgPool.query(
+        `INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (institution_id, prefix, year)
+         DO UPDATE SET last_value = system_sequences.last_value + $4, updated_at = $5
+         RETURNING last_value`,
+        [tenantId, cleanPrefix, cleanYear, count, now]
+      );
+      const end = Number(res.rows[0].last_value);
+      return { start: end - count + 1, end };
+    }
+
+    const k = `${tenantId}:${cleanPrefix}:${cleanYear}`;
+    const curr = this.serverSeqMap.get(k) || 0;
+    const end = curr + count;
+    this.serverSeqMap.set(k, end);
+    return { start: curr + 1, end };
+  }
 
   /**
    * Formats a complete document number, e.g. FE2026-000042
@@ -1507,6 +1546,12 @@ class DatabaseService {
         [tenantId, cleanPrefix, cleanYear, highestObservedNumber, now]
       );
       return;
+    }
+
+    const k = `${tenantId}:${cleanPrefix}:${cleanYear}`;
+    const curr = this.serverSeqMap.get(k) || 0;
+    if (highestObservedNumber > curr) {
+      this.serverSeqMap.set(k, highestObservedNumber);
     }
   }
 
@@ -1723,6 +1768,7 @@ class DatabaseService {
           );
         }
         for (const id of writes.deleteCollectionIds || []) {
+          await client.query(`DELETE FROM transactions WHERE collection_id = $1 AND institution_id = $2`, [id, tenantId]);
           await client.query(`DELETE FROM collections WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
         }
         for (const id of writes.deleteVoucherIds || []) {

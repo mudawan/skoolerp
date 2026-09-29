@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to fix the Carried Forward card and table in DefaultersView so that actual outstanding balances (netDue - amountPaid) are computed and displayed instead of full voucher net due.",
-  "updatedAt":  "2026-09-28T07:12:28.977499047Z",
+  "summary":  "Revised implementation plan for guaranteed unique and monotonic fee voucher numbering. Incorporates user directive for backend silent reissuance (no rejections) and switches to an O(1) multi-user monotonic sequence allocator, eliminating expensive historical O(N*M) voucher scans.",
+  "updatedAt":  "2026-09-29T04:52:56.654053441Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

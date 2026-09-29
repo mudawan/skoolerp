@@ -176,9 +176,13 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
       )[0];
 
-      const balance = Math.max(0, v.netDue - v.amountPaid);
-      const isPaid = v.status === 'Paid' || (v.netDue > 0 && v.amountPaid >= v.netDue);
-      const isPartial = v.status === 'Partial' || (v.amountPaid > 0 && v.amountPaid < v.netDue);
+      // Authoritative deposit from active transactions; resets to 0 if transactions are deleted
+      const txnsDeposit = vTxns.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+      const effectiveDeposit = vTxns.length > 0 ? txnsDeposit : (v.status === 'Carried' ? (v.amountPaid || 0) : 0);
+
+      const balance = Math.max(0, v.netDue - effectiveDeposit);
+      const isPaid = v.status === 'Paid' || (v.netDue > 0 && effectiveDeposit >= v.netDue);
+      const isPartial = v.status === 'Partial' || (effectiveDeposit > 0 && effectiveDeposit < v.netDue);
       const isUnpaid = !isPaid && !isPartial;
 
       let effectiveStatus = v.status;
@@ -196,7 +200,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
         paymentMode: latestTxn ? latestTxn.paymentMode : vTxns[0]?.paymentMode || '',
         referenceNo: latestTxn?.referenceNo || '',
         total: v.netDue,
-        deposit: v.amountPaid,
+        deposit: effectiveDeposit,
         balance,
         status: effectiveStatus,
         txns: vTxns,
@@ -237,10 +241,10 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
   // Overall Financial Totals
   const totalBilled = studentVouchers.reduce((s, v) => s + v.netDue, 0);
-  const totalDeposited = studentVouchers.reduce((s, v) => s + v.amountPaid, 0);
+  const totalDeposited = ledgerEntries.reduce((s, e) => s + e.deposit, 0);
   const totalBalance = Math.max(0, totalBilled - totalDeposited);
   const recoveryRate = totalBilled > 0 ? Math.round((totalDeposited / totalBilled) * 100) : 0;
-  const unpaidCount = studentVouchers.filter((v) => v.netDue > v.amountPaid).length;
+  const unpaidCount = ledgerEntries.filter((e) => e.total > e.deposit).length;
 
   // Overdue months analysis (non-zero due balance cycles)
   const overdueVouchers = useMemo(() => {

@@ -19,6 +19,7 @@ import {
 } from './server/db';
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
+import { parseDocumentNumber } from './src/utils/sequence';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
@@ -1732,9 +1733,19 @@ async function startServer() {
   app.post('/api/sequences/next', requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { prefix, year, digits = 6 } = req.body;
+      const { prefix, year, digits = 6, count = 1 } = req.body;
       if (!prefix || !year) {
         return res.status(400).json({ success: false, error: 'Both prefix and year are required.' });
+      }
+      const numCount = Math.max(1, parseInt(count, 10) || 1);
+      if (numCount > 1) {
+        const block = await dbService.nextSequenceBlock(institutionId, prefix, year, numCount);
+        const cleanPrefix = prefix.toUpperCase();
+        const documentNumbers = [];
+        for (let i = block.start; i <= block.end; i++) {
+          documentNumbers.push(`${cleanPrefix}${year}-${String(i).padStart(digits, '0')}`);
+        }
+        return res.json({ success: true, documentNumbers, start: block.start, end: block.end, prefix, year });
       }
       const documentNumber = await dbService.nextDocumentNumber(institutionId, prefix, year, digits);
       res.json({ success: true, documentNumber, prefix, year });
@@ -1777,6 +1788,13 @@ async function startServer() {
             .map((v: any) => `${v.studentId}:${v.month}`)
         );
 
+        // Track all existing voucher numbers across this tenant to ensure zero duplicates
+        const existingVoucherNoSet = new Set<string>(
+          Array.from(lockedVouchers.values())
+            .map((v: any) => v.voucherNo)
+            .filter(Boolean)
+        );
+
         for (const item of rawVouchers) {
           const key = `${item.studentId}:${item.month}`;
           if (existingKeySet.has(key)) {
@@ -1784,10 +1802,23 @@ async function startServer() {
           }
 
           const yearStr = item.month.split('-')[0];
-          const voucherNo =
-            item.voucherNo && !item.voucherNo.startsWith('TEMP_')
-              ? item.voucherNo
-              : await helpers.mintDocumentNumber('FE', yearStr);
+          let voucherNo = item.voucherNo;
+
+          // DIRECTIVE: Backend endpoints should only reissue voucher number if duplicate. Do not reject.
+          if (!voucherNo || voucherNo.startsWith('TEMP_') || existingVoucherNoSet.has(voucherNo)) {
+            voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+            while (existingVoucherNoSet.has(voucherNo)) {
+              voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+            }
+          }
+
+          existingVoucherNoSet.add(voucherNo);
+
+          // Reconcile high-water mark sequence in database
+          const parsed = parseDocumentNumber(voucherNo);
+          if (parsed) {
+            await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
+          }
 
           const newVoucher = {
             ...item,
@@ -1864,9 +1895,10 @@ async function startServer() {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
       const {
-        payments, // Array of { voucherId, amount, paymentMode, referenceNo, notes, date, fineAdded, updatedParticulars }
+        payments, // Array of { voucherId, amount, paymentMode, referenceNo, notes, date, fineAdded, updatedParticulars, id, transactionId }
         collectionNotes,
         date = new Date().toISOString().split('T')[0],
+        collectionId: requestedCollectionId,
       } = req.body;
 
       if (!Array.isArray(payments) || payments.length === 0) {
@@ -1874,7 +1906,10 @@ async function startServer() {
       }
 
       const yearStr = new Date().getFullYear().toString();
-      const collectionId = `col-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const collectionId =
+        typeof requestedCollectionId === 'string' && requestedCollectionId.trim()
+          ? requestedCollectionId.trim()
+          : `col-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
       const voucherIds = [...new Set(payments.map((p: any) => p.voucherId))] as string[];
 
       let totalCollectionAmount = 0;
@@ -1918,7 +1953,7 @@ async function startServer() {
             const txnNo = await helpers.mintDocumentNumber('TXN', yearStr);
 
             // Update voucher line items if fine or particulars were revised at payment
-            if (item.updatedParticulars && Array.isArray(item.updatedParticulars)) {
+            if (item.updatedParticulars && Array.isArray(item.updatedParticulars) && item.updatedParticulars.length > 0) {
               v.particulars = item.updatedParticulars;
               v.grossTotal = item.updatedParticulars
                 .filter((p: any) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
@@ -1927,6 +1962,23 @@ async function startServer() {
                 .filter((p: any) => p.kind === 'Discount')
                 .reduce((s: number, p: any) => s + Math.abs(Number(p.amount)), 0);
               v.netDue = item.updatedParticulars.reduce((s: number, p: any) => s + Number(p.amount), 0);
+            } else if (item.fineAdded && Number(item.fineAdded) !== 0) {
+              const fineAdd = Number(item.fineAdded);
+              const cleanParts = (v.particulars || []).map((p: any) => ({ ...p }));
+              const fIdx = cleanParts.findIndex((p: any) => p.kind === 'Fine');
+              if (fIdx >= 0) {
+                cleanParts[fIdx] = { ...cleanParts[fIdx], amount: Number(cleanParts[fIdx].amount || 0) + fineAdd };
+              } else {
+                cleanParts.push({ kind: 'Fine', label: 'Fine', amount: fineAdd });
+              }
+              v.particulars = cleanParts;
+              v.grossTotal = cleanParts
+                .filter((p: any) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
+                .reduce((s: number, p: any) => s + Number(p.amount), 0);
+              v.discountTotal = cleanParts
+                .filter((p: any) => p.kind === 'Discount')
+                .reduce((s: number, p: any) => s + Math.abs(Number(p.amount)), 0);
+              v.netDue = cleanParts.reduce((s: number, p: any) => s + Number(p.amount), 0);
             }
 
             const updatedPaid = (v.amountPaid || 0) + item.amount;
@@ -1941,8 +1993,15 @@ async function startServer() {
               v.status = 'Issued';
             }
 
+            const txnId =
+              typeof item.id === 'string' && item.id.trim()
+                ? item.id.trim()
+                : typeof item.transactionId === 'string' && item.transactionId.trim()
+                ? item.transactionId.trim()
+                : `txn-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`;
+
             const newTxn = {
-              id: `txn-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+              id: txnId,
               txnNo,
               collectionId,
               voucherId: v.id,
@@ -2262,7 +2321,7 @@ async function startServer() {
         if (amountPaid < 0) {
           return res.status(400).json({ success: false, error: `Voucher ${v.id}: amountPaid cannot be negative.` });
         }
-        if (amountPaid > netDue + TOLERANCE) {
+        if (!isDeletion && amountPaid > netDue + TOLERANCE) {
           return res.status(400).json({ success: false, error: `Voucher ${v.id}: amountPaid cannot exceed netDue.` });
         }
       }
@@ -2281,7 +2340,7 @@ async function startServer() {
         // (until the audit-logging gap is closed) leave no trace of it.
         for (const v of voucherUpserts) {
           const existing = _locked.get(v.id);
-          if (existing && Number(v.amountPaid) > Number(existing.amountPaid) + TOLERANCE) {
+          if (existing && !isDeletion && Number(v.amountPaid) > Number(existing.amountPaid) + TOLERANCE) {
             throw new Error(
               `Voucher ${v.id}: amountPaid cannot be increased via this endpoint — use the collections/receive flow to record a payment.`
             );
@@ -2293,7 +2352,18 @@ async function startServer() {
 
         const upserts: Record<string, any> = {};
         for (const v of voucherUpserts) {
-          if (v?.id) upserts[v.id] = v;
+          if (v?.id) {
+            let voucherNo = v.voucherNo;
+            if (!voucherNo || voucherNo.startsWith('TEMP_')) {
+              const vYear = (v.month || '').split('-')[0] || yearStr;
+              voucherNo = await helpers.mintDocumentNumber('FE', vYear);
+            }
+            upserts[v.id] = { ...v, voucherNo };
+            const parsed = parseDocumentNumber(voucherNo);
+            if (parsed) {
+              await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
+            }
+          }
         }
         const collectionUpdatesMap: Record<string, { totalAmount: number; transactionCount: number }> = {};
         for (const c of collectionUpdates) {
