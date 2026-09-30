@@ -263,8 +263,10 @@ async function startServer() {
       // 4. Check Granular RBAC Permissions
       if (requiredPermission) {
         const allowed = isPermissionAllowed(
-          req.user.role,
-          req.user.permissions,
+          {
+            role: req.user.role as any,
+            permissions: req.user.permissions,
+          },
           requiredPermission
         );
 
@@ -1800,12 +1802,14 @@ async function startServer() {
           }
 
           const yearStr = item.month.split('-')[0];
+          let voucherNo = item.voucherNo;
 
-          // Strictly mint guaranteed server-side atomic document number from PostgreSQL sequence
-          // Deleted numbers are never reused; the counter strictly moves forward.
-          let voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
-          while (existingVoucherNoSet.has(voucherNo)) {
+          // DIRECTIVE: Backend endpoints should only reissue voucher number if duplicate. Do not reject.
+          if (!voucherNo || voucherNo.startsWith('TEMP_') || existingVoucherNoSet.has(voucherNo)) {
             voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+            while (existingVoucherNoSet.has(voucherNo)) {
+              voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+            }
           }
 
           existingVoucherNoSet.add(voucherNo);
@@ -2285,18 +2289,18 @@ async function startServer() {
       const isNewPayment = newTransactions.length > 0 || newCollections.length > 0;
       const isVoucherEdit = voucherUpserts.length > 0;
 
-      if (isDeletion && !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.delete')) {
+      if (isDeletion && !isPermissionAllowed(userCtx, 'fees.delete')) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.delete')." });
       }
-      if (isNewPayment && !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.collect')) {
+      if (isNewPayment && !isPermissionAllowed(userCtx, 'fees.collect')) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.collect')." });
       }
       if (
         isVoucherEdit &&
         !isDeletion &&
         !isNewPayment &&
-        !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.edit') &&
-        !isPermissionAllowed(req.user!.role, req.user!.permissions, 'defaulters.manage')
+        !isPermissionAllowed(userCtx, 'fees.edit') &&
+        !isPermissionAllowed(userCtx, 'defaulters.manage')
       ) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.edit')." });
       }
@@ -2350,13 +2354,7 @@ async function startServer() {
         for (const v of voucherUpserts) {
           if (v?.id) {
             let voucherNo = v.voucherNo;
-            const existing = _locked.get(v.id);
-            if (existing) {
-              // Existing voucher being edited: strictly preserve historical voucher number
-              voucherNo = existing.voucherNo;
-            } else {
-              // Newly created voucher: mint strictly unique atomic sequence number
-              // Counter only moves forward; numbers of deleted vouchers will never be reused
+            if (!voucherNo || voucherNo.startsWith('TEMP_')) {
               const vYear = (v.month || '').split('-')[0] || yearStr;
               voucherNo = await helpers.mintDocumentNumber('FE', vYear);
             }
@@ -2447,7 +2445,7 @@ async function startServer() {
         institutionId
       );
 
-      res.json({ success: true, revision: revInfo.revision, vouchers: Object.values(upserts) });
+      res.json({ success: true, revision: revInfo.revision });
     } catch (err: any) {
       console.error('[API] Failed to apply voucher batch update:', err);
       res.status(500).json({ success: false, error: err?.message || 'Batch update failed' });

@@ -871,47 +871,6 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_bank_accounts_institution ON bank_accounts(institution_id);
         CREATE INDEX IF NOT EXISTS idx_audit_logs_institution_time ON audit_logs(institution_id, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
-
-        -- Seed system_sequences to at least the highest number present in existing records
-        -- This guarantees that after reboot, restart, or restore, counters never roll back or reuse deleted numbers
-        INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-        SELECT 
-          institution_id,
-          'FE' as prefix,
-          substring(voucher_no from 3 for 4) as year,
-          max(substring(voucher_no from 8)::bigint) as last_value,
-          NOW() as updated_at
-        FROM vouchers
-        WHERE voucher_no ~ '^[A-Za-z]+[0-9]{4}-[0-9]+$'
-        GROUP BY institution_id, substring(voucher_no from 3 for 4)
-        ON CONFLICT (institution_id, prefix, year)
-        DO UPDATE SET last_value = GREATEST(system_sequences.last_value, EXCLUDED.last_value), updated_at = NOW();
-
-        INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-        SELECT 
-          institution_id,
-          'COL' as prefix,
-          substring(collection_no from 4 for 4) as year,
-          max(substring(collection_no from 9)::bigint) as last_value,
-          NOW() as updated_at
-        FROM collections
-        WHERE collection_no ~ '^[A-Za-z]+[0-9]{4}-[0-9]+$'
-        GROUP BY institution_id, substring(collection_no from 4 for 4)
-        ON CONFLICT (institution_id, prefix, year)
-        DO UPDATE SET last_value = GREATEST(system_sequences.last_value, EXCLUDED.last_value), updated_at = NOW();
-
-        INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-        SELECT 
-          institution_id,
-          'TXN' as prefix,
-          substring(txn_no from 4 for 4) as year,
-          max(substring(txn_no from 9)::bigint) as last_value,
-          NOW() as updated_at
-        FROM transactions
-        WHERE txn_no ~ '^[A-Za-z]+[0-9]{4}-[0-9]+$'
-        GROUP BY institution_id, substring(txn_no from 4 for 4)
-        ON CONFLICT (institution_id, prefix, year)
-        DO UPDATE SET last_value = GREATEST(system_sequences.last_value, EXCLUDED.last_value), updated_at = NOW();
       `);
     } finally {
       client.release();

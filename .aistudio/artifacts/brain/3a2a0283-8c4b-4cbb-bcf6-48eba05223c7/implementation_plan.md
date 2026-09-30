@@ -1,91 +1,97 @@
-# Server-Authoritative Atomic Voucher Numbering Plan
+# Transport Rounding Preset Steps (1, 10, 20, 50)
 
-Guarantee strictly unique, non-duplicating voucher numbers across all browser sessions, user workflows, and concurrent operations by minting voucher numbers through PostgreSQL atomic sequences on the server, while preserving historical numbers and reconciling sequence start values to avoid collisions.
+Update the transport fare rounding preset options in the Policies configuration to 1, 10, 20, and 50 so administrators can quickly round bus/van fares to standard Pakistani rupee denominations.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions were clarified with the user:
-> - **Existing Vouchers**: Keep existing voucher numbers unchanged without retroactively rewriting historical data.
-> - **Number Minting Authority**: Mint new voucher numbers strictly on the server side using atomic PostgreSQL sequences (`system_sequences` table) rather than relying on ephemeral client-side memory or local caches.
+> - **Preset Denominations**: The transport fee rounding preset menu will be updated from `[1, 5, 10, 50, 100]` to `[1, 10, 20, 50]`, aligning directly with the general fee voucher rounding steps.
+> - **Direct Number Input**: Administrators retain the ability to type any custom positive integer (1 to 10,000) into the input box if a custom multiple is ever needed.
 
-- **Confirmed Decision 1**: Server-side transactional voucher generation (`/api/vouchers/generate`) will always mint atomic numbers using `helpers.mintDocumentNumber('FE', yearStr)` when saving, ignoring or replacing any non-unique client-suggested numbers.
-- **Confirmed Decision 2**: Automatic sequence high-water-mark reconciliation upon server boot and collection hydration will ensure the next sequence value is strictly greater than the maximum voucher number currently in the database.
-- **Confirmed Decision 3**: Client-side single voucher creation and carry-forward flows will fetch the atomic number from `/api/sequences/next` or generate via server transaction, eliminating in-memory counter resets between browser tabs and page reloads.
+- **Confirmed Decision 1**: Set `TRANSPORT_ROUNDING_PRESETS` values to `[1, 10, 20, 50]`.
+- **Confirmed Decision 2**: Provide clear contextual descriptions for each preset step (e.g. Exact/no rounding, nearest Rs. 10, nearest Rs. 20, and nearest Rs. 50).
 
 ---
 
-### 1. Overview & Root Cause Analysis
+### 1. Overview & Core Concept
 
-- **The Problem**: Voucher numbers (e.g. `FE2026-000001`) duplicated across browser sessions, tabs, and workflow runs.
-- **Root Cause Identified**:
-  1. **Client-Side Counter Reset**: The client maintained an in-memory map `memoryMap: Record<string, number> = {}` that reset to 0 whenever the page refreshed or opened in a new tab/session.
-  2. **Failed Sequence Reconciliation**: On client mount, `reconcileSequence` ran against empty arrays because vouchers had not yet arrived from the server. Furthermore, the number parser had an offset bug: `parseInt(docNo.slice(prefix.length + 1), 10)` sliced `FE2026-000001` to `026-000001`, always returning `26` rather than `1`.
-  3. **Server Route Accepted Client Number**: The `/api/vouchers/generate` endpoint accepted client-provided `item.voucherNo` if not starting with `TEMP_`, committing duplicate numbers produced by reset client counters.
-- **The Solution**: Transition to 100% server-authoritative atomic sequences in PostgreSQL with automatic high-water-mark seeding.
+- **What It Does**: In **Settings > Policies & Rules > Transport Fee Rounding Policy**, the dropdown presets for "Round Transport Fee Up to Nearest Multiple" will offer the exact steps: **Exact (1)**, **Rs. 10**, **Rs. 20**, and **Rs. 50**.
+- **Target Audience / Persona**: School administrators and transport coordinators who configure proration and rounding rules for school bus and van routes.
+- **Key Value**: Streamlines the policy choices to match common physical cash and fee collection denominations (Rs. 10, Rs. 20, Rs. 50) used across schools in Pakistan, removing redundant intermediate values (5) and large steps (100).
 
 ---
 
-### 2. User Experience & Workflow Integrity
+### 2. User Experience & Visual Design
 
 #### Key User Flows
-1. **Bulk Voucher Generation (`VouchersView.tsx`)**:
-   - The user selects a billing month and classes to generate.
-   - The preview table displays provisional indicators or temporary preview tags (`TEMP_FE2026-...` or student reference).
-   - Upon confirming generation, the backend transaction assigns guaranteed atomic consecutive numbers from PostgreSQL (`system_sequences`).
-   - The returned vouchers display unique IDs that will never collide even if generated from multiple browser tabs or independent sessions.
-2. **Carry-Forward Creation**:
-   - When carrying forward unpaid balances to a target month, the created voucher obtains its number from the atomic sequence.
-3. **Session Switching & Refreshing**:
-   - Refreshing the browser or opening the application in multiple workstations will never reset or re-issue previously used voucher numbers.
+1. **Navigating to Policy Settings**:
+   - The user opens **Settings** and navigates to the **Policies & Rules** tab.
+   - Under the **Round Transport Fee Up to Nearest Multiple** card, the user clicks the preset dropdown icon or focuses the input field.
+2. **Selecting a Preset**:
+   - The dropdown displays the updated list of options:
+     - `Exact (1)` – "Exact transport fare (no round up)"
+     - `Rs. 10` – "Round up transport fare to nearest Rs. 10"
+     - `Rs. 20` – "Round up transport fare to nearest Rs. 20"
+     - `Rs. 50` – "Round up transport fare to nearest Rs. 50"
+   - Selecting any option updates the input value and highlights the active selection with an amber checkmark.
+3. **Saving Changes**:
+   - The floating or bottom save bar indicates policy changes have been made.
+   - Clicking **Save Changes** persists the new `transportRoundingMultiple` to institute settings.
+4. **Transport Fare Calculation**:
+   - Prorated and standard bus stop fares in the Transport view and generated fee vouchers will round up to the chosen multiple (e.g., a prorated fare of Rs. 1,234 rounds to Rs. 1,240 with step 10, Rs. 1,240 with step 20, or Rs. 1,250 with step 50).
+
+#### Visual Styling
+- Uses existing Tailwind design tokens: amber accent theme (`bg-amber-50`, `text-amber-800`, `border-amber-200`) consistent with transport policy controls.
+- Dropdown menu maintains clean typography, subtle hover states, and smooth slide/fade animations.
 
 ---
 
-### 3. Key Product Decisions & Architecture
+### 3. Key Product Decisions & Trade-Offs
 
-- **PostgreSQL Atomic Sequences**:
-  - Uses `INSERT INTO system_sequences ... ON CONFLICT DO UPDATE SET last_value = system_sequences.last_value + 1 RETURNING last_value` inside transactions to prevent race conditions.
-- **High-Water-Mark Reconciliation on Server Boot**:
-  - The server inspects existing vouchers in PostgreSQL on startup or sequence initialization and sets `last_value = GREATEST(last_value, max_existing_number)`. This ensures that even with existing numbers, the sequence never issues an already existing number.
-- **Client Fallback Hardening**:
-  - Fix the client-side `parseDocumentNumber` helper to correctly extract the numerical suffix (e.g. from `FE2026-000042` -> `42`) and trigger client reconciliation whenever server state is hydrated.
+- **Standardization with Voucher Rounding**:
+  - *Chosen Approach*: Align `TRANSPORT_ROUNDING_PRESETS` with `ROUNDING_QUICK_PRESETS` (`[1, 10, 20, 50]`).
+  - *Why*: Eliminates clutter from unused denominations (Rs. 5 and Rs. 100) and introduces Rs. 20 which is a standard Pakistani currency banknote.
+  - *Alternatives Considered*: Keeping 5 and 100 as well; rejected because the user specifically requested the steps to be 1, 10, 20, 50.
 
 ---
 
-### 4. Technical Implementation Steps
+### 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
 #### System Architecture & Flow
 
 ```
-┌────────────────────────────────────────┐
-│             Web Client                 │
-│  - Sends generation request            │
-│  - No longer mints hardcoded numbers   │
-└───────────────────┬────────────────────┘
-                    │ POST /api/vouchers/generate
-                    ▼
-┌────────────────────────────────────────┐
-│       Server (server.ts / db.ts)       │
-│  1. Run inside transactional lock      │
-│  2. helpers.mintDocumentNumber('FE')   │
-│  3. Atomic PostgreSQL increment        │
-│     (system_sequences table)           │
-└───────────────────┬────────────────────┘
-                    │
-                    ▼
-┌────────────────────────────────────────┐
-│         PostgreSQL Database            │
-│  - Stores unique voucherNo             │
-│  - Guaranteed monotonically unique     │
-└────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│             SettingsView / PoliciesPanel               │
+│  TRANSPORT_ROUNDING_PRESETS: [1, 10, 20, 50]           │
+└───────────────────────────┬────────────────────────────┘
+                            │ user selects preset (e.g. 20)
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                  Institute Settings                    │
+│        transportRoundingMultiple: 20                   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+┌─────────────────────────────┐ ┌────────────────────────┐
+│        TransportView        │ │      VouchersView      │
+│  calculateTransportFee(...) │ │  Preview & Generation  │
+│  roundUpToMultiple(fare, 20)│ │  roundUpToMultiple(20) │
+└─────────────────────────────┘ └────────────────────────┘
 ```
 
-#### Files to be Modified:
-1. **`server/db.ts`**:
-   - Add high-water mark sequence reconciliation at startup to scan existing `fee_vouchers` and ensure `system_sequences` starts above any existing numbers.
-2. **`server.ts`**:
-   - In `/api/vouchers/generate`, always mint new voucher numbers via `helpers.mintDocumentNumber('FE', yearStr)` for new vouchers, ensuring server authority.
-3. **`src/utils/sequence.ts` & `src/context/AppContext.tsx`**:
-   - Fix `parseNum` string slicing so `FE2026-000042` correctly parses to `42`.
-   - Call sequence reconciliation in `applyServerState` when vouchers arrive from the API.
-   - Use `TEMP_` or fetch atomic numbers for client-initiated single creations so the server assigns the final number.
+#### Files to be Updated
+
+1. **`src/components/settings/PoliciesPanel.tsx`**:
+   - Update `TRANSPORT_ROUNDING_PRESETS` array to:
+     ```typescript
+     const TRANSPORT_ROUNDING_PRESETS: { value: number; label: string; description?: string }[] = [
+       { value: 1, label: 'Exact (1)', description: 'Exact transport fare (no round up)' },
+       { value: 10, label: '10', description: 'Round up transport fare to nearest Rs. 10' },
+       { value: 20, label: '20', description: 'Round up transport fare to nearest Rs. 20' },
+       { value: 50, label: '50', description: 'Round up transport fare to nearest Rs. 50' },
+     ];
+     ```
+2. **Verification & Testing**:
+   - Verify build and TypeScript compilation with `compile_applet` and `lint_applet`.
+   - Confirm dropdown options and fare calculation logic function smoothly.

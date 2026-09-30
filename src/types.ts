@@ -84,7 +84,6 @@ export interface SchoolClass {
   active: boolean;
   studentCount?: number;
 }
-export type Class = SchoolClass;
 
 export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn' | 'Graduated';
 

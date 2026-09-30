@@ -4696,14 +4696,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // and any downstream vouchers recalculateVouchersSequence touched.
     apiVoucherBatchUpdate({
       voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
-    }).then((res: any) => {
-      if (res?.success && Array.isArray(res.vouchers) && res.vouchers.length > 0) {
-        setVouchers((currentVouchers) => {
-          const serverMap = new Map(res.vouchers.map((v: FeeVoucher) => [v.id, v]));
-          return currentVouchers.map((v) => serverMap.get(v.id) || v);
-        });
-        reconcileSequenceFromVouchers(res.vouchers, currentInstitution?.id || 'default');
-      }
     }).catch((err) => {
       reportFinancialSyncFailure('Carry-forward chain recalculation', err);
     });
