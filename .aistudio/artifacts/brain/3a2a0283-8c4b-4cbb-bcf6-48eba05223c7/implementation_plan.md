@@ -1,102 +1,157 @@
-# Currency Negative Amount Display Formatting (`Rs. -500`)
+# Fee Collection Deletion, Ghost Deposit Prevention & Ledger Desynchronization Fix
 
-Standardize negative currency amounts across the entire application so that negative values, credits, and concessions display with the minus symbol positioned after the currency indicator as **"Rs. -500"** rather than the previous prefix style **"- Rs. 500"** or **"-Rs. 500"**.
-
-## User Review & Critical Decisions
+Resolve the workflow issue where deleting a payment collection (manual or CSV batch) leaves "ghost" deposits of Rs 3,100 in the student ledger, fails to persist deletions to the PostgreSQL database, and desynchronizes voucher amounts upon session re-authentication.
 
 > [!IMPORTANT]
-> The following decisions were clarified and confirmed in Phase 1:
-> - **Format Scope**: Applied everywhere across the app — including generator preview grids, student fee ledgers, voucher particulars editors, modals, summary cards, and generated PDF vouchers/receipts.
-> - **Discounts & Concessions**: Concession lines and negative fee deductions will also be formatted with the negative symbol positioned directly within the currency unit (e.g. `Rs. -500` instead of `- Rs. 500` or `-Rs. 500`).
-
-- **Confirmed Decision 1**: Format negative numbers uniformly as `Rs. -X` across all UI views and PDF outputs.
-- **Confirmed Decision 2**: Concession line items and negative adjustment lines will use the standard `formatCurrency` helper with negative values to ensure consistent spacing, currency symbols, and localization.
-
----
-
-### 1. Overview & Core Concept
-
-- **What It Does**: Unifies the visual representation of negative financial values throughout Skooler. All negative balances, discounts, concessions, prior advance credits, and downward adjustments will consistently read as `Rs. -<amount>` (e.g., `Rs. -500`), matching standard Pakistani billing conventions and accounting notation.
-- **Target Audience / Persona**: School accountants, bursars, administrators, and fee collectors who read voucher generation preview matrices, ledger line items, and issued student vouchers.
-- **Key Value**: Eliminates visual inconsistency between different screens (where some screens used `- Rs. 500`, others `-Rs. 500`, and some `Rs. -500`). Increases clarity when distinguishing between fees owed and credits or discounts applied.
+> **Summary of Key Decisions & User Clarifications:**
+> - **Additive CSV Fine Logic**: When importing a CSV collection with a fine amount, this fine is **additive** to any existing fine on the voucher. For example, if a voucher already has a fine of Rs 200 and the CSV specifies a fine of Rs 500, the voucher's total fine becomes Rs 700. The imported payment transaction records `fineAdded = 500`.
+> - **Precise Fine Reversal on Collection Deletion**: When a collection is deleted or reversed, only the specific fine increment contributed by that collection (`fineAdded`) is subtracted. For example, deleting the aforementioned collection will deduct Rs 500 from the Rs 700 fine, cleanly reverting the voucher's fine back to Rs 200 (not 0), and recalculating net due accordingly.
+> - **Unified ID Synchronization**: Both the client and server will share identical deterministic entity IDs for collections and payment transactions. When `/api/collections/receive` executes, it will accept client-provided IDs (or return authoritative IDs that immediately update client state) so the client and database are always in 100% ID lockstep.
+> - **Cascade Transaction Deletion on Collection Removal**: On the server in `dbService.runVoucherTransaction`, deleting a collection (`deleteCollectionIds`) will automatically and safely delete all transactions linked to that collection (`DELETE FROM transactions WHERE collection_id = $1`), preventing orphaned ghost transactions in PostgreSQL.
+> - **Synchronous Client State Reversal in `deleteCollection`**: When deleting a collection, immediately reverse any `fineAdded` from the voucher particulars, decrement `amountPaid` by the collected sum, recalculate `netDue` and `status`, and persist the updated voucher state to PostgreSQL alongside the collection/transaction deletion.
+> - **Reconciliation Guard in `StudentFeeLedger`**: Align student ledger deposits to display the sum of active transactions for that voucher, preventing phantom deposit displays if a voucher's `amountPaid` field ever temporarily diverges.
 
 ---
 
-### 2. User Experience & Visual Design
+## 1. Overview & Core Concept
 
-#### Key User Flows
-1. **Fee Voucher Generation Preview (`VouchersView.tsx`)**:
-   - The user opens Voucher Generation, chooses a billing month and class scope.
-   - The generation preview table lists students with tuition fees, discounts, transport, and net amounts.
-   - Any student with a concession, advance credit, or negative adjustment displays `Rs. -500` cleanly in both individual fee component columns and summary fields.
-2. **Voucher Particulars Customizer / Editor (`VoucherParticularsEditor.tsx`)**:
-   - When viewing or editing itemized particulars on a voucher, concessions and discount items render as `Rs. -500` in emerald or rose font instead of `-Rs. 500`.
-   - The Concession summary footer box in the modal displays `Rs. -<total>` (or `Rs. 0` when zero).
-3. **Transport Assignment Modal (`AssignmentModal.tsx`)**:
-   - When entering a monthly transport discount, the live calculation summary displays `Rs. -<discount>` instead of `- Rs. <discount>`.
-4. **Exported PDF Documents & Print Slips (`pdfGenerator.ts`, `PrintVoucherModal.tsx`)**:
-   - Generated fee vouchers (bank copy, school copy, student copy) and student ledger PDFs format negative balances and concessions identically as `Rs. -500`.
+### What It Does
+When an operator collects fee payment (either manually through the collection modal with a late fine, or in bulk via CSV) and later deletes the collection record, the system will:
+1. Atomically delete the collection and all its associated transaction records from both active UI state and the authoritative PostgreSQL database.
+2. Automatically deduct the payment amount from the student voucher's `amountPaid` and restore its status to `Issued` (or `Partial`).
+3. Revert only the specific fine amount added during that collection (`fineAdded`) from the voucher particulars, preserving any pre-existing fines (e.g. Rs 700 reverts back to Rs 200 if the collection added Rs 500).
+4. Recalculate gross total, discounts, and net due amounts with rounding rules applied.
+5. Keep the student fee ledger, voucher list, collections history, and backend PostgreSQL database in exact mathematical synchronization before and after operator logout/login.
 
-#### Visual Identity & Theme
-- **Typographic Treatment**: Monospace font (`font-mono`) preserved for all financial numbers to ensure numerical column alignment in tables and previews.
-- **Color Consistency**:
-  - Concessions and downward fee adjustments remain styled with the system's intentional semantic color codes (e.g., `text-emerald-700` for credits/advances and `text-rose-600` for deductions).
-  - Unboxed, clean typography adhering to the frontend design constitution with no extraneous pills or candy tags.
+### Target Audience & Persona
+School fee accountants, administrative cashiers, and system operators who manage fee collections, record manual adjustments, import bank CSV statements, and rectify erroneous payments.
+
+### Key Value
+Guarantees strict financial ledger integrity with zero ghost deposits, zero phantom transactions, accurate additive fines, and reliable payment reversal across client tabs and browser sessions.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+## 2. User Experience & Visual Design
 
-- **Centralized Formatting Utility in `feeMath.ts`**:
-  - *Chosen Approach*: Update the canonical `formatCurrency(amount: number)` function in `src/utils/feeMath.ts` from returning `isNegative ? "- Rs. " + abs : "Rs. " + abs` to `isNegative ? "Rs. -" + abs : "Rs. " + abs`.
-  - *Why*: Virtually every component (over 40 distinct usages across Vouchers, Collections, Ledgers, Reports, Defaulters, and PDF generation) relies on this single utility function. Updating this centralized function guarantees consistent formatting across 95% of the codebase in one authoritative place with zero regressions.
-  - *Alternatives Considered*: Overriding strings manually in every component would create maintenance debt and drift over time.
-- **Cleanup of Ad-hoc Minus Prefixes in Components**:
-  - *Chosen Approach*: Refactor manual template literals like `-${formatCurrency(val)}` in `VoucherParticularsEditor.tsx` and `- ${formatCurrency(val)}` in `AssignmentModal.tsx` to pass the negative value directly into `formatCurrency(-val)`.
-  - *Why*: Passing negative values to `formatCurrency` delegates all currency symbol placement, negative sign rules, and thousand-separators to the single source of truth.
+### Key User Flows
+
+#### Flow A: Manual Collection & Subsequent Deletion
+1. **Creation**: Student voucher for July is generated with Tuition Rs 2,600 and Late Fine rate Rs 500. Due date is 15-July. Student ledger shows `Total: Rs 2,600`, `Deposit: Rs 0`, `Balance: Rs 2,600`, `Status: Issued`.
+2. **Collection with Fine**: Cashier collects payment on 31-July, adding Rs 500 late fine. Total becomes Rs 3,100, payment received is Rs 3,100. Student ledger displays `Total: Rs 3,100`, `Deposit: Rs 3,100`, `Balance: Rs 0`, `Status: Paid`.
+3. **Deletion**: Cashier navigates to **Collections** and deletes the collection session.
+   - The collection session and its transaction are purged from the UI and PostgreSQL.
+   - The voucher's payment of Rs 3,100 is deducted (`amountPaid` becomes 0).
+   - The Rs 500 late fine added during collection is reverted (`netDue` returns to Rs 2,600).
+   - The voucher status transitions back to `Issued`.
+   - The **Student Fee Ledger** immediately displays `Total: Rs 2,600`, `Deposit: Rs 0`, `Balance: Rs 2,600`, `Status: Issued`.
+4. **Session Re-authentication**: Cashier logs out and logs back in. The ledger continues to display `Total: Rs 2,600`, `Deposit: Rs 0`. No ghost transactions or deposits exist in PostgreSQL.
+
+#### Flow B: CSV Bulk Collection with Additive Fine & Batch Deletion
+1. **Existing Voucher**: Student voucher has Tuition Rs 2,600 and an existing fine of Rs 200 (Total: Rs 2,800).
+2. **CSV Import with Fine**: CSV specifies payment for this voucher with an additional fine of Rs 500.
+   - Voucher fine becomes **Rs 700** (`200 + 500`).
+   - Transaction records payment and stores `fineAdded: 500`.
+   - Voucher total becomes Rs 3,300, and deposited is Rs 3,300.
+3. **Batch Deletion**: Cashier deletes the imported collection batch.
+   - The batch collection row and all imported transaction rows are removed from database.
+   - The Rs 500 fine is subtracted from the Rs 700 fine, cleanly reverting the fine to **Rs 200**.
+   - Net due returns to Rs 2,800 and paid amount returns to Rs 0.
+   - Ledger displays `Total: Rs 2,800`, `Deposit: Rs 0`.
+4. **Session Re-authentication**: Cashier logs out and logs back in. Ledger displays `Total: Rs 2,800`, `Deposit: Rs 0`.
 
 ---
 
-### 4. Technical Architecture & Data Strategy *(Technical Reference)*
+## 3. Key Product Decisions & Trade-Offs
 
-#### System Architecture & Flow
+### Decision 1: Additive Fine Increment & Granular Fine Reversal
+- **Approach**: 
+  - In `bulkCsvCollection` (and manual collection fine updates), calculate the new fine as `currentFine + csvFine` (or `newFine - originalFine` for manual collections). Store this exact differential in `transaction.fineAdded`.
+  - In `deleteCollection`, look up each transaction's `fineAdded`. For each voucher, subtract `totalFineAddedForVoucher` from the voucher's fine item:
+    ```ts
+    const currentFine = cleanParticulars[fineIndex].amount;
+    const revertedFine = Math.max(0, currentFine - fineToRevert);
+    ```
+    If `revertedFine > 0`, keep the Fine particular with `amount: revertedFine`; only remove the Fine line item if the reverted fine is 0.
+- **Why**: Perfectly aligns with the user's rule: pre-existing fines (e.g. 200) remain intact when reversing a collection that introduced an additional fine (e.g. 500).
+
+### Decision 2: Shared Deterministic IDs for Collections & Transactions
+- **Approach**: Allow `/api/collections/receive` to accept client-provided `collectionId` and `payment.transactionId`s (falling back to generated ones only if omitted), and update client React state with the authoritative server response.
+- **Why**: Eliminates the mismatch where the client holds `col-<timestamp>` while PostgreSQL holds `col-<timestamp>-<random>`, which previously caused `DELETE FROM collections WHERE id = ...` to match 0 rows and leave payments ghosted in the database.
+
+### Decision 3: Server-Side Cascade Transaction Deletion by `collection_id`
+- **Approach**: In `server/db.ts` under `runVoucherTransaction`, when `deleteCollectionIds` is passed:
+  ```sql
+  DELETE FROM transactions WHERE collection_id = ANY($1) AND institution_id = $2;
+  DELETE FROM collections WHERE id = ANY($1) AND institution_id = $2;
+  ```
+- **Why**: Provides an ironclad foreign-key safety net. Even if a client only submits collection IDs (or if transaction IDs drifted during an offline/reconnection window), all transactions belonging to the deleted collection session are guaranteed to be cleaned up, preventing orphan payment records.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### System Data Flow Diagram
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                   Data / State Stores                  │
-│       Vouchers, Ledgers, Particulars, Collections       │
-└───────────────────────────┬────────────────────────────┘
-                            │ (numerical amount: -500)
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│           Canonical Formatter (feeMath.ts)             │
-│        formatCurrency(amount: number): string          │
-│        amount < 0 ──► "Rs. -" + abs(amount)            │
-│        amount >= 0 ──► "Rs. " + amount                 │
-└───────────────┬────────────────────────┬───────────────┘
-                │                        │
-       "Rs. -500"                       "Rs. -500"
-                │                        │
-                ▼                        ▼
-┌───────────────────────────────┐ ┌──────────────────────┐
-│        UI Components          │ │    PDF Generator     │
-│ - VouchersView (Preview Grid) │ │ - 3-Copy Vouchers    │
-│ - VoucherParticularsEditor    │ │ - Single Slip Vouchers│
-│ - StudentFeeLedger            │ │ - Fee Ledger Reports │
-│ - Transport Assignment Modal  │ │ - Defaulter Sheets   │
-│ - Collections & Payment Views │ │                      │
-└───────────────────────────────┘ └──────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Client Application                            │
+│                                                                        │
+│   ┌─────────────────────┐                 ┌────────────────────────┐   │
+│   │   CollectionsView   │                 │    StudentFeeLedger    │   │
+│   │  (Delete Session)   │                 │   (Displays Balance)   │   │
+│   └──────────┬──────────┘                 └───────────▲────────────┘   │
+│              │                                        │                │
+│              ▼                                        │                │
+│   ┌───────────────────────────────────────────────────┴────────────┐   │
+│   │                        AppContext                              │   │
+│   │  - deleteCollection(id)                                       │   │
+│   │  - Reverts fineAdded (e.g. 700 - 500 = 200 fine preserved)   │   │
+│   │  - Decrements voucher.amountPaid -> 0                          │   │
+│   │  - Recalculates netDue (3300 -> 2800) & status (Issued)       │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+└──────────────────────────────────┼─────────────────────────────────────┘
+                                   │ POST /api/vouchers/batch-update
+                                   │ { deleteCollectionIds, deleteTransactionIds, voucherUpserts }
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Express Server                                │
+│                                                                        │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │   server.ts /api/vouchers/batch-update                         │   │
+│   │   - Validates user permissions ('fees.delete')                 │   │
+│   │   - Runs dbService.runVoucherTransaction()                     │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+│                                  │                                     │
+│                                  ▼                                     │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │   server/db.ts runVoucherTransaction()                         │   │
+│   │   - DELETE FROM transactions WHERE collection_id = $1          │   │
+│   │   - DELETE FROM collections WHERE id = $1                      │   │
+│   │   - UPDATE vouchers SET amount_paid=0, net_due=2800, status... │   │
+│   │   - DELETE & re-insert voucher_particulars (Tuition 2600, 200) │   │
+│   │   - COMMIT transaction atomically                              │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+└──────────────────────────────────┼─────────────────────────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        PostgreSQL Database                             │
+│   - collections table: Collection row purged                           │
+│   - transactions table: Txn rows for collection purged                 │
+│   - vouchers table: amount_paid = 0, net_due = 2800                    │
+│   - voucher_particulars: Tuition = 2600, Fine = 200 (preserved)        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Files to be Updated
-
-1. **`src/utils/feeMath.ts`**:
-   - Update `formatCurrency(amount: number): string` to format negative numbers as `Rs. -${absVal}` instead of `- Rs. ${absVal}`.
-2. **`src/components/VoucherParticularsEditor.tsx`**:
-   - Replace `-${formatCurrency(displayAmount)}` with `formatCurrency(-displayAmount)`.
-   - Replace `-{formatCurrency(Math.abs(item.amount))}` with `formatCurrency(-Math.abs(item.amount))`.
-   - Replace `-${formatCurrency(discountTotal)}` with `formatCurrency(-discountTotal)`.
-3. **`src/components/transport/AssignmentModal.tsx`**:
-   - Replace `- ${formatCurrency(discount)}` with `formatCurrency(-discount)`.
-4. **Verification & Build**:
-   - Run `compile_applet` and verify no TypeScript or syntax regressions exist.
+### Components to Update
+1. **`server.ts`**:
+   - In `/api/collections/receive`: Allow optional client-provided `collectionId` and `payment.transactionId` so IDs stay strictly in sync between client and server.
+   - In `/api/vouchers/batch-update`: Ensure collection deletions and fine reversals properly pass validation checks.
+2. **`server/db.ts`**:
+   - In `runVoucherTransaction`: When `deleteCollectionIds` is provided, execute `DELETE FROM transactions WHERE collection_id = $1` to purge all linked transactions in the database and eliminate orphan records.
+3. **`src/context/AppContext.tsx`**:
+   - In `bulkCsvCollection`: Ensure the imported fine adds to existing fine (e.g. 200 + 500 = 700) and stores `fineAdded: 500` on the transaction.
+   - In `deleteCollection`: Accurately subtract `fineAdded` from voucher particulars so pre-existing fines are preserved, deduct payments from `amountPaid`, and send synchronized IDs to `apiVoucherBatchUpdate`.
+   - In `collectVoucherPayment`: Reconcile state with server-minted collection and transaction numbers.
+4. **`src/components/StudentFeeLedger.tsx`**:
+   - Ensure the deposit and balance calculations are robustly derived and guarded against desynchronized voucher states.

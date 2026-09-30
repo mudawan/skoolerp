@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
-import { VerticalSidebar } from './components/VerticalSidebar.tsx';
+import { VerticalSidebar } from './components/VerticalSidebar';
 import { DashboardView } from './components/DashboardView';
 import { StudentsView } from './components/StudentsView';
 import { FamiliesView } from './components/FamiliesView';
