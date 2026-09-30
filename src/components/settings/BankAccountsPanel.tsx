@@ -1,8 +1,6 @@
 import React from 'react';
-import { useApp } from '../../context/AppContext';
 import { BankAccount } from '../../types';
-import { THEME_COLOR_PRESETS } from '../../utils/themeConfig';
-import { Building2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Landmark, Plus, Trash2, Edit2, CheckCircle2 } from 'lucide-react';
 
 export interface BankAccountsPanelProps {
   bankAccounts: BankAccount[];
@@ -15,154 +13,80 @@ export const BankAccountsPanel: React.FC<BankAccountsPanelProps> = ({
   handleOpenBankModal,
   setBankToDelete,
 }) => {
-  const { hasPermission, setDefaultBankAccount, themeConfig } = useApp();
-  const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
-
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="font-bold text-slate-800 text-sm">
-          Collection Bank Accounts (Shown on Fee Vouchers)
-        </h3>
-        {hasPermission('settings.manage') && (
-          <button
-            onClick={() => handleOpenBankModal()}
-            style={{ backgroundColor: preset.primaryColor }}
-            className="flex items-center gap-2 hover:opacity-95 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs cursor-pointer transition"
-          >
-            <Plus className="w-4 h-4" />
-            Add Bank Account
-          </button>
-        )}
+    <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
+            <Landmark className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-900 text-sm">Designated Bank Accounts</h3>
+            <p className="text-xs text-slate-500">Bank accounts printed on fee vouchers and deposit slips</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => handleOpenBankModal()}
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Bank Account
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {bankAccounts.map((bank) => (
-          <div
-            key={bank.id}
-            style={
-              bank.isDefault
-                ? {
-                    borderColor: preset.primaryColor,
-                    background: `linear-gradient(160deg, ${preset.lightBg}80 0%, #ffffff 40%, #ffffff 100%)`,
-                  }
-                : {
-                    background: `linear-gradient(160deg, ${preset.lightBg}40 0%, #ffffff 35%, #ffffff 100%)`,
-                  }
-            }
-            className={`rounded-2xl border transition-all duration-200 overflow-hidden shadow-xs hover:shadow-md hover:-translate-y-0.5 ${
-              bank.isDefault
-                ? 'ring-2'
-                : 'border-slate-200/80 hover:border-slate-300'
-            }`}
-          >
-            {/* Theme Accent Bar */}
+      {bankAccounts.length === 0 ? (
+        <div className="text-center py-8 text-slate-400 text-xs">
+          No bank accounts configured. Add a designated bank account for fee voucher deposits.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {bankAccounts.map((b) => (
             <div
-              className="h-1.5 w-full transition-all duration-300"
-              style={{
-                background: bank.isDefault
-                  ? `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`
-                  : '#cbd5e1',
-              }}
-            />
-
-            <div className="p-5 space-y-3.5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <div
-                    className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-2xs"
-                    style={{
-                      backgroundColor: preset.lightBg,
-                      borderColor: preset.lightBorder,
-                      color: preset.primaryColor,
-                    }}
-                  >
-                    <Building2 className="w-5 h-5" />
+              key={b.id}
+              className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:shadow-xs transition space-y-2 text-xs"
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="font-bold text-slate-900 flex items-center gap-2">
+                    {b.bankName}
+                    {b.isDefault && (
+                      <span className="px-1.5 py-0.5 rounded font-extrabold text-[10px] bg-emerald-100 text-emerald-800">
+                        Default
+                      </span>
+                    )}
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="font-bold text-slate-900 text-base">{bank.bankName}</h4>
-                      {bank.isDefault && (
-                        <span
-                          style={{
-                            backgroundColor: preset.lightBg,
-                            color: preset.textColor,
-                            borderColor: preset.lightBorder,
-                          }}
-                          className="font-extrabold text-[10px] px-2 py-0.5 rounded-full border tracking-wide"
-                        >
-                          ACTIVE DEFAULT BANK
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-mono font-bold text-slate-700 text-xs mt-0.5">
-                      A/C: {bank.accountNumber}
-                    </p>
-                  </div>
+                  <div className="text-slate-500 text-[11px]">{b.title}</div>
                 </div>
 
-                {hasPermission('settings.manage') && (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenBankModal(bank)}
-                      className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                      title="Edit Bank Details & Instructions"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    {!bank.isDefault && (
-                      <button
-                        type="button"
-                        onClick={() => setDefaultBankAccount(bank.id)}
-                        style={{ color: preset.primaryColor }}
-                        className="text-[11px] font-bold hover:underline cursor-pointer px-1.5 py-1"
-                      >
-                        Set Default
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setBankToDelete(bank)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                      title="Delete Bank Account"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleOpenBankModal(b)}
+                    className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setBankToDelete(b)}
+                    className="p-1 rounded-lg hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="font-mono text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80">
+                <span className="text-slate-400 select-none mr-2">A/C:</span>
+                <span className="font-bold">{b.accountNumber}</span>
+                {b.branchCode && (
+                  <span className="text-slate-500 ml-2 text-[11px]">(Branch: {b.branchCode})</span>
                 )}
               </div>
-
-              <div className="p-3 bg-slate-50/90 rounded-xl border border-slate-100 text-xs space-y-2">
-                <div className="flex justify-between items-center text-slate-700">
-                  <span className="font-semibold">Title: {bank.title}</span>
-                  {bank.branchCode && <span className="text-slate-500">Branch: {bank.branchCode}</span>}
-                </div>
-
-                {/* LTR Instructions (English) */}
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 space-y-0.5" dir="ltr">
-                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
-                    Instructions (LTR / English)
-                  </span>
-                  <p className="text-slate-700 text-[11px] font-medium leading-tight">
-                    {bank.instructionsLtr || bank.instructionsLine1 || <span className="text-slate-400 italic">No English instructions set</span>}
-                  </p>
-                </div>
-
-                {/* RTL Instructions (Urdu) */}
-                <div className="bg-white p-2 rounded-lg border border-slate-200/80 space-y-0.5" dir="rtl">
-                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block text-right">
-                    ہدایات (RTL / Urdu)
-                  </span>
-                  <p className="text-slate-800 text-[11.5px] font-medium leading-relaxed text-right font-urdu">
-                    {bank.instructionsRtl || bank.instructionsLine2 || <span className="text-slate-400 italic">اردو ہدایات درج نہیں ہیں</span>}
-                  </p>
-                </div>
-              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

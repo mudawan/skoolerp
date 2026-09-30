@@ -1,7 +1,15 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { normalizePaymentMode } from '../utils/paymentMode';
-import { nextDocumentNumber, reconcileSequence } from '../utils/sequence';
+import {
+  nextDocumentNumber,
+  allocateDocumentNumbers,
+  reconcileSequence,
+  reconcileSequenceFromVouchers,
+  reconcileSequenceFromCollections,
+  reconcileSequenceFromTransactions,
+  parseDocumentNumber,
+} from '../utils/sequence';
 import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from '../utils/passwords';
 import {
   AppThemeConfig,
@@ -851,33 +859,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => []);
 
-  // Adopt the highest document number already present in the loaded data so
-  // the monotonic counters never re-issue a number that exists (e.g. after a
-  // restored backup or an import). Runs once on mount; the arrays are the
-  // freshly-initialized values above.
+  // Adopt the highest document numbers present in the live workspace state
+  // into the persistent high-water mark counters so sequence numbers never
+  // collide and deleted numbers are permanently retired.
   useEffect(() => {
-    const parseNum = (docNo: string, prefix: string) => {
-      if (!docNo || !docNo.startsWith(prefix)) return null;
-      const num = parseInt(docNo.slice(prefix.length + 1), 10);
-      const year = docNo.slice(prefix.length, prefix.length + 4);
-      return isNaN(num) || !/^\d{4}$/.test(year) ? null : { prefix, year, number: num };
-    };
-    const entries: { prefix: string; year: string; number: number }[] = [];
-    vouchers.forEach((v) => {
-      const p = parseNum(v.voucherNo, 'FE');
-      if (p) entries.push(p);
-    });
-    collections.forEach((c) => {
-      const p = parseNum(c.collectionNo, 'COL');
-      if (p) entries.push(p);
-    });
-    transactions.forEach((t) => {
-      const p = parseNum(t.txnNo, 'TXN');
-      if (p) entries.push(p);
-    });
-    reconcileSequence(entries);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const instId = currentInstitution?.id || 'default';
+    reconcileSequenceFromVouchers(vouchers, instId);
+    reconcileSequenceFromCollections(collections, instId);
+    reconcileSequenceFromTransactions(transactions, instId);
+  }, [vouchers, collections, transactions, currentInstitution?.id]);
 
   const [institute, setInstitute] = useState<InstituteProfile>(() => INITIAL_INSTITUTE);
 
@@ -1153,9 +1143,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(d.templates)) {
       setTemplates(d.templates.length > 0 ? d.templates : INITIAL_GLOBAL_TEMPLATES);
     }
-    if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
-    if (Array.isArray(d.collections)) setCollections(d.collections);
-    if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+    if (Array.isArray(d.vouchers)) {
+      setVouchers(d.vouchers);
+      reconcileSequenceFromVouchers(d.vouchers, d.institutionId || currentInstitution?.id);
+    }
+    if (Array.isArray(d.collections)) {
+      setCollections(d.collections);
+      reconcileSequenceFromCollections(d.collections, d.institutionId || currentInstitution?.id);
+    }
+    if (Array.isArray(d.transactions)) {
+      setTransactions(d.transactions);
+      reconcileSequenceFromTransactions(d.transactions, d.institutionId || currentInstitution?.id);
+    }
     if (Array.isArray(d.bankAccounts)) setBankAccounts(d.bankAccounts);
     if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
     if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
@@ -3457,7 +3456,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
       setVouchers((prev) => [...prev, returnedVoucher]);
-      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
+      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).then((res: any) => {
+        if (res?.success && Array.isArray(res.vouchers) && res.vouchers.length > 0) {
+          setVouchers((currentVouchers) => {
+            const serverMap = new Map(res.vouchers.map((v: FeeVoucher) => [v.id, v]));
+            return currentVouchers.map((v) => serverMap.get(v.id) || v);
+          });
+          reconcileSequenceFromVouchers(res.vouchers, currentInstitution?.id || 'default');
+        }
+      }).catch((err) => {
         reportFinancialSyncFailure('Admission voucher creation', err);
       });
       return { success: true, voucher: returnedVoucher };
@@ -3511,7 +3518,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
     setVouchers((prev) => [...prev, returnedVoucher]);
-    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
+    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).then((res: any) => {
+      if (res?.success && Array.isArray(res.vouchers) && res.vouchers.length > 0) {
+        setVouchers((currentVouchers) => {
+          const serverMap = new Map(res.vouchers.map((v: FeeVoucher) => [v.id, v]));
+          return currentVouchers.map((v) => serverMap.get(v.id) || v);
+        });
+        reconcileSequenceFromVouchers(res.vouchers, currentInstitution?.id || 'default');
+      }
+    }).catch((err) => {
       reportFinancialSyncFailure('Admission voucher creation', err);
     });
     return { success: true, voucher: returnedVoucher };
@@ -3528,7 +3543,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): FeeVoucher => {
     const issueDate = new Date().toISOString().split('T')[0];
     const yearStr = month.split('-')[0];
-    const voucherNo = nextDocumentNumber('FE', yearStr);
+    const instId = currentInstitution?.id || 'default';
+    const voucherNo = nextDocumentNumber('FE', yearStr, 6, instId);
 
     return {
       id: generateUniqueId('vch'),
@@ -3637,10 +3653,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // voucher rolling into the first regular monthly voucher). Without
     // marking these Carried, they'd remain as permanent "ghost" unpaid
     // records even after their balance has already moved to the new voucher.
-    const priorVouchersToCarry = new Map<string, string>(); // voucherId -> carryForwardMonth
+    const priorVouchersToCarry = new Map<string, string>();
+    const instId = currentInstitution?.id || 'default';
+    const allocatedNos = allocateDocumentNumbers('FE', yearStr, ungenerated.length, 6, instId);
 
-    const newVouchers: FeeVoucher[] = ungenerated.map((prev) => {
-      const voucherNo = nextDocumentNumber('FE', yearStr);
+    const newVouchers: FeeVoucher[] = ungenerated.map((prev, idx) => {
+      const voucherNo = allocatedNos[idx] || nextDocumentNumber('FE', yearStr, 6, instId);
 
       if (prev.priorVoucherShouldCarry && prev.priorVoucherId) {
         priorVouchersToCarry.set(prev.priorVoucherId, month);
@@ -3772,7 +3790,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id,
         targetMonth,
       }));
-      apiGenerateVouchers(newVouchers, carriedPriorList).catch((err) => {
+      apiGenerateVouchers(newVouchers, carriedPriorList).then((res: any) => {
+        if (res?.success && Array.isArray(res.vouchers) && res.vouchers.length > 0) {
+          // Adopt authoritative vouchers from server (which includes any silently reissued numbers)
+          setVouchers((currentVouchers) => {
+            const serverMap = new Map(res.vouchers.map((v: FeeVoucher) => [v.id, v]));
+            return currentVouchers.map((v) => serverMap.get(v.id) || v);
+          });
+          reconcileSequenceFromVouchers(res.vouchers, instId);
+        }
+      }).catch((err) => {
         reportFinancialSyncFailure('Voucher generation', err);
       });
 
@@ -3969,8 +3996,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const yearStr = new Date().getFullYear().toString();
-    const collectionNo = nextDocumentNumber('COL', yearStr);
-    const txnNo = nextDocumentNumber('TXN', yearStr);
+    const instId = currentInstitution?.id || 'default';
+    const collectionNo = nextDocumentNumber('COL', yearStr, 6, instId);
+    const txnNo = nextDocumentNumber('TXN', yearStr, 6, instId);
 
     const collectionId = `col-${Date.now()}`;
 
@@ -4153,8 +4181,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let batchTotal = 0;
 
     const yearStr = new Date().getFullYear().toString();
+    const instId = currentInstitution?.id || 'default';
     const collectionId = `col-bulk-${Date.now()}`;
-    const collectionNo = nextDocumentNumber('COL', yearStr);
+    const collectionNo = nextDocumentNumber('COL', yearStr, 6, instId);
 
     const updatedVouchersMap = new Map<
       string,
@@ -4302,7 +4331,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         netDue: effectiveNetDue,
       });
 
-      const txnNo = nextDocumentNumber('TXN', yearStr);
+      const txnNo = nextDocumentNumber('TXN', yearStr, 6, instId);
 
       const rowDate = row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date : defaultDate;
       const studentRegText = matchedStudent?.regNo ? ` [Reg #${matchedStudent.regNo}]` : '';
@@ -4623,7 +4652,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const newVoucher: FeeVoucher = {
           id: generateUniqueId('vch'),
-          voucherNo: nextDocumentNumber('FE', yearStr),
+          voucherNo: nextDocumentNumber('FE', yearStr, 6, currentInstitution?.id || 'default'),
           studentId: voucher.studentId,
           month: targetMonth,
           classId: student?.classId || voucher.classId,
@@ -4667,6 +4696,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // and any downstream vouchers recalculateVouchersSequence touched.
     apiVoucherBatchUpdate({
       voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
+    }).then((res: any) => {
+      if (res?.success && Array.isArray(res.vouchers) && res.vouchers.length > 0) {
+        setVouchers((currentVouchers) => {
+          const serverMap = new Map(res.vouchers.map((v: FeeVoucher) => [v.id, v]));
+          return currentVouchers.map((v) => serverMap.get(v.id) || v);
+        });
+        reconcileSequenceFromVouchers(res.vouchers, currentInstitution?.id || 'default');
+      }
     }).catch((err) => {
       reportFinancialSyncFailure('Carry-forward chain recalculation', err);
     });

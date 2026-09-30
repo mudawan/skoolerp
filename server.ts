@@ -19,6 +19,7 @@ import {
 } from './server/db';
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
+import { parseDocumentNumber } from './src/utils/sequence';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
@@ -262,10 +263,8 @@ async function startServer() {
       // 4. Check Granular RBAC Permissions
       if (requiredPermission) {
         const allowed = isPermissionAllowed(
-          {
-            role: req.user.role as any,
-            permissions: req.user.permissions,
-          },
+          req.user.role,
+          req.user.permissions,
           requiredPermission
         );
 
@@ -1732,9 +1731,19 @@ async function startServer() {
   app.post('/api/sequences/next', requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { prefix, year, digits = 6 } = req.body;
+      const { prefix, year, digits = 6, count = 1 } = req.body;
       if (!prefix || !year) {
         return res.status(400).json({ success: false, error: 'Both prefix and year are required.' });
+      }
+      const numCount = Math.max(1, parseInt(count, 10) || 1);
+      if (numCount > 1) {
+        const block = await dbService.nextSequenceBlock(institutionId, prefix, year, numCount);
+        const cleanPrefix = prefix.toUpperCase();
+        const documentNumbers = [];
+        for (let i = block.start; i <= block.end; i++) {
+          documentNumbers.push(`${cleanPrefix}${year}-${String(i).padStart(digits, '0')}`);
+        }
+        return res.json({ success: true, documentNumbers, start: block.start, end: block.end, prefix, year });
       }
       const documentNumber = await dbService.nextDocumentNumber(institutionId, prefix, year, digits);
       res.json({ success: true, documentNumber, prefix, year });
@@ -1777,6 +1786,13 @@ async function startServer() {
             .map((v: any) => `${v.studentId}:${v.month}`)
         );
 
+        // Track all existing voucher numbers across this tenant to ensure zero duplicates
+        const existingVoucherNoSet = new Set<string>(
+          Array.from(lockedVouchers.values())
+            .map((v: any) => v.voucherNo)
+            .filter(Boolean)
+        );
+
         for (const item of rawVouchers) {
           const key = `${item.studentId}:${item.month}`;
           if (existingKeySet.has(key)) {
@@ -1784,10 +1800,21 @@ async function startServer() {
           }
 
           const yearStr = item.month.split('-')[0];
-          const voucherNo =
-            item.voucherNo && !item.voucherNo.startsWith('TEMP_')
-              ? item.voucherNo
-              : await helpers.mintDocumentNumber('FE', yearStr);
+
+          // Strictly mint guaranteed server-side atomic document number from PostgreSQL sequence
+          // Deleted numbers are never reused; the counter strictly moves forward.
+          let voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+          while (existingVoucherNoSet.has(voucherNo)) {
+            voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
+          }
+
+          existingVoucherNoSet.add(voucherNo);
+
+          // Reconcile high-water mark sequence in database
+          const parsed = parseDocumentNumber(voucherNo);
+          if (parsed) {
+            await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
+          }
 
           const newVoucher = {
             ...item,
@@ -2258,18 +2285,18 @@ async function startServer() {
       const isNewPayment = newTransactions.length > 0 || newCollections.length > 0;
       const isVoucherEdit = voucherUpserts.length > 0;
 
-      if (isDeletion && !isPermissionAllowed(userCtx, 'fees.delete')) {
+      if (isDeletion && !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.delete')) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.delete')." });
       }
-      if (isNewPayment && !isPermissionAllowed(userCtx, 'fees.collect')) {
+      if (isNewPayment && !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.collect')) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.collect')." });
       }
       if (
         isVoucherEdit &&
         !isDeletion &&
         !isNewPayment &&
-        !isPermissionAllowed(userCtx, 'fees.edit') &&
-        !isPermissionAllowed(userCtx, 'defaulters.manage')
+        !isPermissionAllowed(req.user!.role, req.user!.permissions, 'fees.edit') &&
+        !isPermissionAllowed(req.user!.role, req.user!.permissions, 'defaulters.manage')
       ) {
         return res.status(403).json({ success: false, error: "Access denied: Insufficient privileges (requires 'fees.edit')." });
       }
@@ -2321,7 +2348,24 @@ async function startServer() {
 
         const upserts: Record<string, any> = {};
         for (const v of voucherUpserts) {
-          if (v?.id) upserts[v.id] = v;
+          if (v?.id) {
+            let voucherNo = v.voucherNo;
+            const existing = _locked.get(v.id);
+            if (existing) {
+              // Existing voucher being edited: strictly preserve historical voucher number
+              voucherNo = existing.voucherNo;
+            } else {
+              // Newly created voucher: mint strictly unique atomic sequence number
+              // Counter only moves forward; numbers of deleted vouchers will never be reused
+              const vYear = (v.month || '').split('-')[0] || yearStr;
+              voucherNo = await helpers.mintDocumentNumber('FE', vYear);
+            }
+            upserts[v.id] = { ...v, voucherNo };
+            const parsed = parseDocumentNumber(voucherNo);
+            if (parsed) {
+              await dbService.reconcileSequence(institutionId, parsed.prefix, parsed.year, parsed.number);
+            }
+          }
         }
         const collectionUpdatesMap: Record<string, { totalAmount: number; transactionCount: number }> = {};
         for (const c of collectionUpdates) {
@@ -2403,7 +2447,7 @@ async function startServer() {
         institutionId
       );
 
-      res.json({ success: true, revision: revInfo.revision });
+      res.json({ success: true, revision: revInfo.revision, vouchers: Object.values(upserts) });
     } catch (err: any) {
       console.error('[API] Failed to apply voucher batch update:', err);
       res.status(500).json({ success: false, error: err?.message || 'Batch update failed' });
