@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan to update transport fee rounding presets to 1, 10, 20, and 50 in the school policy settings panel.",
-  "updatedAt": "2026-09-29T13:59:36.086913518Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Implementation plan to standardize negative currency formatting to 'Rs. -X' across all preview windows, voucher particulars editors, tables, modals, and PDF generators.",
+  "updatedAt":  "2026-09-29T13:51:40.291533256Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

@@ -1,57 +1,59 @@
-# Transport Rounding Preset Steps (1, 10, 20, 50)
+# Currency Negative Amount Display Formatting (`Rs. -500`)
 
-Update the transport fare rounding preset options in the Policies configuration to 1, 10, 20, and 50 so administrators can quickly round bus/van fares to standard Pakistani rupee denominations.
+Standardize negative currency amounts across the entire application so that negative values, credits, and concessions display with the minus symbol positioned after the currency indicator as **"Rs. -500"** rather than the previous prefix style **"- Rs. 500"** or **"-Rs. 500"**.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Preset Denominations**: The transport fee rounding preset menu will be updated from `[1, 5, 10, 50, 100]` to `[1, 10, 20, 50]`, aligning directly with the general fee voucher rounding steps.
-> - **Direct Number Input**: Administrators retain the ability to type any custom positive integer (1 to 10,000) into the input box if a custom multiple is ever needed.
+> The following decisions were clarified and confirmed in Phase 1:
+> - **Format Scope**: Applied everywhere across the app — including generator preview grids, student fee ledgers, voucher particulars editors, modals, summary cards, and generated PDF vouchers/receipts.
+> - **Discounts & Concessions**: Concession lines and negative fee deductions will also be formatted with the negative symbol positioned directly within the currency unit (e.g. `Rs. -500` instead of `- Rs. 500` or `-Rs. 500`).
 
-- **Confirmed Decision 1**: Set `TRANSPORT_ROUNDING_PRESETS` values to `[1, 10, 20, 50]`.
-- **Confirmed Decision 2**: Provide clear contextual descriptions for each preset step (e.g. Exact/no rounding, nearest Rs. 10, nearest Rs. 20, and nearest Rs. 50).
+- **Confirmed Decision 1**: Format negative numbers uniformly as `Rs. -X` across all UI views and PDF outputs.
+- **Confirmed Decision 2**: Concession line items and negative adjustment lines will use the standard `formatCurrency` helper with negative values to ensure consistent spacing, currency symbols, and localization.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: In **Settings > Policies & Rules > Transport Fee Rounding Policy**, the dropdown presets for "Round Transport Fee Up to Nearest Multiple" will offer the exact steps: **Exact (1)**, **Rs. 10**, **Rs. 20**, and **Rs. 50**.
-- **Target Audience / Persona**: School administrators and transport coordinators who configure proration and rounding rules for school bus and van routes.
-- **Key Value**: Streamlines the policy choices to match common physical cash and fee collection denominations (Rs. 10, Rs. 20, Rs. 50) used across schools in Pakistan, removing redundant intermediate values (5) and large steps (100).
+- **What It Does**: Unifies the visual representation of negative financial values throughout Skooler. All negative balances, discounts, concessions, prior advance credits, and downward adjustments will consistently read as `Rs. -<amount>` (e.g., `Rs. -500`), matching standard Pakistani billing conventions and accounting notation.
+- **Target Audience / Persona**: School accountants, bursars, administrators, and fee collectors who read voucher generation preview matrices, ledger line items, and issued student vouchers.
+- **Key Value**: Eliminates visual inconsistency between different screens (where some screens used `- Rs. 500`, others `-Rs. 500`, and some `Rs. -500`). Increases clarity when distinguishing between fees owed and credits or discounts applied.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 #### Key User Flows
-1. **Navigating to Policy Settings**:
-   - The user opens **Settings** and navigates to the **Policies & Rules** tab.
-   - Under the **Round Transport Fee Up to Nearest Multiple** card, the user clicks the preset dropdown icon or focuses the input field.
-2. **Selecting a Preset**:
-   - The dropdown displays the updated list of options:
-     - `Exact (1)` – "Exact transport fare (no round up)"
-     - `Rs. 10` – "Round up transport fare to nearest Rs. 10"
-     - `Rs. 20` – "Round up transport fare to nearest Rs. 20"
-     - `Rs. 50` – "Round up transport fare to nearest Rs. 50"
-   - Selecting any option updates the input value and highlights the active selection with an amber checkmark.
-3. **Saving Changes**:
-   - The floating or bottom save bar indicates policy changes have been made.
-   - Clicking **Save Changes** persists the new `transportRoundingMultiple` to institute settings.
-4. **Transport Fare Calculation**:
-   - Prorated and standard bus stop fares in the Transport view and generated fee vouchers will round up to the chosen multiple (e.g., a prorated fare of Rs. 1,234 rounds to Rs. 1,240 with step 10, Rs. 1,240 with step 20, or Rs. 1,250 with step 50).
+1. **Fee Voucher Generation Preview (`VouchersView.tsx`)**:
+   - The user opens Voucher Generation, chooses a billing month and class scope.
+   - The generation preview table lists students with tuition fees, discounts, transport, and net amounts.
+   - Any student with a concession, advance credit, or negative adjustment displays `Rs. -500` cleanly in both individual fee component columns and summary fields.
+2. **Voucher Particulars Customizer / Editor (`VoucherParticularsEditor.tsx`)**:
+   - When viewing or editing itemized particulars on a voucher, concessions and discount items render as `Rs. -500` in emerald or rose font instead of `-Rs. 500`.
+   - The Concession summary footer box in the modal displays `Rs. -<total>` (or `Rs. 0` when zero).
+3. **Transport Assignment Modal (`AssignmentModal.tsx`)**:
+   - When entering a monthly transport discount, the live calculation summary displays `Rs. -<discount>` instead of `- Rs. <discount>`.
+4. **Exported PDF Documents & Print Slips (`pdfGenerator.ts`, `PrintVoucherModal.tsx`)**:
+   - Generated fee vouchers (bank copy, school copy, student copy) and student ledger PDFs format negative balances and concessions identically as `Rs. -500`.
 
-#### Visual Styling
-- Uses existing Tailwind design tokens: amber accent theme (`bg-amber-50`, `text-amber-800`, `border-amber-200`) consistent with transport policy controls.
-- Dropdown menu maintains clean typography, subtle hover states, and smooth slide/fade animations.
+#### Visual Identity & Theme
+- **Typographic Treatment**: Monospace font (`font-mono`) preserved for all financial numbers to ensure numerical column alignment in tables and previews.
+- **Color Consistency**:
+  - Concessions and downward fee adjustments remain styled with the system's intentional semantic color codes (e.g., `text-emerald-700` for credits/advances and `text-rose-600` for deductions).
+  - Unboxed, clean typography adhering to the frontend design constitution with no extraneous pills or candy tags.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Standardization with Voucher Rounding**:
-  - *Chosen Approach*: Align `TRANSPORT_ROUNDING_PRESETS` with `ROUNDING_QUICK_PRESETS` (`[1, 10, 20, 50]`).
-  - *Why*: Eliminates clutter from unused denominations (Rs. 5 and Rs. 100) and introduces Rs. 20 which is a standard Pakistani currency banknote.
-  - *Alternatives Considered*: Keeping 5 and 100 as well; rejected because the user specifically requested the steps to be 1, 10, 20, 50.
+- **Centralized Formatting Utility in `feeMath.ts`**:
+  - *Chosen Approach*: Update the canonical `formatCurrency(amount: number)` function in `src/utils/feeMath.ts` from returning `isNegative ? "- Rs. " + abs : "Rs. " + abs` to `isNegative ? "Rs. -" + abs : "Rs. " + abs`.
+  - *Why*: Virtually every component (over 40 distinct usages across Vouchers, Collections, Ledgers, Reports, Defaulters, and PDF generation) relies on this single utility function. Updating this centralized function guarantees consistent formatting across 95% of the codebase in one authoritative place with zero regressions.
+  - *Alternatives Considered*: Overriding strings manually in every component would create maintenance debt and drift over time.
+- **Cleanup of Ad-hoc Minus Prefixes in Components**:
+  - *Chosen Approach*: Refactor manual template literals like `-${formatCurrency(val)}` in `VoucherParticularsEditor.tsx` and `- ${formatCurrency(val)}` in `AssignmentModal.tsx` to pass the negative value directly into `formatCurrency(-val)`.
+  - *Why*: Passing negative values to `formatCurrency` delegates all currency symbol placement, negative sign rules, and thousand-separators to the single source of truth.
 
 ---
 
@@ -61,37 +63,40 @@ Update the transport fare rounding preset options in the Policies configuration 
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│             SettingsView / PoliciesPanel               │
-│  TRANSPORT_ROUNDING_PRESETS: [1, 10, 20, 50]           │
+│                   Data / State Stores                  │
+│       Vouchers, Ledgers, Particulars, Collections       │
 └───────────────────────────┬────────────────────────────┘
-                            │ user selects preset (e.g. 20)
+                            │ (numerical amount: -500)
                             ▼
 ┌────────────────────────────────────────────────────────┐
-│                  Institute Settings                    │
-│        transportRoundingMultiple: 20                   │
-└───────────────────────────┬────────────────────────────┘
-                            │
-               ┌────────────┴────────────┐
-               ▼                         ▼
-┌─────────────────────────────┐ ┌────────────────────────┐
-│        TransportView        │ │      VouchersView      │
-│  calculateTransportFee(...) │ │  Preview & Generation  │
-│  roundUpToMultiple(fare, 20)│ │  roundUpToMultiple(20) │
-└─────────────────────────────┘ └────────────────────────┘
+│           Canonical Formatter (feeMath.ts)             │
+│        formatCurrency(amount: number): string          │
+│        amount < 0 ──► "Rs. -" + abs(amount)            │
+│        amount >= 0 ──► "Rs. " + amount                 │
+└───────────────┬────────────────────────┬───────────────┘
+                │                        │
+       "Rs. -500"                       "Rs. -500"
+                │                        │
+                ▼                        ▼
+┌───────────────────────────────┐ ┌──────────────────────┐
+│        UI Components          │ │    PDF Generator     │
+│ - VouchersView (Preview Grid) │ │ - 3-Copy Vouchers    │
+│ - VoucherParticularsEditor    │ │ - Single Slip Vouchers│
+│ - StudentFeeLedger            │ │ - Fee Ledger Reports │
+│ - Transport Assignment Modal  │ │ - Defaulter Sheets   │
+│ - Collections & Payment Views │ │                      │
+└───────────────────────────────┘ └──────────────────────┘
 ```
 
 #### Files to be Updated
 
-1. **`src/components/settings/PoliciesPanel.tsx`**:
-   - Update `TRANSPORT_ROUNDING_PRESETS` array to:
-     ```typescript
-     const TRANSPORT_ROUNDING_PRESETS: { value: number; label: string; description?: string }[] = [
-       { value: 1, label: 'Exact (1)', description: 'Exact transport fare (no round up)' },
-       { value: 10, label: '10', description: 'Round up transport fare to nearest Rs. 10' },
-       { value: 20, label: '20', description: 'Round up transport fare to nearest Rs. 20' },
-       { value: 50, label: '50', description: 'Round up transport fare to nearest Rs. 50' },
-     ];
-     ```
-2. **Verification & Testing**:
-   - Verify build and TypeScript compilation with `compile_applet` and `lint_applet`.
-   - Confirm dropdown options and fare calculation logic function smoothly.
+1. **`src/utils/feeMath.ts`**:
+   - Update `formatCurrency(amount: number): string` to format negative numbers as `Rs. -${absVal}` instead of `- Rs. ${absVal}`.
+2. **`src/components/VoucherParticularsEditor.tsx`**:
+   - Replace `-${formatCurrency(displayAmount)}` with `formatCurrency(-displayAmount)`.
+   - Replace `-{formatCurrency(Math.abs(item.amount))}` with `formatCurrency(-Math.abs(item.amount))`.
+   - Replace `-${formatCurrency(discountTotal)}` with `formatCurrency(-discountTotal)`.
+3. **`src/components/transport/AssignmentModal.tsx`**:
+   - Replace `- ${formatCurrency(discount)}` with `formatCurrency(-discount)`.
+4. **Verification & Build**:
+   - Run `compile_applet` and verify no TypeScript or syntax regressions exist.
