@@ -92,8 +92,8 @@ export const VouchersView: React.FC = () => {
 
   // Filtered & Sorted Vouchers
   const filteredVouchers = useMemo(() => {
-    const studentMap = new Map(students.map((s) => [s.id, s]));
-    const classMap = new Map(classes.map((c) => [c.id, c]));
+    const studentMap = new Map<string, (typeof students)[number]>(students.map((s) => [s.id, s]));
+    const classMap = new Map<string, (typeof classes)[number]>(classes.map((c) => [c.id, c]));
 
     return activeMonthVouchers.filter((v) => {
       const student = studentMap.get(v.studentId);

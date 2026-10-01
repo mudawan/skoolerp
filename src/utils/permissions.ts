@@ -14,6 +14,7 @@ export const ALL_PERMISSIONS: PermissionDefinition[] = [
   { id: 'fees.view', code: 'fees.view', name: 'View Fee Vouchers', description: 'View fee vouchers and collection records', category: 'fees', categoryLabel: 'Fee Vouchers' },
   { id: 'fees.generate', code: 'fees.generate', name: 'Generate Fee Vouchers', description: 'Batch generate monthly student fee vouchers', category: 'fees', categoryLabel: 'Fee Vouchers' },
   { id: 'fees.collect', code: 'fees.collect', name: 'Collect Fee Payments', description: 'Record voucher payments and print receipts', category: 'fees', categoryLabel: 'Fee Collections' },
+  { id: 'fees.edit', code: 'fees.edit', name: 'Edit Fee Vouchers', description: 'Edit voucher particulars and line items', category: 'fees', categoryLabel: 'Fee Vouchers' },
   { id: 'fees.delete', code: 'fees.delete', name: 'Delete Fee Vouchers', description: 'Delete or reverse issued fee vouchers', category: 'fees', categoryLabel: 'Fee Vouchers', riskLevel: 'high' },
   { id: 'defaulters.view', code: 'defaulters.view', name: 'View Defaulters', description: 'Access unpaid defaulter rosters and aging lists', category: 'defaulters', categoryLabel: 'Defaulters' },
   { id: 'defaulters.manage', code: 'defaulters.manage', name: 'Manage Defaulters & Arrears', description: 'Carry forward arrears and apply late fines', category: 'defaulters', categoryLabel: 'Defaulters' },
@@ -40,6 +41,7 @@ export const ROLE_PRESET_PERMISSIONS: Record<UserRole, string[]> = {
     'fees.view',
     'fees.generate',
     'fees.collect',
+    'fees.edit',
     'defaulters.view',
     'defaulters.manage',
     'transport.view',
@@ -59,14 +61,28 @@ export const ROLE_PRESET_PERMISSIONS: Record<UserRole, string[]> = {
 };
 
 export function isPermissionAllowed(
-  userRole: UserRole | string,
-  userPermissions: string[] | undefined,
+  userOrRole: UserRole | string | { role?: any; permissions?: string[] } | null | undefined,
+  permissionsOrCode?: string[] | string | undefined,
   requiredPermission?: string
 ): boolean {
-  if (!requiredPermission) return true;
-  if (userRole === 'Admin') return true;
-  const list = userPermissions || ROLE_PRESET_PERMISSIONS[userRole as UserRole] || [];
-  return list.includes(requiredPermission);
+  let role: UserRole | string = 'Viewer';
+  let permissions: string[] | undefined;
+  let code: string | undefined;
+
+  if (userOrRole && typeof userOrRole === 'object') {
+    role = userOrRole.role || 'Viewer';
+    permissions = Array.isArray(userOrRole.permissions) ? userOrRole.permissions : undefined;
+    code = typeof permissionsOrCode === 'string' ? permissionsOrCode : requiredPermission;
+  } else {
+    role = (userOrRole as UserRole | string) || 'Viewer';
+    permissions = Array.isArray(permissionsOrCode) ? permissionsOrCode : undefined;
+    code = requiredPermission || (typeof permissionsOrCode === 'string' ? permissionsOrCode : undefined);
+  }
+
+  if (!code) return true;
+  if (role === 'Admin') return true;
+  const list = permissions || ROLE_PRESET_PERMISSIONS[role as UserRole] || [];
+  return list.includes(code);
 }
 
 export function getEffectiveRole(user: any): UserRole {
@@ -76,12 +92,10 @@ export function getEffectiveRole(user: any): UserRole {
 export const SPECIALTY_PRESETS: Record<string, { label: string; permissions: string[] }> = {
   fee_operator: {
     label: 'Fee Operator',
-    permissions: ['fees.view', 'fees.generate', 'fees.collect'],
+    permissions: ['fees.view', 'fees.generate', 'fees.collect', 'fees.edit'],
   },
   transport_manager: {
     label: 'Transport Manager',
     permissions: ['transport.view', 'transport.manage'],
   },
 };
-
-

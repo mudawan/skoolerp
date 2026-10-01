@@ -5,20 +5,30 @@ import { X, Upload, Download, CheckCircle2, AlertTriangle, FileSpreadsheet } fro
 
 export interface BulkTransportPreviewRow {
   id?: string;
-  rowIdx: number;
+  rowIdx?: number;
   regNo: string;
   studentName?: string;
   className?: string;
-  busNumber: string;
-  stopName: string;
-  tripType: 'RoundTrip' | 'OneWay';
-  daysCharged: number;
-  discount: number;
-  calculatedFare: number;
-  isValid: boolean;
+  busNumber?: string;
+  stopName?: string;
+  tripType?: 'RoundTrip' | 'OneWay';
+  daysCharged?: number;
+  discount?: number;
+  calculatedFare?: number;
+  isValid?: boolean;
   isDuplicateInCsv?: boolean;
   validationError?: string;
-  selected: boolean;
+  errorMsg?: string;
+  selected?: boolean;
+  student?: any;
+  studentClass?: any;
+  busInput?: string;
+  bus?: any;
+  stopInput?: string;
+  stop?: any;
+  effectiveFare?: number;
+  existingAsgn?: any;
+  rawRow?: any;
 }
 
 export interface BulkTransportCsvModalProps {

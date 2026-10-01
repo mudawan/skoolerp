@@ -13,7 +13,7 @@ import {
   User,
 } from '../types';
 
-export function createDefaultGlobalTemplates(): FeeTemplate[] {
+export function createDefaultGlobalTemplates(_institutionId?: string): FeeTemplate[] {
   return [
     { id: 'tmpl-fine', kind: 'Fine', label: 'Late Fine', defaultAmount: 100, sortOrder: 1 },
     { id: 'tmpl-flex1', kind: 'Flex1', label: 'Admission Fee', defaultAmount: 5000, sortOrder: 2 },

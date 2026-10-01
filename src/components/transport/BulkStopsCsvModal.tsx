@@ -5,7 +5,7 @@ import { X, Upload, Download, CheckCircle2, AlertTriangle, MapPin } from 'lucide
 
 export interface BulkStopPreviewRow {
   id?: string;
-  rowIdx: number;
+  rowIdx?: number;
   name: string;
   area: string;
   landmark: string;
@@ -13,7 +13,10 @@ export interface BulkStopPreviewRow {
   isValid: boolean;
   isDuplicateInCsv?: boolean;
   validationError?: string;
-  selected: boolean;
+  errorMsg?: string;
+  selected?: boolean;
+  sortOrder?: number;
+  existingStop?: any;
 }
 
 export interface BulkStopsCsvModalProps {

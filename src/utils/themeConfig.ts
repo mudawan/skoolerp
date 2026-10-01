@@ -13,6 +13,9 @@ export interface ThemePreset {
   badgeBorder: string;
   accentBg: string;
   hex: string;
+  lightHex: string;
+  chartColor: string;
+  headerGradient: string;
   textColor?: string;
   lightBg?: string;
   lightBorder?: string;
@@ -36,6 +39,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-teal-200',
     accentBg: 'bg-teal-500/10',
     hex: '#0d9488',
+    lightHex: '#2dd4bf',
+    chartColor: '#0d9488',
+    headerGradient: 'from-slate-950 via-slate-900 to-teal-900',
     textColor: 'text-teal-700',
     lightBg: 'bg-teal-50',
     lightBorder: 'border-teal-200',
@@ -57,6 +63,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-blue-200',
     accentBg: 'bg-blue-800/10',
     hex: '#1e3a8a',
+    lightHex: '#60a5fa',
+    chartColor: '#1e3a8a',
+    headerGradient: 'from-slate-950 via-slate-900 to-blue-900',
     textColor: 'text-blue-800',
     lightBg: 'bg-blue-50',
     lightBorder: 'border-blue-200',
@@ -78,6 +87,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-indigo-200',
     accentBg: 'bg-indigo-500/10',
     hex: '#4f46e5',
+    lightHex: '#818cf8',
+    chartColor: '#4f46e5',
+    headerGradient: 'from-slate-950 via-slate-900 to-indigo-900',
     textColor: 'text-indigo-700',
     lightBg: 'bg-indigo-50',
     lightBorder: 'border-indigo-200',
@@ -99,6 +111,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-emerald-200',
     accentBg: 'bg-emerald-500/10',
     hex: '#059669',
+    lightHex: '#34d399',
+    chartColor: '#059669',
+    headerGradient: 'from-slate-950 via-slate-900 to-emerald-900',
     textColor: 'text-emerald-700',
     lightBg: 'bg-emerald-50',
     lightBorder: 'border-emerald-200',
@@ -120,6 +135,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-amber-200',
     accentBg: 'bg-amber-500/10',
     hex: '#d97706',
+    lightHex: '#fbbf24',
+    chartColor: '#d97706',
+    headerGradient: 'from-slate-950 via-slate-900 to-amber-900',
     textColor: 'text-amber-800',
     lightBg: 'bg-amber-50',
     lightBorder: 'border-amber-200',
@@ -141,6 +159,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-rose-200',
     accentBg: 'bg-rose-500/10',
     hex: '#e11d48',
+    lightHex: '#fb7185',
+    chartColor: '#e11d48',
+    headerGradient: 'from-slate-950 via-slate-900 to-rose-900',
     textColor: 'text-rose-700',
     lightBg: 'bg-rose-50',
     lightBorder: 'border-rose-200',
@@ -162,6 +183,9 @@ export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
     badgeBorder: 'border-slate-300',
     accentBg: 'bg-slate-500/10',
     hex: '#334155',
+    lightHex: '#94a3b8',
+    chartColor: '#334155',
+    headerGradient: 'from-slate-950 via-slate-900 to-slate-800',
     textColor: 'text-slate-800',
     lightBg: 'bg-slate-100',
     lightBorder: 'border-slate-300',

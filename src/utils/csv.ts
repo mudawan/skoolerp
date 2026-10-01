@@ -1,6 +1,6 @@
 export const CSV_DELIMITERS_TEMPLATE = [',', ';', '\t'];
 
-export function parseCsvLine(line: string): string[] {
+export function parseCsvLine(line: string, _delimiters?: any): string[] {
   const result: string[] = [];
   let current = '';
   let inQuotes = false;

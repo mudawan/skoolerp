@@ -1,71 +1,104 @@
 import { jsPDF } from 'jspdf';
 import JSZip from 'jszip';
-import { FeeVoucher, InstituteProfile, Student, Class, BankAccount, PaymentTransaction } from '../types';
+import { FeeVoucher, InstituteProfile, Student, Class, BankAccount } from '../types';
 import { formatCurrency } from './feeMath';
 
 export interface OutstandingArrearsPdfRow {
   regNo: string;
-  studentName: string;
-  fatherName: string;
-  className: string;
-  contactPhone: string;
-  arrearsAmount: number;
+  studentName?: string;
+  name?: string;
+  fatherName?: string;
+  className?: string;
+  contactPhone?: string;
+  fatherPhone?: string;
+  arrearsAmount?: number;
+  totalOutstanding?: number;
   lastPaymentDate?: string;
-  unpaidMonthsCount: number;
+  unpaidMonthsCount?: number;
+  oldestUnpaidMonth?: string;
+  dob?: string;
+  ageStr?: string;
 }
 
 export interface FeeCollectionReportPdfRow {
   date: string;
-  voucherNo: string;
+  voucherNo?: string;
   regNo: string;
   studentName: string;
   className: string;
-  amount: number;
-  paymentMode: string;
-  receivedBy: string;
+  amount?: number;
+  total?: number;
+  paid?: number;
+  balance?: number;
+  feeMonth?: string;
+  paymentMode?: string;
+  receivedBy?: string;
+}
+
+function resolveInstitute(contextOrInstitute: any): InstituteProfile | undefined {
+  if (!contextOrInstitute) return undefined;
+  if ('institute' in contextOrInstitute && contextOrInstitute.institute) {
+    return contextOrInstitute.institute;
+  }
+  return contextOrInstitute as InstituteProfile;
 }
 
 export async function exportPaymentReceiptPdf(
-  receipt: any,
-  institute: InstituteProfile
+  receiptOrReceipts: any,
+  contextOrInstitute: any,
+  _options?: any
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a5' });
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(institute?.name || 'School Fee Receipt', 105, 18, { align: 'center' });
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Payment Receipt', 105, 25, { align: 'center' });
-  doc.line(15, 28, 135, 28);
+  const institute = resolveInstitute(contextOrInstitute);
+  const receipts = Array.isArray(receiptOrReceipts) ? receiptOrReceipts : [receiptOrReceipts];
 
-  doc.setFontSize(9);
-  doc.text(`Receipt #: ${receipt?.receiptNo || receipt?.txnNo || 'N/A'}`, 15, 36);
-  doc.text(`Date: ${receipt?.date || new Date().toISOString().split('T')[0]}`, 135, 36, { align: 'right' });
-  doc.text(`Student: ${receipt?.studentName || 'Student'} (${receipt?.regNo || ''})`, 15, 43);
-  doc.text(`Class: ${receipt?.className || 'N/A'}`, 135, 43, { align: 'right' });
-  doc.text(`Voucher #: ${receipt?.voucherNo || 'N/A'}`, 15, 50);
-  doc.text(`Mode: ${receipt?.paymentMode || 'Cash'}`, 135, 50, { align: 'right' });
+  receipts.forEach((receipt, idx) => {
+    if (idx > 0) doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(institute?.name || 'School Fee Receipt', 74, 18, { align: 'center' });
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Payment Receipt', 74, 25, { align: 'center' });
+    doc.line(15, 28, 133, 28);
 
-  doc.line(15, 54, 135, 54);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Amount Paid:', 15, 63);
-  doc.text(formatCurrency(receipt?.amount || 0), 135, 63, { align: 'right' });
-  doc.line(15, 68, 135, 68);
+    doc.setFontSize(9);
+    doc.text(`Receipt #: ${receipt?.receiptNo || receipt?.txnNo || 'N/A'}`, 15, 36);
+    doc.text(`Date: ${receipt?.date || new Date().toISOString().split('T')[0]}`, 133, 36, { align: 'right' });
+    doc.text(`Student: ${receipt?.studentName || 'Student'} (${receipt?.regNo || ''})`, 15, 43);
+    doc.text(`Class: ${receipt?.className || 'N/A'}`, 133, 43, { align: 'right' });
+    doc.text(`Voucher #: ${receipt?.voucherNo || 'N/A'}`, 15, 50);
+    doc.text(`Mode: ${receipt?.paymentMode || 'Cash'}`, 133, 50, { align: 'right' });
 
-  doc.save(`Receipt-${receipt?.receiptNo || 'Fee'}.pdf`);
+    doc.line(15, 54, 133, 54);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Amount Paid:', 15, 63);
+    doc.text(formatCurrency(receipt?.amount || receipt?.paid || 0), 133, 63, { align: 'right' });
+    doc.line(15, 68, 133, 68);
+  });
+
+  doc.save(`Receipt-${receipts[0]?.receiptNo || receipts[0]?.txnNo || 'Fee'}.pdf`);
 }
 
-export async function printPaymentReceiptPdf(receipt: any, institute: InstituteProfile): Promise<void> {
-  await exportPaymentReceiptPdf(receipt, institute);
+export async function printPaymentReceiptPdf(
+  receiptOrReceipts: any,
+  contextOrInstitute: any,
+  options?: any
+): Promise<void> {
+  await exportPaymentReceiptPdf(receiptOrReceipts, contextOrInstitute, options);
 }
 
 export async function exportStudentFeeLedgerPdf(
   student: Student,
   classObj: Class | undefined,
-  institute: InstituteProfile,
-  entries: any[]
+  arg3: any,
+  arg4?: any
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const entries: any[] = Array.isArray(arg3) ? arg3 : Array.isArray(arg4) ? arg4 : [];
+  const context = Array.isArray(arg3) ? arg4 : arg3;
+  const institute = resolveInstitute(context);
+
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.text(institute?.name || 'School Fee Ledger', 105, 18, { align: 'center' });
@@ -94,7 +127,7 @@ export async function exportStudentFeeLedgerPdf(
     }
     doc.text(String(e.date || e.month || ''), 15, y);
     doc.text(String(e.description || '').substring(0, 35), 50, y);
-    doc.text(formatCurrency(e.billed || 0), 125, y, { align: 'right' });
+    doc.text(formatCurrency(e.billed || e.amount || 0), 125, y, { align: 'right' });
     doc.text(formatCurrency(e.paid || 0), 160, y, { align: 'right' });
     doc.text(formatCurrency(e.balance || 0), 195, y, { align: 'right' });
     y += 6;
@@ -106,20 +139,29 @@ export async function exportStudentFeeLedgerPdf(
 export async function printStudentFeeLedgerPdf(
   student: Student,
   classObj: Class | undefined,
-  institute: InstituteProfile,
-  entries: any[]
+  arg3: any,
+  arg4?: any
 ): Promise<void> {
-  await exportStudentFeeLedgerPdf(student, classObj, institute, entries);
+  await exportStudentFeeLedgerPdf(student, classObj, arg3, arg4);
 }
 
 export async function exportSingleFeeVoucherPdf(
   voucher: FeeVoucher,
-  student: Student | undefined,
-  classObj: Class | undefined,
-  institute: InstituteProfile,
-  bankAccounts: BankAccount[]
+  contextOrStudent: any,
+  classObj?: Class | undefined,
+  institute?: InstituteProfile,
+  _bankAccounts?: BankAccount[]
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const isContext = contextOrStudent && 'institute' in contextOrStudent;
+  const inst = isContext ? contextOrStudent.institute : institute;
+  const student = isContext
+    ? (contextOrStudent.students || []).find((s: Student) => s.id === voucher.studentId)
+    : contextOrStudent;
+  const cls = isContext
+    ? (contextOrStudent.classes || []).find((c: Class) => c.id === voucher.classId)
+    : classObj;
+
   const copies = ['Bank Copy', 'School Copy', 'Student Copy'];
   const colWidth = 85;
 
@@ -127,7 +169,7 @@ export async function exportSingleFeeVoucherPdf(
     const x = 12 + idx * (colWidth + 7);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(institute?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
+    doc.text(inst?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.text(`${copyName} - ${voucher.month}`, x + colWidth / 2, 20, { align: 'center' });
@@ -136,11 +178,11 @@ export async function exportSingleFeeVoucherPdf(
     doc.text(`Voucher #: ${voucher.voucherNo}`, x, 27);
     doc.text(`Due: ${voucher.dueDate || 'N/A'}`, x + colWidth, 27, { align: 'right' });
     doc.text(`Student: ${student?.name || 'Student'} (${student?.regNo || ''})`, x, 32);
-    doc.text(`Class: ${classObj?.name || 'N/A'}`, x + colWidth, 32, { align: 'right' });
+    doc.text(`Class: ${cls?.name || 'N/A'}`, x + colWidth, 32, { align: 'right' });
 
     doc.line(x, 35, x + colWidth, 35);
     let itemY = 40;
-    voucher.particulars.forEach((p) => {
+    (voucher.particulars || []).forEach((p) => {
       doc.text(p.label, x, itemY);
       doc.text(formatCurrency(p.amount), x + colWidth, itemY, { align: 'right' });
       itemY += 5;
@@ -157,22 +199,28 @@ export async function exportSingleFeeVoucherPdf(
 
 export async function printFeeVoucherPdf(
   voucher: FeeVoucher,
-  student: Student | undefined,
-  classObj: Class | undefined,
-  institute: InstituteProfile,
-  bankAccounts: BankAccount[]
+  contextOrStudent: any,
+  classObj?: Class | undefined,
+  institute?: InstituteProfile,
+  bankAccounts?: BankAccount[]
 ): Promise<void> {
-  await exportSingleFeeVoucherPdf(voucher, student, classObj, institute, bankAccounts);
+  await exportSingleFeeVoucherPdf(voucher, contextOrStudent, classObj, institute, bankAccounts);
 }
 
 export async function exportSingleCombinedPdf(
   vouchers: FeeVoucher[],
-  students: Student[],
-  classes: Class[],
-  institute: InstituteProfile,
-  bankAccounts: BankAccount[]
+  contextOrStudents: any,
+  arg3?: any,
+  arg4?: any,
+  _arg5?: any
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const isContext = contextOrStudents && 'institute' in contextOrStudents;
+  const inst = isContext ? contextOrStudents.institute : arg4;
+  const students: Student[] = isContext ? contextOrStudents.students || [] : contextOrStudents || [];
+  const classes: Class[] = isContext ? contextOrStudents.classes || [] : arg3 || [];
+  const filename: string = typeof arg3 === 'string' ? arg3 : `Combined-Vouchers-${vouchers[0]?.month || 'batch'}.pdf`;
+
   const studentMap = new Map(students.map((s) => [s.id, s]));
   const classMap = new Map(classes.map((c) => [c.id, c]));
 
@@ -187,7 +235,7 @@ export async function exportSingleCombinedPdf(
       const x = 12 + idx * (colWidth + 7);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.text(institute?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
+      doc.text(inst?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
       doc.text(`${copyName} - ${v.month}`, x + colWidth / 2, 20, { align: 'center' });
@@ -200,7 +248,7 @@ export async function exportSingleCombinedPdf(
 
       doc.line(x, 35, x + colWidth, 35);
       let itemY = 40;
-      v.particulars.forEach((p) => {
+      (v.particulars || []).forEach((p) => {
         doc.text(p.label, x, itemY);
         doc.text(formatCurrency(p.amount), x + colWidth, itemY, { align: 'right' });
         itemY += 5;
@@ -213,17 +261,23 @@ export async function exportSingleCombinedPdf(
     });
   });
 
-  doc.save(`Combined-Vouchers-${vouchers[0]?.month || 'batch'}.pdf`);
+  doc.save(filename);
 }
 
 export async function exportZipIndividualPdfs(
   vouchers: FeeVoucher[],
-  students: Student[],
-  classes: Class[],
-  institute: InstituteProfile,
-  bankAccounts: BankAccount[]
+  contextOrStudents: any,
+  arg3?: any,
+  arg4?: any,
+  _arg5?: any
 ): Promise<void> {
   const zip = new JSZip();
+  const isContext = contextOrStudents && 'institute' in contextOrStudents;
+  const inst = isContext ? contextOrStudents.institute : arg4;
+  const students: Student[] = isContext ? contextOrStudents.students || [] : contextOrStudents || [];
+  const classes: Class[] = isContext ? contextOrStudents.classes || [] : arg3 || [];
+  const zipFilename: string = typeof arg3 === 'string' ? arg3 : `Vouchers-Batch-${vouchers[0]?.month || 'batch'}.zip`;
+
   const studentMap = new Map(students.map((s) => [s.id, s]));
   const classMap = new Map(classes.map((c) => [c.id, c]));
 
@@ -238,7 +292,7 @@ export async function exportZipIndividualPdfs(
       const x = 12 + idx * (colWidth + 7);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.text(institute?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
+      doc.text(inst?.name || 'School Voucher', x + colWidth / 2, 15, { align: 'center' });
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
       doc.text(`${copyName} - ${v.month}`, x + colWidth / 2, 20, { align: 'center' });
@@ -251,7 +305,7 @@ export async function exportZipIndividualPdfs(
 
       doc.line(x, 35, x + colWidth, 35);
       let itemY = 40;
-      v.particulars.forEach((p) => {
+      (v.particulars || []).forEach((p) => {
         doc.text(p.label, x, itemY);
         doc.text(formatCurrency(p.amount), x + colWidth, itemY, { align: 'right' });
         itemY += 5;
@@ -270,7 +324,7 @@ export async function exportZipIndividualPdfs(
   const url = URL.createObjectURL(content);
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  link.setAttribute('download', `Vouchers-Batch-${vouchers[0]?.month || 'batch'}.zip`);
+  link.setAttribute('download', zipFilename);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -279,10 +333,12 @@ export async function exportZipIndividualPdfs(
 
 export async function printOutstandingArrearsPdf(
   rows: OutstandingArrearsPdfRow[],
-  institute: InstituteProfile,
+  contextOrInstitute: any,
   month: string
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const institute = resolveInstitute(contextOrInstitute);
+
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
   doc.text(institute?.name || 'School Defaulters Report', 105, 18, { align: 'center' });
@@ -308,12 +364,14 @@ export async function printOutstandingArrearsPdf(
       doc.addPage();
       y = 20;
     }
-    doc.text(r.regNo, 15, y);
-    doc.text(r.studentName.substring(0, 25), 35, y);
-    doc.text(r.className, 85, y);
-    doc.text(r.contactPhone || 'N/A', 115, y);
-    doc.text(String(r.unpaidMonthsCount), 155, y);
-    doc.text(formatCurrency(r.arrearsAmount), 195, y, { align: 'right' });
+    const name = r.studentName || r.name || 'N/A';
+    const amount = r.arrearsAmount !== undefined ? r.arrearsAmount : r.totalOutstanding || 0;
+    doc.text(r.regNo || '', 15, y);
+    doc.text(name.substring(0, 25), 35, y);
+    doc.text(r.className || 'N/A', 85, y);
+    doc.text(r.contactPhone || r.fatherPhone || 'N/A', 115, y);
+    doc.text(String(r.unpaidMonthsCount || 0), 155, y);
+    doc.text(formatCurrency(amount), 195, y, { align: 'right' });
     y += 5;
   });
 
@@ -322,23 +380,25 @@ export async function printOutstandingArrearsPdf(
 
 export async function exportOutstandingArrearsPdf(
   rows: OutstandingArrearsPdfRow[],
-  institute: InstituteProfile,
+  contextOrInstitute: any,
   month: string
 ): Promise<void> {
-  await printOutstandingArrearsPdf(rows, institute, month);
+  await printOutstandingArrearsPdf(rows, contextOrInstitute, month);
 }
 
 export async function printFeeCollectionReportPdf(
   rows: FeeCollectionReportPdfRow[],
-  institute: InstituteProfile,
-  dateRange: string
+  contextOrInstitute: any,
+  dateRangeOrTitle: string
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const institute = resolveInstitute(contextOrInstitute);
+
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
   doc.text(institute?.name || 'Fee Collection Report', 105, 18, { align: 'center' });
   doc.setFontSize(10);
-  doc.text(`Collections - ${dateRange}`, 105, 25, { align: 'center' });
+  doc.text(`Collections - ${dateRangeOrTitle}`, 105, 25, { align: 'center' });
   doc.line(15, 28, 195, 28);
 
   let y = 35;
@@ -359,22 +419,66 @@ export async function printFeeCollectionReportPdf(
       doc.addPage();
       y = 20;
     }
-    doc.text(r.date, 15, y);
-    doc.text(r.voucherNo, 40, y);
-    doc.text(r.studentName.substring(0, 25), 75, y);
-    doc.text(r.className, 125, y);
-    doc.text(r.paymentMode, 155, y);
-    doc.text(formatCurrency(r.amount), 195, y, { align: 'right' });
+    const amount = r.amount !== undefined ? r.amount : r.paid !== undefined ? r.paid : r.total || 0;
+    doc.text(r.date || '', 15, y);
+    doc.text(r.voucherNo || r.feeMonth || 'N/A', 40, y);
+    doc.text((r.studentName || '').substring(0, 25), 75, y);
+    doc.text(r.className || 'N/A', 125, y);
+    doc.text(r.paymentMode || 'Payment', 155, y);
+    doc.text(formatCurrency(amount), 195, y, { align: 'right' });
     y += 5;
   });
 
-  doc.save(`Collections-${dateRange}.pdf`);
+  doc.save(`Collections-${dateRangeOrTitle}.pdf`);
 }
 
 export async function exportFeeCollectionReportPdf(
   rows: FeeCollectionReportPdfRow[],
-  institute: InstituteProfile,
-  dateRange: string
+  contextOrInstitute: any,
+  dateRangeOrTitle: string,
+  filename?: string
 ): Promise<void> {
-  await printFeeCollectionReportPdf(rows, institute, dateRange);
+  if (filename) {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const institute = resolveInstitute(contextOrInstitute);
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(institute?.name || 'Fee Collection Report', 105, 18, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text(`Collections - ${dateRangeOrTitle}`, 105, 25, { align: 'center' });
+    doc.line(15, 28, 195, 28);
+
+    let y = 35;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('Date', 15, y);
+    doc.text('Voucher #', 40, y);
+    doc.text('Student', 75, y);
+    doc.text('Class', 125, y);
+    doc.text('Mode', 155, y);
+    doc.text('Amount', 195, y, { align: 'right' });
+    doc.line(15, y + 2, 195, y + 2);
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    rows.forEach((r) => {
+      if (y > 275) {
+        doc.addPage();
+        y = 20;
+      }
+      const amount = r.amount !== undefined ? r.amount : r.paid !== undefined ? r.paid : r.total || 0;
+      doc.text(r.date || '', 15, y);
+      doc.text(r.voucherNo || r.feeMonth || 'N/A', 40, y);
+      doc.text((r.studentName || '').substring(0, 25), 75, y);
+      doc.text(r.className || 'N/A', 125, y);
+      doc.text(r.paymentMode || 'Payment', 155, y);
+      doc.text(formatCurrency(amount), 195, y, { align: 'right' });
+      y += 5;
+    });
+
+    doc.save(filename);
+    return;
+  }
+  await printFeeCollectionReportPdf(rows, contextOrInstitute, dateRangeOrTitle);
 }

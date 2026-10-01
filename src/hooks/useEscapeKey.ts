@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 
-export function useEscapeKey(onEscape: () => void, active: boolean = true) {
+export function useEscapeKey(
+  onEscape: () => void,
+  active: boolean = true,
+  _priority?: number
+) {
   useEffect(() => {
     if (!active) return;
     const handleKeyDown = (e: KeyboardEvent) => {
