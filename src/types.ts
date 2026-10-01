@@ -84,7 +84,6 @@ export interface SchoolClass {
   active: boolean;
   studentCount?: number;
 }
-export type Class = SchoolClass;
 
 export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn' | 'Graduated';
 
@@ -430,3 +429,5 @@ export interface StudentAccountHistoryEntry {
   month?: string; // Optional billing month if applicable
   metadata?: Record<string, any>;
 }
+
+

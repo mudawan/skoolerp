@@ -1728,20 +1728,16 @@ async function startServer() {
 
   // --- Phase 3: Granular Transactional Financial Endpoints ---
 
-  // 1. Next Atomic Sequence / Document Number (supports single or batch block reservation)
+  // 1. Next Atomic Sequence / Document Number
   app.post('/api/sequences/next', requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { prefix, year, digits = 6, count } = req.body;
+      const { prefix, year, digits = 6 } = req.body;
       if (!prefix || !year) {
         return res.status(400).json({ success: false, error: 'Both prefix and year are required.' });
       }
-      if (typeof count === 'number' && count > 1) {
-        const documentNumbers = await dbService.mintDocumentNumberBlock(institutionId, prefix, year, count, digits);
-        return res.json({ success: true, documentNumbers, documentNumber: documentNumbers[0], count: documentNumbers.length, prefix, year });
-      }
       const documentNumber = await dbService.nextDocumentNumber(institutionId, prefix, year, digits);
-      res.json({ success: true, documentNumber, documentNumbers: [documentNumber], count: 1, prefix, year });
+      res.json({ success: true, documentNumber, prefix, year });
     } catch (err: any) {
       console.error('[API] Sequence generation failed:', err);
       res.status(500).json({ success: false, error: err?.message || 'Sequence generation failure' });
@@ -1781,13 +1777,6 @@ async function startServer() {
             .map((v: any) => `${v.studentId}:${v.month}`)
         );
 
-        // O(1) set of existing voucher numbers to detect collisions instantly
-        const existingVoucherNoSet = new Set(
-          Array.from(lockedVouchers.values())
-            .map((v: any) => v.voucherNo)
-            .filter(Boolean)
-        );
-
         for (const item of rawVouchers) {
           const key = `${item.studentId}:${item.month}`;
           if (existingKeySet.has(key)) {
@@ -1795,17 +1784,10 @@ async function startServer() {
           }
 
           const yearStr = item.month.split('-')[0];
-          let voucherNo = item.voucherNo;
-
-          // DIRECTIVE 1 (Silent Reissuance, No Rejections):
-          // If the candidate voucher number is missing, temporary, or collides with ANY
-          // existing voucher in this tenant, silently reissue the next monotonic number.
-          if (!voucherNo || voucherNo.startsWith('TEMP_') || existingVoucherNoSet.has(voucherNo)) {
-            voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
-          }
-
-          // Register in the set to protect consecutive items in the same batch
-          existingVoucherNoSet.add(voucherNo);
+          const voucherNo =
+            item.voucherNo && !item.voucherNo.startsWith('TEMP_')
+              ? item.voucherNo
+              : await helpers.mintDocumentNumber('FE', yearStr);
 
           const newVoucher = {
             ...item,
@@ -1818,7 +1800,6 @@ async function startServer() {
           voucherUpserts[newVoucher.id] = newVoucher;
           existingKeySet.add(key);
         }
-
 
         // Mark any folded prior unpaid vouchers as Carried
         for (const prior of carriedPriorVouchers) {

@@ -1,198 +1,134 @@
-import { AppThemeConfig, ThemeColor } from '../types';
+import { AppThemeConfig, ThemeColor, SidebarTheme } from '../types';
 
-export interface ThemePreset {
+export interface ThemeColorPreset {
+  id: ThemeColor;
   name: string;
-  primaryColor: string;
-  primaryBg: string;
-  primaryHover: string;
-  primaryText: string;
-  primaryBorder: string;
-  primaryRing: string;
-  badgeBg: string;
-  badgeText: string;
-  badgeBorder: string;
-  accentBg: string;
-  hex: string;
-  lightHex: string;
-  chartColor: string;
-  headerGradient: string;
-  textColor?: string;
-  lightBg?: string;
-  lightBorder?: string;
-  hoverColor?: string;
-  activeNavBg?: string;
-  activeNavGlow?: string;
-  sampleBadgeClass?: string;
+  subtitle: string;
+  primaryColor: string; // Primary brand hex
+  hoverColor: string;
+  lightBg: string;
+  lightBorder: string;
+  textColor: string;
+  activeNavBg: string;
+  activeNavGlow: string;
+  previewGradient: string;
+  sampleBadgeClass: string;
+  headerGradient: string; // Tailored rich gradient for top banners
+  chartColor: string; // Hex for charts & metrics
 }
 
-export const THEME_COLOR_PRESETS: Record<string, ThemePreset> = {
+export const THEME_COLOR_PRESETS: Record<ThemeColor, ThemeColorPreset> = {
   teal: {
-    name: 'Teal',
-    primaryColor: 'teal',
-    primaryBg: 'bg-teal-600',
-    primaryHover: 'hover:bg-teal-700',
-    primaryText: 'text-teal-700',
-    primaryBorder: 'border-teal-500',
-    primaryRing: 'ring-teal-500',
-    badgeBg: 'bg-teal-50',
-    badgeText: 'text-teal-800',
-    badgeBorder: 'border-teal-200',
-    accentBg: 'bg-teal-500/10',
-    hex: '#0d9488',
-    lightHex: '#2dd4bf',
-    chartColor: '#0d9488',
-    headerGradient: 'from-slate-950 via-slate-900 to-teal-900',
-    textColor: 'text-teal-700',
-    lightBg: 'bg-teal-50',
-    lightBorder: 'border-teal-200',
-    hoverColor: 'hover:bg-teal-700',
+    id: 'teal',
+    name: 'Academic Teal',
+    subtitle: 'Classic balanced turquoise & slate',
+    primaryColor: '#0d9488',
+    hoverColor: '#0f766e',
+    lightBg: '#f0fdfa',
+    lightBorder: '#99f6e4',
+    textColor: '#115e59',
     activeNavBg: 'bg-teal-600',
-    activeNavGlow: 'shadow-teal-500/20',
-    sampleBadgeClass: 'bg-teal-50 text-teal-800 border-teal-200',
+    activeNavGlow: 'shadow-teal-950/40',
+    previewGradient: 'from-teal-500 to-teal-700',
+    sampleBadgeClass: 'bg-teal-50 text-teal-700 border-teal-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#042424]',
+    chartColor: '#0d9488',
   },
   navy: {
-    name: 'Navy',
-    primaryColor: 'blue',
-    primaryBg: 'bg-blue-800',
-    primaryHover: 'hover:bg-blue-900',
-    primaryText: 'text-blue-800',
-    primaryBorder: 'border-blue-700',
-    primaryRing: 'ring-blue-700',
-    badgeBg: 'bg-blue-50',
-    badgeText: 'text-blue-900',
-    badgeBorder: 'border-blue-200',
-    accentBg: 'bg-blue-800/10',
-    hex: '#1e3a8a',
-    lightHex: '#60a5fa',
-    chartColor: '#1e3a8a',
-    headerGradient: 'from-slate-950 via-slate-900 to-blue-900',
-    textColor: 'text-blue-800',
-    lightBg: 'bg-blue-50',
-    lightBorder: 'border-blue-200',
-    hoverColor: 'hover:bg-blue-900',
-    activeNavBg: 'bg-blue-800',
-    activeNavGlow: 'shadow-blue-500/20',
-    sampleBadgeClass: 'bg-blue-50 text-blue-900 border-blue-200',
+    id: 'navy',
+    name: 'Oxford Royal Navy',
+    subtitle: 'Prestige collegiate cobalt & blue',
+    primaryColor: '#2563eb',
+    hoverColor: '#1d4ed8',
+    lightBg: '#eff6ff',
+    lightBorder: '#bfdbfe',
+    textColor: '#1e40af',
+    activeNavBg: 'bg-blue-600',
+    activeNavGlow: 'shadow-blue-950/40',
+    previewGradient: 'from-blue-500 to-indigo-700',
+    sampleBadgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#081d45]',
+    chartColor: '#2563eb',
   },
   indigo: {
-    name: 'Indigo',
-    primaryColor: 'indigo',
-    primaryBg: 'bg-indigo-600',
-    primaryHover: 'hover:bg-indigo-700',
-    primaryText: 'text-indigo-700',
-    primaryBorder: 'border-indigo-500',
-    primaryRing: 'ring-indigo-500',
-    badgeBg: 'bg-indigo-50',
-    badgeText: 'text-indigo-800',
-    badgeBorder: 'border-indigo-200',
-    accentBg: 'bg-indigo-500/10',
-    hex: '#4f46e5',
-    lightHex: '#818cf8',
-    chartColor: '#4f46e5',
-    headerGradient: 'from-slate-950 via-slate-900 to-indigo-900',
-    textColor: 'text-indigo-700',
-    lightBg: 'bg-indigo-50',
-    lightBorder: 'border-indigo-200',
-    hoverColor: 'hover:bg-indigo-700',
+    id: 'indigo',
+    name: 'Regal Indigo',
+    subtitle: 'Modern executive violet & purple',
+    primaryColor: '#6366f1',
+    hoverColor: '#4f46e5',
+    lightBg: '#eef2ff',
+    lightBorder: '#c7d2fe',
+    textColor: '#3730a3',
     activeNavBg: 'bg-indigo-600',
-    activeNavGlow: 'shadow-indigo-500/20',
-    sampleBadgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+    activeNavGlow: 'shadow-indigo-950/40',
+    previewGradient: 'from-indigo-500 to-purple-700',
+    sampleBadgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#191147]',
+    chartColor: '#6366f1',
   },
   emerald: {
-    name: 'Emerald',
-    primaryColor: 'emerald',
-    primaryBg: 'bg-emerald-600',
-    primaryHover: 'hover:bg-emerald-700',
-    primaryText: 'text-emerald-700',
-    primaryBorder: 'border-emerald-500',
-    primaryRing: 'ring-emerald-500',
-    badgeBg: 'bg-emerald-50',
-    badgeText: 'text-emerald-800',
-    badgeBorder: 'border-emerald-200',
-    accentBg: 'bg-emerald-500/10',
-    hex: '#059669',
-    lightHex: '#34d399',
-    chartColor: '#059669',
-    headerGradient: 'from-slate-950 via-slate-900 to-emerald-900',
-    textColor: 'text-emerald-700',
-    lightBg: 'bg-emerald-50',
-    lightBorder: 'border-emerald-200',
-    hoverColor: 'hover:bg-emerald-700',
+    id: 'emerald',
+    name: 'Forest Ivy',
+    subtitle: 'Prestige evergreen & campus pine',
+    primaryColor: '#059669',
+    hoverColor: '#047857',
+    lightBg: '#ecfdf5',
+    lightBorder: '#a7f3d0',
+    textColor: '#065f46',
     activeNavBg: 'bg-emerald-600',
-    activeNavGlow: 'shadow-emerald-500/20',
-    sampleBadgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    activeNavGlow: 'shadow-emerald-950/40',
+    previewGradient: 'from-emerald-500 to-green-700',
+    sampleBadgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#03291d]',
+    chartColor: '#059669',
   },
   amber: {
-    name: 'Amber',
-    primaryColor: 'amber',
-    primaryBg: 'bg-amber-600',
-    primaryHover: 'hover:bg-amber-700',
-    primaryText: 'text-amber-800',
-    primaryBorder: 'border-amber-500',
-    primaryRing: 'ring-amber-500',
-    badgeBg: 'bg-amber-50',
-    badgeText: 'text-amber-900',
-    badgeBorder: 'border-amber-200',
-    accentBg: 'bg-amber-500/10',
-    hex: '#d97706',
-    lightHex: '#fbbf24',
-    chartColor: '#d97706',
-    headerGradient: 'from-slate-950 via-slate-900 to-amber-900',
-    textColor: 'text-amber-800',
-    lightBg: 'bg-amber-50',
-    lightBorder: 'border-amber-200',
-    hoverColor: 'hover:bg-amber-700',
+    id: 'amber',
+    name: 'Harvard Amber',
+    subtitle: 'Warm institutional bronze & gold',
+    primaryColor: '#d97706',
+    hoverColor: '#b45309',
+    lightBg: '#fffbeb',
+    lightBorder: '#fde68a',
+    textColor: '#92400e',
     activeNavBg: 'bg-amber-600',
-    activeNavGlow: 'shadow-amber-500/20',
-    sampleBadgeClass: 'bg-amber-50 text-amber-900 border-amber-200',
+    activeNavGlow: 'shadow-amber-950/40',
+    previewGradient: 'from-amber-500 to-orange-700',
+    sampleBadgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#3b1802]',
+    chartColor: '#d97706',
   },
   rose: {
-    name: 'Rose',
-    primaryColor: 'rose',
-    primaryBg: 'bg-rose-600',
-    primaryHover: 'hover:bg-rose-700',
-    primaryText: 'text-rose-700',
-    primaryBorder: 'border-rose-500',
-    primaryRing: 'ring-rose-500',
-    badgeBg: 'bg-rose-50',
-    badgeText: 'text-rose-800',
-    badgeBorder: 'border-rose-200',
-    accentBg: 'bg-rose-500/10',
-    hex: '#e11d48',
-    lightHex: '#fb7185',
-    chartColor: '#e11d48',
-    headerGradient: 'from-slate-950 via-slate-900 to-rose-900',
-    textColor: 'text-rose-700',
-    lightBg: 'bg-rose-50',
-    lightBorder: 'border-rose-200',
-    hoverColor: 'hover:bg-rose-700',
+    id: 'rose',
+    name: 'Crimson Ruby',
+    subtitle: 'High energy ruby & velvet burgundy',
+    primaryColor: '#e11d48',
+    hoverColor: '#be123c',
+    lightBg: '#fff1f2',
+    lightBorder: '#fecdd3',
+    textColor: '#9f1239',
     activeNavBg: 'bg-rose-600',
-    activeNavGlow: 'shadow-rose-500/20',
-    sampleBadgeClass: 'bg-rose-50 text-rose-800 border-rose-200',
+    activeNavGlow: 'shadow-rose-950/40',
+    previewGradient: 'from-rose-500 to-pink-700',
+    sampleBadgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#3d061e]',
+    chartColor: '#e11d48',
   },
   slate: {
-    name: 'Slate',
-    primaryColor: 'slate',
-    primaryBg: 'bg-slate-700',
-    primaryHover: 'hover:bg-slate-800',
-    primaryText: 'text-slate-800',
-    primaryBorder: 'border-slate-600',
-    primaryRing: 'ring-slate-600',
-    badgeBg: 'bg-slate-100',
-    badgeText: 'text-slate-800',
-    badgeBorder: 'border-slate-300',
-    accentBg: 'bg-slate-500/10',
-    hex: '#334155',
-    lightHex: '#94a3b8',
-    chartColor: '#334155',
-    headerGradient: 'from-slate-950 via-slate-900 to-slate-800',
-    textColor: 'text-slate-800',
-    lightBg: 'bg-slate-100',
-    lightBorder: 'border-slate-300',
-    hoverColor: 'hover:bg-slate-800',
+    id: 'slate',
+    name: 'Nordic Charcoal',
+    subtitle: 'Minimalist high-contrast monochrome',
+    primaryColor: '#334155',
+    hoverColor: '#1e293b',
+    lightBg: '#f8fafc',
+    lightBorder: '#cbd5e1',
+    textColor: '#0f172a',
     activeNavBg: 'bg-slate-700',
-    activeNavGlow: 'shadow-slate-500/20',
+    activeNavGlow: 'shadow-slate-950/40',
+    previewGradient: 'from-slate-600 to-zinc-800',
     sampleBadgeClass: 'bg-slate-100 text-slate-800 border-slate-300',
+    headerGradient: 'from-slate-950 via-slate-900 to-[#1e293b]',
+    chartColor: '#334155',
   },
 };
 
@@ -201,9 +137,20 @@ export const DEFAULT_THEME_CONFIG: AppThemeConfig = {
   sidebarTheme: 'dark',
 };
 
-export function applyThemeToDom(config: AppThemeConfig) {
+/**
+ * Applies CSS custom variables and data attributes to the document root
+ */
+export function applyThemeToDom(theme: AppThemeConfig) {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  root.setAttribute('data-theme-color', config.color || 'teal');
-  root.setAttribute('data-sidebar-theme', config.sidebarTheme || 'dark');
+  const preset = THEME_COLOR_PRESETS[theme.color] || THEME_COLOR_PRESETS.teal;
+
+  root.setAttribute('data-theme-color', theme.color);
+  root.setAttribute('data-sidebar-theme', theme.sidebarTheme);
+
+  root.style.setProperty('--color-primary', preset.primaryColor);
+  root.style.setProperty('--color-primary-hover', preset.hoverColor);
+  root.style.setProperty('--color-primary-light', preset.lightBg);
+  root.style.setProperty('--color-primary-border', preset.lightBorder);
+  root.style.setProperty('--color-primary-text', preset.textColor);
 }

@@ -1,4 +1,3 @@
-// School Management System - Dashboard Overview View
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, getPreviousMonthString, getRecentMonthsEndingAt } from '../utils/feeMath';

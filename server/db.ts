@@ -318,7 +318,6 @@ class DatabaseService {
   private isInitialized = false;
   private revisions: Map<string, { revision: number; lastModified: string }> = new Map();
   private globalRevision: number = 1;
-  private fallbackSequences: Map<string, number> = new Map();
 
   constructor() {
     const host = process.env.POSTGRES_HOST || '127.0.0.1';
@@ -1447,69 +1446,28 @@ class DatabaseService {
     prefix: string,
     year: string
   ): Promise<number> {
-    const block = await this.nextSequenceBlock(institutionId, prefix, year, 1);
-    return block.end;
-  }
-
-  /**
-   * Atomically reserves a block of `count` monotonic sequence numbers.
-   * Advances the sequence by count in a single O(1) statement and returns { start, end, count }.
-   */
-  public async nextSequenceBlock(
-    institutionId: string,
-    prefix: string,
-    year: string,
-    count: number = 1
-  ): Promise<{ start: number; end: number; count: number }> {
-    const safeCount = Math.max(1, count);
     await this.init();
     const tenantId = institutionId || 'default';
     const now = new Date().toISOString();
-    const cleanPrefix = (prefix || 'FE').trim().toUpperCase();
-    const cleanYear = (year || new Date().getFullYear().toString()).trim();
+    const cleanPrefix = prefix.trim().toUpperCase();
+    const cleanYear = year.trim();
 
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(
         `INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-         VALUES ($1, $2, $3, $4, $5)
+         VALUES ($1, $2, $3, 1, $4)
          ON CONFLICT (institution_id, prefix, year)
-         DO UPDATE SET last_value = system_sequences.last_value + $4, updated_at = $5
+         DO UPDATE SET last_value = system_sequences.last_value + 1, updated_at = $4
          RETURNING last_value`,
-        [tenantId, cleanPrefix, cleanYear, safeCount, now]
+        [tenantId, cleanPrefix, cleanYear, now]
       );
-      const end = Number(res.rows[0].last_value);
-      const start = end - safeCount + 1;
-      return { start, end, count: safeCount };
+      return Number(res.rows[0].last_value);
     }
 
-    const key = `${tenantId}:${cleanPrefix}:${cleanYear}`;
-    const prev = this.fallbackSequences.get(key) || 0;
-    const end = prev + safeCount;
-    this.fallbackSequences.set(key, end);
-    return { start: prev + 1, end, count: safeCount };
+    return 1;
   }
 
-  /**
-   * Formats an allocated block of document numbers, e.g. [FE2026-000041, FE2026-000042]
-   */
-  public async mintDocumentNumberBlock(
-    institutionId: string,
-    prefix: string,
-    year: string,
-    count: number = 1,
-    digits: number = 6
-  ): Promise<string[]> {
-    if (count <= 0) return [];
-    const block = await this.nextSequenceBlock(institutionId, prefix, year, count);
-    const cleanPrefix = (prefix || 'FE').trim().toUpperCase();
-    const cleanYear = (year || new Date().getFullYear().toString()).trim();
-    const result: string[] = new Array(block.count);
-    for (let i = 0; i < block.count; i++) {
-      const num = block.start + i;
-      result[i] = `${cleanPrefix}${cleanYear}-${String(num).padStart(digits, '0')}`;
-    }
-    return result;
-  }
+  
 
   /**
    * Formats a complete document number, e.g. FE2026-000042
@@ -1520,10 +1478,9 @@ class DatabaseService {
     year: string,
     digits: number = 6
   ): Promise<string> {
-    const list = await this.mintDocumentNumberBlock(institutionId, prefix, year, 1, digits);
-    return list[0];
+    const num = await this.nextSequenceNumber(institutionId, prefix, year);
+    return `${prefix.toUpperCase()}${year}-${String(num).padStart(digits, '0')}`;
   }
-
 
   /**
    * Reconciles sequence counters by adopting max existing values
@@ -1612,10 +1569,7 @@ class DatabaseService {
     lockScope: { voucherIds: string[] } | { allVouchers: true },
     mutator: (
       lockedVouchers: Map<string, VoucherRecord>,
-      helpers: {
-        mintDocumentNumber: (prefix: string, year: string, digits?: number) => Promise<string>;
-        mintDocumentNumberBlock: (prefix: string, year: string, count?: number, digits?: number) => Promise<string[]>;
-      }
+      helpers: { mintDocumentNumber: (prefix: string, year: string, digits?: number) => Promise<string> }
     ) => Promise<{ writes: VoucherTxWrites; result: T }>
   ): Promise<T> {
     await this.init();
@@ -1662,29 +1616,19 @@ class DatabaseService {
         }
 
         const helpers = {
-          mintDocumentNumberBlock: async (prefix: string, year: string, count: number = 1, digits: number = 6): Promise<string[]> => {
-            if (count <= 0) return [];
-            const cleanPrefix = (prefix || 'FE').trim().toUpperCase();
-            const cleanYear = (year || new Date().getFullYear().toString()).trim();
+          mintDocumentNumber: async (prefix: string, year: string, digits: number = 6): Promise<string> => {
+            const cleanPrefix = prefix.trim().toUpperCase();
+            const cleanYear = year.trim();
             const seqRes = await client.query(
               `INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-               VALUES ($1, $2, $3, $4, $5)
+               VALUES ($1, $2, $3, 1, $4)
                ON CONFLICT (institution_id, prefix, year)
-               DO UPDATE SET last_value = system_sequences.last_value + $4, updated_at = $5
+               DO UPDATE SET last_value = system_sequences.last_value + 1, updated_at = $4
                RETURNING last_value`,
-              [tenantId, cleanPrefix, cleanYear, count, now]
+              [tenantId, cleanPrefix, cleanYear, now]
             );
-            const end = Number(seqRes.rows[0].last_value);
-            const start = end - count + 1;
-            const resList: string[] = new Array(count);
-            for (let i = 0; i < count; i++) {
-              resList[i] = `${cleanPrefix}${cleanYear}-${String(start + i).padStart(digits, '0')}`;
-            }
-            return resList;
-          },
-          mintDocumentNumber: async (prefix: string, year: string, digits: number = 6): Promise<string> => {
-            const list = await helpers.mintDocumentNumberBlock(prefix, year, 1, digits);
-            return list[0];
+            const num = Number(seqRes.rows[0].last_value);
+            return `${cleanPrefix}${cleanYear}-${String(num).padStart(digits, '0')}`;
           },
         };
 
