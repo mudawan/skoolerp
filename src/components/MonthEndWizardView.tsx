@@ -22,4 +22,3 @@ export const MonthEndWizardView: React.FC<MonthEndWizardViewProps> = ({
     />
   );
 };
-

@@ -51,10 +51,9 @@ const ROUNDING_QUICK_PRESETS: { value: number; label: string; description?: stri
 
 const TRANSPORT_ROUNDING_PRESETS: { value: number; label: string; description?: string }[] = [
   { value: 1, label: 'Exact (1)', description: 'Exact transport fare (no round up)' },
-  { value: 5, label: '5', description: 'Round up transport fare to nearest Rs. 5' },
   { value: 10, label: '10', description: 'Round up transport fare to nearest Rs. 10' },
+  { value: 20, label: '20', description: 'Round up transport fare to nearest Rs. 20' },
   { value: 50, label: '50', description: 'Round up transport fare to nearest Rs. 50' },
-  { value: 100, label: '100', description: 'Round up transport fare to nearest Rs. 100' },
 ];
 
 export interface PoliciesPanelProps {
