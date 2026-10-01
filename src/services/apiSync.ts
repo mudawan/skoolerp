@@ -1154,6 +1154,38 @@ export async function apiNextDocumentNumber(
   }
 }
 
+export async function apiNextDocumentBlock(
+  prefix: string,
+  year: string,
+  count: number = 1,
+  digits: number = 6
+): Promise<string[] | null> {
+  if (count <= 0) return [];
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch('/api/sequences/next', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-institution-id': instId,
+      },
+      body: JSON.stringify({ prefix, year, count, digits }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.success && Array.isArray(data.documentNumbers)) {
+      return data.documentNumbers;
+    }
+    if (data.success && data.documentNumber) {
+      return [data.documentNumber];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+
 export async function apiGenerateVouchers(
   vouchers: any[],
   carriedPriorVouchers: any[] = []

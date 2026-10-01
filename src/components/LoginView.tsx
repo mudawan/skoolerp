@@ -300,28 +300,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
   return (
     <div
-      className={`min-h-screen bg-gradient-to-br ${preset.headerGradient} flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans antialiased text-slate-100 selection:bg-teal-500 selection:text-white`}
+      className={`min-h-screen bg-slate-950 bg-gradient-to-br ${preset.headerGradient || 'from-slate-950 via-slate-900 to-[#042424]'} flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans antialiased text-slate-100 selection:bg-teal-500 selection:text-white`}
     >
       <div className="w-full max-w-xl space-y-6">
         {/* System Branding & Identity */}
         <div className="text-center space-y-2">
           <div
-            style={{ borderColor: preset.lightBorder }}
+            style={{ borderColor: `${preset.hex}40` }}
             className="mx-auto w-16 h-16 rounded-2xl border p-1 flex items-center justify-center shadow-xl overflow-hidden bg-white"
           >
-            <Layers style={{ color: preset.primaryColor }} className="w-8 h-8" />
+            <Layers style={{ color: preset.hex }} className="w-8 h-8" />
           </div>
           <div>
             <div
               style={{
-                backgroundColor: preset.primaryColor + '20',
-                borderColor: preset.primaryColor + '50',
-                color: preset.lightBorder,
+                backgroundColor: `${preset.hex}25`,
+                borderColor: `${preset.hex}60`,
+                color: preset.lightHex || preset.hex,
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full border text-[11px] font-bold tracking-wide uppercase"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-bold tracking-wide uppercase shadow-xs backdrop-blur-xs"
             >
-              <Globe2 className="w-3.5 h-3.5" />
-              Multi-Tenant Fee & Accounting Portal
+              <Globe2 className="w-3.5 h-3.5" style={{ color: preset.lightHex || preset.hex }} />
+              <span>Multi-Tenant Fee & Accounting Portal</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mt-1.5">
               {authMode === 'register_institution'
@@ -535,7 +535,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 type="submit"
                 id="login-submit-btn"
                 disabled={isLoading}
-                style={{ backgroundColor: preset.primaryColor }}
+                style={{ backgroundColor: preset.hex }}
                 className="w-full mt-2 hover:opacity-90 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer text-sm"
               >
                 {isLoading ? (

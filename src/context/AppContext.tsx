@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { normalizePaymentMode } from '../utils/paymentMode';
-import { nextDocumentNumber, reconcileSequence } from '../utils/sequence';
+import { nextDocumentNumber, reconcileSequence, allocateDocumentNumbers, parseDocumentNumber } from '../utils/sequence';
 import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from '../utils/passwords';
 import {
   AppThemeConfig,
@@ -1153,13 +1153,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(d.templates)) {
       setTemplates(d.templates.length > 0 ? d.templates : INITIAL_GLOBAL_TEMPLATES);
     }
-    if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
-    if (Array.isArray(d.collections)) setCollections(d.collections);
-    if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+    const seqEntries: { prefix: string; year: string; number: number }[] = [];
+    if (Array.isArray(d.vouchers)) {
+      setVouchers(d.vouchers);
+      d.vouchers.forEach((v: any) => {
+        const p = parseDocumentNumber(v?.voucherNo);
+        if (p) seqEntries.push(p);
+      });
+    }
+    if (Array.isArray(d.collections)) {
+      setCollections(d.collections);
+      d.collections.forEach((c: any) => {
+        const p = parseDocumentNumber(c?.collectionNo);
+        if (p) seqEntries.push(p);
+      });
+    }
+    if (Array.isArray(d.transactions)) {
+      setTransactions(d.transactions);
+      d.transactions.forEach((t: any) => {
+        const p = parseDocumentNumber(t?.txnNo);
+        if (p) seqEntries.push(p);
+      });
+    }
+    if (seqEntries.length > 0) {
+      reconcileSequence(seqEntries);
+    }
     if (Array.isArray(d.bankAccounts)) setBankAccounts(d.bankAccounts);
     if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
     if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
     if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
+
     if (d.institute && d.institute.name) {
       setInstitute(d.institute);
       const s = d.institute.settings || {};
@@ -3639,12 +3662,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // records even after their balance has already moved to the new voucher.
     const priorVouchersToCarry = new Map<string, string>(); // voucherId -> carryForwardMonth
 
-    const newVouchers: FeeVoucher[] = ungenerated.map((prev) => {
-      const voucherNo = nextDocumentNumber('FE', yearStr);
+    const allocatedNumbers = allocateDocumentNumbers('FE', yearStr, ungenerated.length);
+
+    const newVouchers: FeeVoucher[] = ungenerated.map((prev, idx) => {
+      const voucherNo = allocatedNumbers[idx];
 
       if (prev.priorVoucherShouldCarry && prev.priorVoucherId) {
         priorVouchersToCarry.set(prev.priorVoucherId, month);
       }
+
 
       return {
         id: generateUniqueId('vch'),
@@ -3772,9 +3798,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id,
         targetMonth,
       }));
-      apiGenerateVouchers(newVouchers, carriedPriorList).catch((err) => {
-        reportFinancialSyncFailure('Voucher generation', err);
-      });
+      apiGenerateVouchers(newVouchers, carriedPriorList)
+        .then((res) => {
+          if (res?.success && Array.isArray(res.vouchers)) {
+            const reissuedMap = new Map<string, string>();
+            res.vouchers.forEach((sv: any) => {
+              if (sv?.id && sv?.voucherNo) {
+                reissuedMap.set(sv.id, sv.voucherNo);
+              }
+            });
+            if (reissuedMap.size > 0) {
+              setVouchers((prev) =>
+                prev.map((v) => {
+                  const authoritativeNo = reissuedMap.get(v.id);
+                  return authoritativeNo && authoritativeNo !== v.voucherNo
+                    ? { ...v, voucherNo: authoritativeNo }
+                    : v;
+                })
+              );
+              const seqEntries = Array.from(reissuedMap.values())
+                .map((docNo) => parseDocumentNumber(docNo))
+                .filter(Boolean) as { prefix: string; year: string; number: number }[];
+              if (seqEntries.length > 0) {
+                reconcileSequence(seqEntries);
+              }
+            }
+          }
+        })
+        .catch((err) => {
+          reportFinancialSyncFailure('Voucher generation', err);
+        });
+
 
       const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
       logAuditEvent({
