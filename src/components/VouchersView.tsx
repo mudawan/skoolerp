@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { DEFAULT_PAYMENT_MODE, type PaymentMode } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -83,6 +84,7 @@ export const VouchersView: React.FC = () => {
     getComputedDefaultDueDate,
     roundingMultiple,
     roundingEnabled,
+    showToast,
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -354,16 +356,6 @@ export const VouchersView: React.FC = () => {
   }, [detailVoucher, templates, globalTemplates]);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-
-  // Toast state
-  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    setToastMessage({ type, text });
-    setTimeout(() => {
-      setToastMessage((current) => (current?.text === text ? null : current));
-    }, 4500);
-  };
 
   // Delete Modal State (with Chronological Block Guard)
   const [deleteModal, setDeleteModal] = useState<DeleteModalState | null>(null);
@@ -1371,7 +1363,7 @@ export const VouchersView: React.FC = () => {
       </div>
 
       {/* Generator Wizard Modal */}
-      {showGeneratorModal && previewsData && (
+      {showGeneratorModal && previewsData && createPortal(
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-5xl w-full p-3 sm:p-5 shadow-2xl space-y-2 sm:space-y-3 my-auto h-[96dvh] sm:h-auto sm:max-h-[92vh] max-h-[96dvh] flex flex-col overflow-hidden">
             {/* Modal Header */}
@@ -2071,7 +2063,8 @@ export const VouchersView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Collect Payment Modal */}
@@ -2184,33 +2177,6 @@ export const VouchersView: React.FC = () => {
           onClose={() => setExportPdfVouchers(null)}
           onSuccess={(msg) => showToast(msg)}
         />
-      )}
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-[9999] animate-in slide-in-from-bottom-5 duration-200">
-          <div
-            className={`px-4 py-3 rounded-xl shadow-xl border text-xs font-bold flex items-center gap-2.5 max-w-sm ${
-              toastMessage.type === 'success'
-                ? 'bg-slate-900 text-white border-slate-800'
-                : 'bg-rose-600 text-white border-rose-700'
-            }`}
-          >
-            {toastMessage.type === 'success' ? (
-              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
-            )}
-            <span className="flex-1">{toastMessage.text}</span>
-            <button
-              type="button"
-              onClick={() => setToastMessage(null)}
-              className="p-1 hover:bg-white/20 rounded-lg transition cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
       )}
     </div>
   );

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { User, UserRole, PermissionCategory } from '../types';
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '../utils/passwords';
 import {
   ALL_PERMISSIONS,
   PERMISSION_CATEGORIES,
@@ -230,13 +231,13 @@ export const UserModal: React.FC<UserModalProps> = ({
 
     // Validation for new user password
     if (!user) {
-      if (!trimmedPassword || trimmedPassword.length < 6) {
-        setFormError('Password is required (minimum 6 characters).');
+      if (!trimmedPassword || trimmedPassword.length < MIN_PASSWORD_LENGTH || trimmedPassword.length > MAX_PASSWORD_LENGTH) {
+        setFormError(`Password is required (${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters).`);
         setActiveTab('profile');
         return;
       }
-    } else if (trimmedPassword && trimmedPassword.length < 6) {
-      setFormError('New password must be at least 6 characters.');
+    } else if (trimmedPassword && (trimmedPassword.length < MIN_PASSWORD_LENGTH || trimmedPassword.length > MAX_PASSWORD_LENGTH)) {
+      setFormError(`New password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`);
       setActiveTab('profile');
       return;
     }
@@ -547,8 +548,9 @@ export const UserModal: React.FC<UserModalProps> = ({
                     <input
                       type={showPassword ? 'text' : 'password'}
                       id="input-user-password"
-                      placeholder={user ? 'Leave blank to preserve current' : 'Min 6 characters'}
+                      placeholder={user ? 'Leave blank to preserve current' : `${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters`}
                       required={!user}
+                      maxLength={MAX_PASSWORD_LENGTH}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="w-full pl-9 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
@@ -563,7 +565,7 @@ export const UserModal: React.FC<UserModalProps> = ({
                     </button>
                   </div>
                   <span className="text-[10px] text-slate-400 mt-0.5 block">
-                    {user ? 'Only fill if you wish to reset or change the password.' : 'Minimum 6 characters required.'}
+                    {user ? `Only fill if you wish to reset or change the password (${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters).` : `${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters required.`}
                   </span>
                 </div>
               </div>

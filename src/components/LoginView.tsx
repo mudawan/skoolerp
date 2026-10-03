@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { apiValidateCode } from '../services/apiSync';
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '../utils/passwords';
 import {
   Layers,
   Lock,
@@ -216,8 +217,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (adminPassword.length < 6) {
-      setErrorMsg('Admin password must be at least 6 characters long.');
+    if (adminPassword.length < MIN_PASSWORD_LENGTH || adminPassword.length > MAX_PASSWORD_LENGTH) {
+      setErrorMsg(`Admin password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters long.`);
       return;
     }
 
@@ -266,8 +267,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (joinPassword.length < 6) {
-      setErrorMsg('Password must be at least 6 characters long.');
+    if (joinPassword.length < MIN_PASSWORD_LENGTH || joinPassword.length > MAX_PASSWORD_LENGTH) {
+      setErrorMsg(`Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters long.`);
       return;
     }
 
@@ -758,7 +759,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                         id="reg-admin-password"
                         value={adminPassword}
                         onChange={(e) => setAdminPassword(e.target.value)}
-                        placeholder="Min 6 characters"
+                        placeholder={`${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters`}
+                        maxLength={MAX_PASSWORD_LENGTH}
                         required
                         className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-3.5 pr-9 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
                       />
@@ -937,7 +939,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                         id="connect-password"
                         value={joinPassword}
                         onChange={(e) => setJoinPassword(e.target.value)}
-                        placeholder="Min 6 characters"
+                        placeholder={`${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters`}
+                        maxLength={MAX_PASSWORD_LENGTH}
                         required
                         className="w-full bg-slate-900/80 border border-slate-700 rounded-xl pl-3.5 pr-9 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
 import { normalizePaymentMode, PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../utils/paymentMode';
 import { pendingDocumentNumber } from '../utils/sequence';
-import { MIN_PASSWORD_LENGTH } from '../utils/passwords';
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH } from '../utils/passwords';
 import {
   AppThemeConfig,
   AuditActionType,
@@ -1623,8 +1623,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'A user with this username already exists.' };
     }
     const plainPassword = userData.password?.trim() || '';
-    if (plainPassword.length < MIN_PASSWORD_LENGTH) {
-      return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+    if (plainPassword.length < MIN_PASSWORD_LENGTH || plainPassword.length > MAX_PASSWORD_LENGTH) {
+      return { success: false, error: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.` };
     }
 
     const defaultRolePerms = ROLE_PRESET_PERMISSIONS[userData.role] || ROLE_PRESET_PERMISSIONS.Viewer;
@@ -1674,8 +1674,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (updates.password !== undefined) {
       const plainPassword = updates.password.trim();
-      if (plainPassword.length < MIN_PASSWORD_LENGTH) {
-        return { success: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+      if (plainPassword.length < MIN_PASSWORD_LENGTH || plainPassword.length > MAX_PASSWORD_LENGTH) {
+        return { success: false, error: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.` };
       }
     }
 

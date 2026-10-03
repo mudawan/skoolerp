@@ -497,8 +497,8 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'Admin username is required.' });
       }
 
-      if (!adminPassword || adminPassword.trim().length < 6) {
-        return res.status(400).json({ success: false, error: 'Admin password must be at least 6 characters.' });
+      if (!adminPassword || adminPassword.trim().length < 8 || adminPassword.trim().length > 20) {
+        return res.status(400).json({ success: false, error: 'Admin password must be between 8 and 20 characters.' });
       }
 
       // Use client-provided unique code if available, otherwise generate
@@ -690,8 +690,8 @@ async function startServer() {
       if (!username || !username.trim()) {
         return res.status(400).json({ success: false, error: 'Username is required.' });
       }
-      if (!password || password.trim().length < 6) {
-        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+      if (!password || password.trim().length < 8 || password.trim().length > 20) {
+        return res.status(400).json({ success: false, error: 'Password must be between 8 and 20 characters.' });
       }
 
       const cleanCode = code.trim();
@@ -1033,8 +1033,8 @@ async function startServer() {
       if (!username || !username.trim()) {
         return res.status(400).json({ success: false, error: 'Username is required.' });
       }
-      if (!password || password.trim().length < 6) {
-        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+      if (!password || password.trim().length < 8 || password.trim().length > 20) {
+        return res.status(400).json({ success: false, error: 'Password must be between 8 and 20 characters.' });
       }
       if (!role) {
         return res.status(400).json({ success: false, error: 'Role is required.' });
@@ -1110,10 +1110,11 @@ async function startServer() {
       if (Array.isArray(req.body.permissions)) updates.permissions = req.body.permissions;
       if (req.body.status !== undefined) updates.status = req.body.status;
       if (req.body.password) {
-        if (String(req.body.password).trim().length < 6) {
-          return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+        const pTrimmed = String(req.body.password).trim();
+        if (pTrimmed.length < 8 || pTrimmed.length > 20) {
+          return res.status(400).json({ success: false, error: 'Password must be between 8 and 20 characters.' });
         }
-        updates.password_hash = await hashPassword(String(req.body.password).trim());
+        updates.password_hash = await hashPassword(pTrimmed);
       }
 
       await dbService.updateUser(req.params.id, updates);

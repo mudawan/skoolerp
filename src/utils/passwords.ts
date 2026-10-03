@@ -9,7 +9,8 @@ const HASH_BITS = 256;
 const HASH_ALGO = 'SHA-256';
 const FORMAT_TAG = 'pbkdf2';
 
-export const MIN_PASSWORD_LENGTH = 6;
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 20;
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
