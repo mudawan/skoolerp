@@ -2285,6 +2285,203 @@ async function startServer() {
     }
   });
 
+  // 4b. Bulk Carry Forward Defaulters Batch Transaction (Atomic)
+  app.post('/api/vouchers/carry-forward-batch', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
+    try {
+      const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
+      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const { voucherIds, targetMonth, addLateFine = false, customFineAmount, perVoucherFines } = req.body;
+
+      if (!Array.isArray(voucherIds) || voucherIds.length === 0 || !targetMonth) {
+        return res.status(400).json({ success: false, error: 'voucherIds array and targetMonth are required.' });
+      }
+
+      let txResult: any = null;
+
+      try {
+        await dbService.runVoucherTransaction(institutionId, { allVouchers: true }, async (lockedVouchers) => {
+          const voucherUpserts: Record<string, any> = {};
+          const sourceVouchers: any[] = [];
+          const targetVouchers: any[] = [];
+          const errors: string[] = [];
+          let processedCount = 0;
+          let totalArrearsCarried = 0;
+
+          for (const voucherId of voucherIds) {
+            const source = voucherUpserts[voucherId] || lockedVouchers.get(voucherId);
+            if (!source) {
+              errors.push(`Voucher ${voucherId} not found.`);
+              continue;
+            }
+            const voucher = { ...source };
+
+            if (voucher.status === 'Reversed') {
+              errors.push(`Voucher ${voucher.voucherNo} is reversed.`);
+              continue;
+            }
+            if (voucher.status === 'Paid' || voucher.status === 'Carried') {
+              errors.push(`Voucher ${voucher.voucherNo} is already in '${voucher.status}' status.`);
+              continue;
+            }
+
+            const outstandingBalance = (voucher.netDue || 0) - (voucher.amountPaid || 0);
+            if (outstandingBalance <= 0) {
+              errors.push(`Voucher ${voucher.voucherNo} has no outstanding balance.`);
+              continue;
+            }
+
+            // Mark source voucher as carried
+            voucher.status = 'Carried';
+            voucher.carryForwardMonth = targetMonth;
+            voucherUpserts[voucherId] = voucher;
+            sourceVouchers.push(voucher);
+            totalArrearsCarried += outstandingBalance;
+
+            // Check if target voucher exists for this student in targetMonth
+            let targetSource: any = null;
+            // Check in current batch upserts first
+            for (const v of Object.values(voucherUpserts)) {
+              if (v.id !== voucherId && v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed') {
+                targetSource = v;
+                break;
+              }
+            }
+            // If not found in upserts, look in existing locked vouchers
+            if (!targetSource) {
+              for (const v of lockedVouchers.values()) {
+                if (v.id !== voucherId && !voucherUpserts[v.id] && v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed') {
+                  targetSource = v;
+                  break;
+                }
+              }
+            }
+
+            const fineToApply = addLateFine
+              ? perVoucherFines?.[voucherId] !== undefined
+                ? perVoucherFines[voucherId]
+                : customFineAmount !== undefined
+                ? customFineAmount
+                : voucher.lateFeeRate || 0
+              : 0;
+
+            if (targetSource) {
+              const targetVoucher = {
+                ...targetSource,
+                particulars: Array.isArray(targetSource.particulars) ? [...targetSource.particulars] : [],
+              };
+
+              const prevBalIndex = targetVoucher.particulars.findIndex((p: any) => p.kind === 'PreviousBalance');
+              if (prevBalIndex >= 0) {
+                targetVoucher.particulars[prevBalIndex] = {
+                  ...targetVoucher.particulars[prevBalIndex],
+                  amount: (Number(targetVoucher.particulars[prevBalIndex].amount) || 0) + outstandingBalance,
+                };
+              } else {
+                targetVoucher.particulars.push({
+                  kind: 'PreviousBalance',
+                  label: `Arrears (${voucher.month})`,
+                  amount: outstandingBalance,
+                });
+              }
+
+              if (fineToApply > 0) {
+                const fineIndex = targetVoucher.particulars.findIndex((p: any) => p.kind === 'Fine');
+                if (fineIndex >= 0) {
+                  targetVoucher.particulars[fineIndex] = {
+                    ...targetVoucher.particulars[fineIndex],
+                    amount: (Number(targetVoucher.particulars[fineIndex].amount) || 0) + fineToApply,
+                  };
+                } else {
+                  targetVoucher.particulars.push({
+                    kind: 'Fine',
+                    label: 'Late Fee',
+                    amount: fineToApply,
+                  });
+                }
+              }
+
+              targetVoucher.prevBalance = (Number(targetVoucher.prevBalance) || 0) + outstandingBalance;
+              targetVoucher.netDue = targetVoucher.particulars.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+              if (targetVoucher.amountPaid >= targetVoucher.netDue && targetVoucher.netDue > 0) {
+                targetVoucher.status = 'Paid';
+              } else if (targetVoucher.amountPaid > 0) {
+                targetVoucher.status = 'Partial';
+              } else {
+                targetVoucher.status = 'Issued';
+              }
+
+              voucherUpserts[targetVoucher.id] = targetVoucher;
+              targetVouchers.push(targetVoucher);
+            }
+
+            processedCount++;
+          }
+
+          txResult = {
+            processedCount,
+            totalArrearsCarried,
+            sourceVouchers,
+            targetVouchers,
+            errors,
+            allUpserts: Object.values(voucherUpserts),
+          };
+
+          return { writes: { voucherUpserts }, result: null };
+        });
+      } catch (txErr: any) {
+        const status = txErr?.httpStatus || 500;
+        return res.status(status).json({ success: false, error: txErr?.message || 'Bulk carry forward failed' });
+      }
+
+      dbService.incrementRevision(institutionId);
+      const revInfo = dbService.getRevisionInfo(institutionId);
+
+      await recordAudit(req, {
+        actionType: 'carry_forward',
+        actionTitle: 'Batch Balance Carried Forward',
+        module: 'Defaulters',
+        description: `Carried forward ${txResult.processedCount} defaulter balances totaling Rs ${txResult.totalArrearsCarried.toLocaleString()} into ${targetMonth}${addLateFine ? ' with late fines' : ''}.`,
+        targetId: `Batch-${targetMonth}`,
+        targetLabel: `${txResult.processedCount} Defaulters → ${targetMonth}`,
+        month: targetMonth,
+        amount: txResult.totalArrearsCarried,
+        metadata: {
+          voucherIdsCount: voucherIds.length,
+          processedCount: txResult.processedCount,
+          targetMonth,
+          addLateFine,
+          customFineAmount,
+        },
+      });
+
+      broadcastEvent(
+        {
+          type: 'vouchers_bulk_carried',
+          institutionId,
+          targetMonth,
+          count: txResult.processedCount,
+          revision: revInfo.revision,
+          originClientId: clientId,
+          lastModified: revInfo.lastModified,
+        },
+        institutionId
+      );
+
+      res.json({
+        success: true,
+        count: txResult.processedCount,
+        sourceVouchers: txResult.sourceVouchers,
+        targetVouchers: txResult.targetVouchers,
+        updatedVouchers: txResult.allUpserts,
+        errors: txResult.errors,
+        revision: revInfo.revision,
+      });
+    } catch (err: any) {
+      console.error('[API] Error in bulk carry forward:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Bulk carry forward failed' });
+    }
+  });
+
   /**
    * Targeted persistence endpoint for voucher/transaction/collection changes
    * where the CLIENT owns the business logic (e.g. voucher deletion cascade

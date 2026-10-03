@@ -370,9 +370,7 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                     <tfoot className="divide-y divide-slate-200">
                       <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
                         <td className="p-1">
-                          {getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple) > 1
-                            ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple)}):`
-                            : 'NET DUE AMOUNT:'}
+                          NET DUE AMOUNT:
                         </td>
                         <td className="p-1 text-right text-teal-700 font-bold">
                           {formatCurrency(voucher.netDue)}

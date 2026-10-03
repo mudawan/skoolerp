@@ -95,6 +95,7 @@ import {
   apiGetPreferences,
   apiSavePreferences,
   apiCarryForwardVoucher,
+  apiCarryForwardBatch,
   apiVoucherBatchUpdate,
   syncSimpleEntityCollectionNow,
   subscribeSyncFailures,
@@ -103,7 +104,18 @@ import {
   checkMutationAllowed,
   subscribeDbStatus,
   apiUpdateInstituteSettings,
+  setActionLockActive,
 } from '../services/apiSync';
+import { DatabaseActionLockModal } from '../components/DatabaseActionLockModal';
+
+export interface ActionLockState {
+  active: boolean;
+  title: string;
+  current: number;
+  total: number;
+  message?: string;
+  phase?: 'processing' | 'persisting' | 'completed';
+}
 
 export interface DownstreamConflict {
   voucher: FeeVoucher;
@@ -323,7 +335,7 @@ interface AppContextType {
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ) => { success: boolean; successCount: number; errors: string[] };
+  ) => Promise<{ success: boolean; successCount: number; errors: string[] }>;
   undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
@@ -427,6 +439,12 @@ interface AppContextType {
 
   // Global In-App Notifications / Toasts
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', durationMs?: number) => void;
+
+  // Transactional Action Lock
+  actionLock: ActionLockState | null;
+  startActionLock: (title: string, total: number, message?: string) => void;
+  updateActionLock: (updates: Partial<Omit<ActionLockState, 'active'>>) => void;
+  stopActionLock: (completionMessage?: string, delayMs?: number) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -531,6 +549,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTimeout(() => {
         setToast((current) => (current?.id === id ? null : current));
       }, durationMs);
+    },
+    []
+  );
+
+  // Central Database Action Lock (guards in-process transactions and UI operations)
+  const [actionLock, setActionLock] = useState<ActionLockState | null>(null);
+  const actionLockSafetyTimerRef = useRef<any>(null);
+
+  const startActionLock = useCallback(
+    (title: string, total: number, message?: string) => {
+      if (actionLockSafetyTimerRef.current) {
+        clearTimeout(actionLockSafetyTimerRef.current);
+      }
+      setActionLockActive(true);
+      setActionLock({
+        active: true,
+        title,
+        current: 0,
+        total: Math.max(1, total),
+        message,
+        phase: 'processing',
+      });
+      // Safety auto-unlock after 35 seconds to prevent permanent UI lockup if an unhandled network error occurs
+      actionLockSafetyTimerRef.current = setTimeout(() => {
+        setActionLockActive(false);
+        setActionLock(null);
+      }, 35000);
+    },
+    []
+  );
+
+  const updateActionLock = useCallback(
+    (updates: Partial<Omit<ActionLockState, 'active'>>) => {
+      setActionLock((prev) => (prev && prev.active ? { ...prev, ...updates } : prev));
+    },
+    []
+  );
+
+  const stopActionLock = useCallback(
+    async (completionMessage?: string, delayMs: number = 300) => {
+      if (actionLockSafetyTimerRef.current) {
+        clearTimeout(actionLockSafetyTimerRef.current);
+        actionLockSafetyTimerRef.current = null;
+      }
+      if (completionMessage) {
+        setActionLock((prev) =>
+          prev && prev.active
+            ? {
+                ...prev,
+                current: prev.total,
+                message: completionMessage,
+                phase: 'completed',
+              }
+            : null
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      setActionLockActive(false);
+      setActionLock(null);
     },
     []
   );
@@ -4617,29 +4694,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const bulkCarryForwardDefaulters = (
+  const bulkCarryForwardDefaulters = async (
     voucherIds: string[],
     targetMonth: string,
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ): { success: boolean; successCount: number; errors: string[] } => {
-    let successCount = 0;
-    const errors: string[] = [];
-    voucherIds.forEach((vId) => {
-      const fineToUse = perVoucherFines?.[vId] ?? customFineAmount;
-      const res = carryForwardDefaulter(vId, targetMonth, addLateFine, fineToUse);
-      if (res.success) {
-        successCount++;
-      } else if (res.error) {
-        errors.push(res.error);
+  ): Promise<{ success: boolean; successCount: number; errors: string[] }> => {
+    const perm = ensureMutationAllowed('Bulk carry forward defaulters');
+    if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error || 'Blocked'] };
+    if (!voucherIds || voucherIds.length === 0) return { success: true, successCount: 0, errors: [] };
+
+    startActionLock(
+      'Carrying Forward Defaulter Balances',
+      voucherIds.length,
+      `Preparing ${voucherIds.length} defaulter vouchers for atomic database carry-forward...`
+    );
+
+    try {
+      updateActionLock({
+        current: Math.max(1, Math.round(voucherIds.length * 0.2)),
+        message: `Executing atomic ledger transaction for ${voucherIds.length} vouchers in PostgreSQL...`,
+      });
+
+      const batchRes = await apiCarryForwardBatch({
+        voucherIds,
+        targetMonth,
+        addLateFine,
+        customFineAmount,
+        perVoucherFines,
+      });
+
+      if (!batchRes.success) {
+        throw new Error(batchRes.error || 'Bulk carry-forward transaction failed on server.');
       }
-    });
-    return {
-      success: successCount > 0,
-      successCount,
-      errors,
-    };
+
+      updateActionLock({
+        current: Math.round(voucherIds.length * 0.85),
+        message: `Applying ${batchRes.count ?? voucherIds.length} updated vouchers to ledger...`,
+      });
+
+      // Synchronize returned updated vouchers into state and vouchersRef
+      if (Array.isArray(batchRes.updatedVouchers) && batchRes.updatedVouchers.length > 0) {
+        const updateMap = new Map<string, FeeVoucher>();
+        batchRes.updatedVouchers.forEach((uv: any) => {
+          if (uv && uv.id) updateMap.set(uv.id, uv);
+        });
+
+        const currentList = vouchersRef.current;
+        let mergedList = currentList.map((v) => updateMap.get(v.id) || v);
+
+        // Include any newly created destination vouchers not in currentList
+        batchRes.updatedVouchers.forEach((uv: any) => {
+          if (uv && uv.id && !currentList.some((v) => v.id === uv.id)) {
+            mergedList.push(uv);
+          }
+        });
+
+        // Collect student IDs affected to recalculate sequence
+        const affectedStudentIds = Array.from(
+          new Set(batchRes.updatedVouchers.map((v: any) => v.studentId).filter(Boolean))
+        );
+        mergedList = recalculateVouchersSequence(mergedList, affectedStudentIds);
+
+        vouchersRef.current = mergedList;
+        setVouchers(mergedList);
+      } else {
+        // Fallback: apply client carry forward calculations if updated vouchers list was empty
+        voucherIds.forEach((vId) => {
+          const fineToUse = perVoucherFines?.[vId] ?? customFineAmount;
+          carryForwardDefaulter(vId, targetMonth, addLateFine, fineToUse);
+        });
+      }
+
+      const successCount = batchRes.count ?? voucherIds.length;
+      updateActionLock({
+        current: voucherIds.length,
+        message: `Successfully saved ${successCount} carried vouchers in database.`,
+        phase: 'completed',
+      });
+
+      await stopActionLock(`Completed: ${successCount} defaulters carried forward`, 350);
+
+      return {
+        success: true,
+        successCount,
+        errors: batchRes.errors || [],
+      };
+    } catch (err: any) {
+      console.error('[BulkCarryForward] Error:', err);
+      await stopActionLock();
+      showToast(err?.message || 'Failed to carry forward defaulters', 'error');
+      return {
+        success: false,
+        successCount: 0,
+        errors: [err?.message || 'Carry-forward failed'],
+      };
+    }
   };
 
   const undoCarryForwardVoucher = (
@@ -5775,6 +5926,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         carryForwardDefaulter,
         bulkCarryForwardDefaulters,
         undoCarryForwardVoucher,
+        actionLock,
+        startActionLock,
+        updateActionLock,
+        stopActionLock,
         getDownstreamVouchersInfo,
         deleteVoucher,
         bulkDeleteVouchers,
@@ -5865,6 +6020,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           </div>
         </div>
       )}
+
+      {/* Global Database Action Lock Modal */}
+      <DatabaseActionLockModal actionLock={actionLock} />
     </AppContext.Provider>
   );
 };

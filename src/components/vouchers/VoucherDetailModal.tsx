@@ -68,9 +68,7 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
               <tfoot className="divide-y divide-slate-200">
                 <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
                   <td className="p-2 sm:p-2.5 text-[11px] sm:text-xs">
-                    {getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple) > 1
-                      ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher?.roundingMultiple)}):`
-                      : 'NET DUE AMOUNT:'}
+                    NET DUE AMOUNT:
                   </td>
                   <td className="p-2 sm:p-2.5 text-right text-teal-700 font-bold text-xs sm:text-sm">
                     {formatCurrency(voucher.netDue)}

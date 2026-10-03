@@ -65,6 +65,20 @@ let remoteUpdateListeners: ((data: any) => void)[] = [];
 let syncFailureListeners: ((info: SyncFailureInfo) => void)[] = [];
 let eventSource: EventSource | null = null;
 
+let actionLockDepth = 0;
+
+export function setActionLockActive(active: boolean) {
+  if (active) {
+    actionLockDepth++;
+  } else {
+    actionLockDepth = Math.max(0, actionLockDepth - 1);
+  }
+}
+
+export function isActionLockActive(): boolean {
+  return actionLockDepth > 0;
+}
+
 // Purge any lingering read-replica cache keys from client localStorage
 try {
   Object.keys(localStorage).forEach((k) => {
@@ -824,9 +838,14 @@ export function initLiveRealtimeSync(instId?: string): () => void {
           msg.type === 'db_mutation' ||
           msg.type === 'vouchers_generated' ||
           msg.type === 'payment_collected' ||
-          msg.type === 'voucher_carried'
+          msg.type === 'voucher_carried' ||
+          msg.type === 'vouchers_bulk_carried'
         ) {
           if (msg.originClientId !== CLIENT_ID && (!msg.institutionId || msg.institutionId === targetId)) {
+            if (isActionLockActive()) {
+              // Defer applying remote state while local transactional action lock is in progress
+              return;
+            }
             if (msg.revision) currentRevision = msg.revision;
             const freshState = await fetchServerState(targetId);
             if (freshState?.success && freshState.data) {
@@ -865,6 +884,9 @@ export function initLiveRealtimeSync(instId?: string): () => void {
       if (res.ok) {
         const data = await res.json();
         if (data.revision && data.revision > currentRevision) {
+          if (isActionLockActive()) {
+            return;
+          }
           currentRevision = data.revision;
           const fresh = await fetchServerState(targetId);
           if (fresh?.success && fresh.data) {
@@ -1257,6 +1279,45 @@ export async function apiCarryForwardVoucher(params: {
   try {
     const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/carry-forward', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-client-id': CLIENT_ID,
+        'x-institution-id': instId,
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network request failed' };
+  }
+}
+
+export async function apiCarryForwardBatch(params: {
+  voucherIds: string[];
+  targetMonth: string;
+  addLateFine?: boolean;
+  customFineAmount?: number;
+  perVoucherFines?: Record<string, number>;
+}): Promise<{
+  success: boolean;
+  count?: number;
+  sourceVouchers?: any[];
+  targetVouchers?: any[];
+  updatedVouchers?: any[];
+  errors?: string[];
+  error?: string;
+}> {
+  if (!isConnected) {
+    return {
+      success: false,
+      error: 'Database is currently offline. Balance carry-forward is blocked until connection to PostgreSQL is restored.',
+    };
+  }
+  try {
+    const instId = activeInstitutionId || 'default';
+    const res = await fetch('/api/vouchers/carry-forward-batch', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -340,11 +340,11 @@ export const DefaultersView: React.FC = () => {
     });
   };
 
-  const executeCarryForward = () => {
+  const executeCarryForward = async () => {
     if (!carryModal || carryModal.targetVouchers.length === 0) return;
 
     const idsToCarry = carryModal.targetVouchers.map((v) => v.id);
-    const { successCount } = bulkCarryForwardDefaulters(
+    const { successCount } = await bulkCarryForwardDefaulters(
       idsToCarry,
       carryModal.targetMonth,
       addLateFine,
@@ -1358,9 +1358,7 @@ export const DefaultersView: React.FC = () => {
                   <tfoot className="divide-y divide-slate-200">
                     <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
                       <td className="p-2">
-                        {getEffectiveMultiple(roundingEnabled, roundingMultiple, inspectVoucher?.roundingMultiple) > 1
-                          ? `NET DUE AMOUNT (ROUNDED TO ${getEffectiveMultiple(roundingEnabled, roundingMultiple, inspectVoucher?.roundingMultiple)}):`
-                          : 'NET DUE AMOUNT:'}
+                        NET DUE AMOUNT:
                       </td>
                       <td className="p-2 text-right text-teal-700 font-bold">
                         {formatCurrency(inspectVoucher.netDue)}

@@ -52,6 +52,8 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     unlockMonth,
     isMonthLocked,
     bulkCarryForwardDefaulters,
+    startActionLock,
+    stopActionLock,
     collectVoucherPayment,
     defaultLateFeeRate,
     currentUser,
@@ -226,13 +228,13 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false);
 
   // Execute Carry Forward
-  const handleCarryForwardAll = () => {
+  const handleCarryForwardAll = async () => {
     if (uncarriedDefaulters.length === 0) return;
     setIsProcessingCarry(true);
 
     try {
       const ids = uncarriedDefaulters.map((v) => v.id);
-      const res = bulkCarryForwardDefaulters(
+      const res = await bulkCarryForwardDefaulters(
         ids,
         nextMonthStr,
         addLateFine,
@@ -282,40 +284,58 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   };
 
   // Final Lock Fee Books
-  const handleFinalLock = () => {
+  const handleFinalLock = async () => {
     if (uncarriedDefaulters.length > 0) {
       showToast('Cannot lock fee books: outstanding defaulters must be carried forward first.', 'error');
       return;
     }
 
     setIsLocking(true);
-    const res = lockMonth(
-      selectedMonth,
-      closureNotes ||
-        `Month-End closure and fee books finalized for ${formatMonthName(selectedMonth)}. Collections reconciled.`
+    startActionLock(
+      'Locking Fee Books',
+      1,
+      `Finalizing ledger and sealing fee books for ${formatMonthName(selectedMonth)}...`
     );
-
-    if (res.success) {
-      if (advanceActiveMonth) {
-        setActiveMonth(nextMonthStr);
-      }
-      showToast(
-        `Fee books for ${formatMonthName(selectedMonth)} have been locked & sealed!`,
-        'success'
+    try {
+      const res = lockMonth(
+        selectedMonth,
+        closureNotes ||
+          `Month-End closure and fee books finalized for ${formatMonthName(selectedMonth)}. Collections reconciled.`
       );
-    } else {
-      showToast(res.error || 'Failed to lock fee books.', 'error');
+
+      if (res.success) {
+        if (advanceActiveMonth) {
+          setActiveMonth(nextMonthStr);
+        }
+        showToast(
+          `Fee books for ${formatMonthName(selectedMonth)} have been locked & sealed!`,
+          'success'
+        );
+      } else {
+        showToast(res.error || 'Failed to lock fee books.', 'error');
+      }
+    } finally {
+      setIsLocking(false);
+      await stopActionLock('Fee books locked successfully', 300);
     }
-    setIsLocking(false);
   };
 
   // Unlock Fee Books
-  const handleUnlock = () => {
-    const res = unlockMonth(selectedMonth);
-    if (res.success) {
-      setUnlockConfirmOpen(false);
-    } else {
-      showToast(res.error || 'Failed to unlock fee books.', 'error');
+  const handleUnlock = async () => {
+    startActionLock(
+      'Unlocking Fee Books',
+      1,
+      `Re-opening fee books for ${formatMonthName(selectedMonth)}...`
+    );
+    try {
+      const res = unlockMonth(selectedMonth);
+      if (res.success) {
+        setUnlockConfirmOpen(false);
+      } else {
+        showToast(res.error || 'Failed to unlock fee books.', 'error');
+      }
+    } finally {
+      await stopActionLock('Fee books unlocked', 300);
     }
   };
 
