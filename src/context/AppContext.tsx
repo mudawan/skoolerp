@@ -1424,6 +1424,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(me.user);
         setIsAuthenticated(true);
         loadUserPreferences().catch(() => {});
+        try {
+          sessionStorage.removeItem('school_timeout_notice');
+          localStorage.setItem('quickfees_last_activity_timestamp', String(Date.now()));
+        } catch {}
         if (me.institution) {
           setCurrentInstitution(me.institution);
           setActiveInstitutionId(me.institution.id);
@@ -1558,6 +1562,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         try {
           sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+          sessionStorage.removeItem('school_timeout_notice');
+          localStorage.setItem('quickfees_last_activity_timestamp', String(Date.now()));
         } catch {}
 
         return { success: true, user: apiRes.user };
