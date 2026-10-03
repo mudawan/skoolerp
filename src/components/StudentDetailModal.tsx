@@ -835,6 +835,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                               type="number"
                               min={0}
                               value={it.amount}
+                              onWheel={(e) => (e.target as HTMLElement).blur()}
                               onChange={(e) =>
                                 setAdmItems((prev) =>
                                   prev.map((p) => (p.kind === it.kind ? { ...p, amount: e.target.value } : p))

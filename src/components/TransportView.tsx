@@ -2090,6 +2090,7 @@ export const TransportView: React.FC = () => {
                       min="0"
                       max={totalDaysInMonth}
                       value={globalMonthDays}
+                      onWheel={(e) => (e.target as HTMLElement).blur()}
                       onChange={(e) => handleGlobalDaysChange(Number(e.target.value))}
                       className="w-10 text-center font-bold text-slate-900 text-xs py-1 bg-white rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-2xs shrink-0"
                       title={`Active days in ${activeMonth} (0 to ${totalDaysInMonth})`}

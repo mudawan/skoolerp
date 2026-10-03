@@ -1470,7 +1470,7 @@ export const VouchersView: React.FC = () => {
 
             {/* Parameters & Configuration Toolbar (Collapsible) */}
             {!isParamsCollapsed && (
-              <div className="bg-slate-50 p-2 sm:p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2 max-h-[35vh] sm:max-h-none overflow-y-auto">
+              <div className="bg-slate-50 p-2 sm:p-2.5 rounded-xl border border-slate-200 text-xs shrink-0 space-y-2 relative z-30 overflow-visible">
                 <div
                   className={`grid gap-2 sm:gap-2.5 ${
                     scope === 'class' || scope === 'student'
@@ -1478,7 +1478,7 @@ export const VouchersView: React.FC = () => {
                       : 'grid-cols-2 sm:grid-cols-4'
                   }`}
                 >
-                  <div>
+                  <div className="relative z-10">
                     <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                       <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Target Month</label>
                     </div>
@@ -1497,7 +1497,7 @@ export const VouchersView: React.FC = () => {
                     />
                   </div>
 
-                  <div>
+                  <div className="relative z-10">
                     <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                       <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Scope</label>
                     </div>
@@ -1513,7 +1513,7 @@ export const VouchersView: React.FC = () => {
                   </div>
 
                   {scope === 'class' ? (
-                    <div>
+                    <div className="relative z-10">
                       <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                         <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Select Class</label>
                       </div>
@@ -1530,7 +1530,7 @@ export const VouchersView: React.FC = () => {
                       </select>
                     </div>
                   ) : scope === 'student' ? (
-                    <div>
+                    <div className="relative z-40">
                       <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                         <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Select Student</label>
                       </div>
@@ -1552,15 +1552,7 @@ export const VouchersView: React.FC = () => {
                         const selectedStudent = students.find((s) => s.id === selectedSingleStudentId);
                         return (
                           <div className="relative min-w-0" ref={singleStudentComboRef}>
-                            {/* Click outside backdrop */}
-                            {isSingleStudentComboOpen && (
-                              <div
-                                className="fixed inset-0 z-40 bg-transparent"
-                                onClick={() => setIsSingleStudentComboOpen(false)}
-                              />
-                            )}
-
-                            <div className="relative z-50">
+                            <div className="relative">
                               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                               <input
                                 type="text"
@@ -1602,7 +1594,7 @@ export const VouchersView: React.FC = () => {
 
                             {/* Dropdown Popover List */}
                             {isSingleStudentComboOpen && (
-                              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100 ring-1 ring-slate-900/10">
+                              <div className="absolute top-full left-0 mt-1.5 w-[320px] sm:w-[380px] max-w-[90vw] bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto divide-y divide-slate-100 ring-1 ring-slate-900/10">
                                 {filteredCandidates.length > 0 ? (
                                   filteredCandidates.slice(0, 50).map((s) => {
                                     const cls = classes.find((c) => c.id === s.classId);
@@ -1671,7 +1663,7 @@ export const VouchersView: React.FC = () => {
                     </div>
                   ) : null}
 
-                  <div>
+                  <div className="relative z-10">
                     <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                       <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Due Date</label>
                       {defaultDueDateEnabled && dueDateInput && (
@@ -1699,6 +1691,7 @@ export const VouchersView: React.FC = () => {
                     <input
                       type="number"
                       value={lateFeeInput}
+                      onWheel={(e) => (e.target as HTMLElement).blur()}
                       onChange={(e) => setLateFeeInput(Number(e.target.value))}
                       className="w-full px-2 sm:px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:ring-2 focus:ring-teal-500 focus:outline-none"
                     />
@@ -1780,7 +1773,7 @@ export const VouchersView: React.FC = () => {
               ).length;
 
               return (
-                <div className="flex flex-col flex-1 min-h-0 space-y-1.5 sm:space-y-2">
+                <div className="flex flex-col flex-1 min-h-0 space-y-1.5 sm:space-y-2 relative z-10">
                   {/* Summary Metrics & Selection Controls */}
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 bg-slate-50 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
                     <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 min-w-0">

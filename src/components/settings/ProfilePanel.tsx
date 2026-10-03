@@ -454,6 +454,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
                   max={180}
                   value={profileData.sessionTimeoutMinutes ?? 10}
                   disabled={!hasPermission('settings.manage')}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) => {
                     const val = parseInt(e.target.value, 10);
                     setProfileData({

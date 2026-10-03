@@ -83,6 +83,7 @@ export const StopModal: React.FC<StopModalProps> = ({
               required
               min="0"
               value={stopData.monthlyFare}
+              onWheel={(e) => (e.target as HTMLElement).blur()}
               onChange={(e) =>
                 setStopData({ ...stopData, monthlyFare: Math.max(0, Number(e.target.value) || 0) })
               }
@@ -96,6 +97,7 @@ export const StopModal: React.FC<StopModalProps> = ({
               type="number"
               min="1"
               value={stopData.sortOrder}
+              onWheel={(e) => (e.target as HTMLElement).blur()}
               onChange={(e) => setStopData({ ...stopData, sortOrder: Number(e.target.value) })}
               className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold"
             />

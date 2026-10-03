@@ -403,6 +403,23 @@ function MainApp() {
 }
 
 export default function App() {
+  // Globally prevent mouse wheel from incrementing/decrementing numeric inputs
+  useEffect(() => {
+    const handleGlobalWheel = (e: WheelEvent) => {
+      const activeEl = document.activeElement;
+      if (activeEl instanceof HTMLInputElement && activeEl.type === 'number') {
+        activeEl.blur();
+      }
+      if (e.target instanceof HTMLInputElement && e.target.type === 'number') {
+        e.target.blur();
+      }
+    };
+    window.addEventListener('wheel', handleGlobalWheel, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('wheel', handleGlobalWheel, { capture: true });
+    };
+  }, []);
+
   return (
     <AppProvider>
       <MainApp />

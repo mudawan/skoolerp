@@ -265,6 +265,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                         required
                         min="1"
                         value={amount}
+                        onWheel={(e) => (e.target as HTMLElement).blur()}
                         onChange={(e) =>
                           setAmount(e.target.value === '' ? '' : Number(e.target.value))
                         }

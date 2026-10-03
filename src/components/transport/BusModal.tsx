@@ -95,6 +95,7 @@ export const BusModal: React.FC<BusModalProps> = ({
               type="number"
               min="1"
               value={busData.sortOrder}
+              onWheel={(e) => (e.target as HTMLElement).blur()}
               onChange={(e) => setBusData({ ...busData, sortOrder: Number(e.target.value) })}
               className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold"
             />

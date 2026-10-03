@@ -630,6 +630,7 @@ export const ClassesView: React.FC = () => {
                   required
                   min="0"
                   value={formData.monthlyFee}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) => setFormData({ ...formData, monthlyFee: Number(e.target.value) })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-bold text-slate-900"
                 />
@@ -641,6 +642,7 @@ export const ClassesView: React.FC = () => {
                   type="number"
                   min="1"
                   value={formData.sortOrder}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) => setFormData({ ...formData, sortOrder: Number(e.target.value) })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />

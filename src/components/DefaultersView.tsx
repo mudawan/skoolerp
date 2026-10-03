@@ -52,6 +52,7 @@ export const DefaultersView: React.FC = () => {
     defaultLateFeeRate,
     roundingMultiple,
     roundingEnabled,
+    showToast,
   } = useApp();
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -122,16 +123,6 @@ export const DefaultersView: React.FC = () => {
   useEffect(() => {
     setCurrentPage(1);
   }, [activeTab, searchTerm, selectedClassId, itemsPerPage]);
-
-  // Toast state
-  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    setToastMessage({ type, text });
-    setTimeout(() => {
-      setToastMessage((current) => (current?.text === text ? null : current));
-    }, 4500);
-  };
 
   // Undo Carry Forward Confirmation Modal State
   const [undoCarryModal, setUndoCarryModal] = useState<{
@@ -455,32 +446,6 @@ export const DefaultersView: React.FC = () => {
 
   return (
     <div className="space-y-6 relative" id="defaulters-view-container">
-      {/* Toast Notification Banner */}
-      {toastMessage && (
-        <div className="fixed top-20 right-6 z-[9999] animate-in fade-in slide-in-from-top-4 duration-300">
-          <div
-            className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl border text-xs font-bold ${
-              toastMessage.type === 'success'
-                ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
-                : 'bg-rose-900 text-rose-100 border-rose-700'
-            }`}
-          >
-            {toastMessage.type === 'success' ? (
-              <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
-            )}
-            <span>{toastMessage.text}</span>
-            <button
-              onClick={() => setToastMessage(null)}
-              className="ml-2 text-white/70 hover:text-white cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs">
         <div>
@@ -886,6 +851,7 @@ export const DefaultersView: React.FC = () => {
                   id="input-carry-fine-amount"
                   disabled={!addLateFine}
                   value={addLateFine ? carryFineAmount : 0}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}
                   className={`w-20 pr-2 py-1 text-xs font-mono font-bold text-right bg-transparent focus:outline-none ${
                     addLateFine ? 'text-slate-900' : 'text-slate-400 cursor-not-allowed'
@@ -1505,6 +1471,7 @@ export const DefaultersView: React.FC = () => {
                   id="modal-input-carry-fine-amount"
                   disabled={!addLateFine}
                   value={addLateFine ? carryFineAmount : 0}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}
                   className={`w-24 pr-2.5 py-1 text-xs font-mono font-bold text-right bg-transparent focus:outline-none ${
                     addLateFine ? 'text-slate-900' : 'text-slate-400 cursor-not-allowed'

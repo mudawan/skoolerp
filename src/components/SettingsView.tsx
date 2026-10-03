@@ -170,7 +170,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [selectedVoucherCopyOrder, setSelectedVoucherCopyOrder] = useState<VoucherCopyType[]>(voucherCopyOrder);
   const [selectedVoucherDefaultCopies, setSelectedVoucherDefaultCopies] = useState<VoucherCopyType[]>(voucherDefaultCopies);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Month data availability and closure status for MonthPicker components
   const pickerWindowMonths = useMemo(
@@ -270,8 +269,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setVoucherCopyOrder(selectedVoucherCopyOrder);
     setVoucherDefaultCopies(selectedVoucherDefaultCopies);
     setShowPolicyConfirmModal(false);
-    setToastMessage('Fee Voucher Policies & Print Layout updated and activated successfully!');
-    showToast('Fee Voucher Policies updated successfully!', 'success');
+    showToast('Fee Voucher Policies & Print Layout updated and activated successfully!', 'success');
   };
 
   const handleResetPolicyDrafts = () => {
@@ -288,15 +286,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setSelectedVoucherDefaultCopies(voucherDefaultCopies);
     showToast('Policy selections reset to current saved configuration.', 'info');
   };
-
-  // Auto-close toast popup notifications after 3.5 seconds
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => {
-      setToastMessage(null);
-    }, 3500);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
 
   // Institute Profile Form State
   const [profileData, setProfileData] = useState({ ...institute });
@@ -575,20 +564,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     updateGlobalTemplatesList(updatedGlobalTemplates, effectiveTemplateMonth);
     if (effectiveTemplateMonth === 'all') {
-      setToastMessage('Global fee particulars roster order & rates saved for All Months! All vouchers and PDF exports will follow this baseline.');
+      showToast('Global fee particulars roster order & rates saved for All Months! All vouchers and PDF exports will follow this baseline.', 'success');
     } else {
-      setToastMessage(`Global fee particulars override saved for ${formatMonthName(effectiveTemplateMonth)}! Vouchers generated for this month will use this global override.`);
+      showToast(`Global fee particulars override saved for ${formatMonthName(effectiveTemplateMonth)}! Vouchers generated for this month will use this global override.`, 'success');
     }
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleClearGlobalMonthOverride = () => {
     if (effectiveTemplateMonth === 'all') return;
     deleteGlobalTemplates(effectiveTemplateMonth);
-    setToastMessage(
-      `Global month override cleared for ${formatMonthName(effectiveTemplateMonth)}. Reverted to All-Months Global defaults.`
+    showToast(
+      `Global month override cleared for ${formatMonthName(effectiveTemplateMonth)}. Reverted to All-Months Global defaults.`,
+      'info'
     );
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleSaveAllParticulars = (e: React.FormEvent) => {
@@ -873,15 +861,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     saveClassTemplateOverrides(selectedClassId, effectiveTemplateMonth, itemsToSave);
     if (effectiveTemplateMonth === 'all') {
-      setToastMessage(
-        `Class-level fee template for ${selectedClass.name} saved for All Months! This permanently overrides global defaults for all students in ${selectedClass.name}.`
+      showToast(
+        `Class-level fee template for ${selectedClass.name} saved for All Months! This permanently overrides global defaults for all students in ${selectedClass.name}.`,
+        'success'
       );
     } else {
-      setToastMessage(
-        `Class-level fee template for ${selectedClass.name} saved for ${formatMonthName(effectiveTemplateMonth)}! Overrides global defaults for this billing month.`
+      showToast(
+        `Class-level fee template for ${selectedClass.name} saved for ${formatMonthName(effectiveTemplateMonth)}! Overrides global defaults for this billing month.`,
+        'success'
       );
     }
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleSaveClassOverrides = (e: React.FormEvent) => {
@@ -893,15 +882,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const classObj = classes.find((c) => c.id === classIdToClear);
     deleteClassTemplates(classIdToClear, monthToClear);
     if (monthToClear === 'all') {
-      setToastMessage(
-        `All-months class template overrides cleared for ${classObj?.name || 'Class'}. Reverted to Global Default templates.`
+      showToast(
+        `All-months class template overrides cleared for ${classObj?.name || 'Class'}. Reverted to Global Default templates.`,
+        'info'
       );
     } else {
-      setToastMessage(
-        `Class-level template overrides cleared for ${classObj?.name || 'Class'} for ${formatMonthName(monthToClear)}.`
+      showToast(
+        `Class-level template overrides cleared for ${classObj?.name || 'Class'} for ${formatMonthName(monthToClear)}.`,
+        'info'
       );
     }
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const saveStudentRoster = () => {
@@ -921,15 +911,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     saveStudentTemplateOverrides(selectedStudentId, effectiveTemplateMonth, itemsToSave);
     if (effectiveTemplateMonth === 'all') {
-      setToastMessage(
-        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for All Months! Recurring across all billing months.`
+      showToast(
+        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for All Months! Recurring across all billing months.`,
+        'success'
       );
     } else {
-      setToastMessage(
-        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for ${formatMonthName(effectiveTemplateMonth)}! All vouchers & PDF printouts for this month will reflect these individual overrides.`
+      showToast(
+        `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for ${formatMonthName(effectiveTemplateMonth)}! All vouchers & PDF printouts for this month will reflect these individual overrides.`,
+        'success'
       );
     }
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   const handleSaveStudentOverrides = (e: React.FormEvent) => {
@@ -941,15 +932,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     e.preventDefault();
     if (templateScopeMode === 'student') {
       if (!selectedStudent) {
-        setToastMessage('Please search and select a student from the picker above before saving.');
-        setTimeout(() => setToastMessage(null), 3000);
+        showToast('Please search and select a student from the picker above before saving.', 'warning');
         return;
       }
       handleSaveStudentOverrides(e);
     } else if (templateScopeMode === 'class') {
       if (!selectedClass) {
-        setToastMessage('Please select a class from the dropdown above before saving.');
-        setTimeout(() => setToastMessage(null), 3000);
+        showToast('Please select a class from the dropdown above before saving.', 'warning');
         return;
       }
       handleSaveClassOverrides(e);
@@ -962,15 +951,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const studentObj = students.find((s) => s.id === studentIdToClear);
     deleteStudentTemplates(studentIdToClear, monthToClear);
     if (monthToClear === 'all') {
-      setToastMessage(
-        `All-months custom overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee templates.`
+      showToast(
+        `All-months custom overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee templates.`,
+        'info'
       );
     } else {
-      setToastMessage(
-        `Custom individual overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''} for ${formatMonthName(monthToClear)}.`
+      showToast(
+        `Custom individual overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''} for ${formatMonthName(monthToClear)}.`,
+        'info'
       );
     }
-    setTimeout(() => setToastMessage(null), 3500);
   };
 
   // ---- Unsaved-edit guard: tier switches & month changes must never silently
@@ -1005,8 +995,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (templateScopeMode === 'student') setStudentBaselineKey(draftKeyOf(studentRosterState));
       setRebuildNonce((n) => n + 1);
     }
-    setToastMessage('Unsaved changes discarded.');
-    setTimeout(() => setToastMessage(null), 2500);
+    showToast('Unsaved changes discarded.', 'info');
   };
 
   const saveActiveDrafts = () => {
@@ -1025,8 +1014,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       savedCount++;
     }
     if (!savedCount) {
-      setToastMessage('Nothing to save.');
-      setTimeout(() => setToastMessage(null), 2000);
+      showToast('Nothing to save.', 'info');
       return;
     }
     setPendingTransition(null);
@@ -1082,10 +1070,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     resetAllTemplates(targetResetMonth);
     setRosterState(initializeRosterState());
     setShowResetAllModal(false);
-    setToastMessage(
-      `Global fee templates reset to system defaults and all student-specific template overrides deleted for ${formatMonthName(targetResetMonth)}!`
+    showToast(
+      `Global fee templates reset to system defaults and all student-specific template overrides deleted for ${formatMonthName(targetResetMonth)}!`,
+      'info'
     );
-    setTimeout(() => setToastMessage(null), 4500);
   };
 
   // Search filter for student dropdown
@@ -1231,10 +1219,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         deleteStudentTemplates(sId, m || 'all');
       }
     });
-    setToastMessage(
+    showToast(
       `Custom fee template overrides deleted for ${selectedOverrideKeys.length} student override${
         selectedOverrideKeys.length === 1 ? '' : 's'
-      }.`
+      }.`,
+      'info'
     );
     setSelectedOverrideKeys([]);
   };
@@ -1719,10 +1708,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     bulkSaveMultipleStudentTemplateOverrides(entriesToSave, effectiveTemplateMonth);
 
-    setToastMessage(
+    showToast(
       `Successfully imported custom fee template overrides for ${validRows.length} student${
         validRows.length === 1 ? '' : 's'
-      } for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}!`
+      } for ${effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}!`,
+      'success'
     );
 
     setShowCsvModal(false);
@@ -4367,23 +4357,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Apply Changes
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-[9999] animate-in slide-in-from-bottom-5 duration-200">
-          <div className="px-4 py-3 rounded-xl shadow-xl border bg-slate-900 text-white border-slate-800 text-xs font-bold flex items-center gap-2.5 max-w-sm">
-            <CheckCircle className="w-4 h-4 text-teal-400 shrink-0" />
-            <span className="flex-1">{toastMessage}</span>
-            <button
-              type="button"
-              onClick={() => setToastMessage(null)}
-              className="p-1 hover:bg-white/20 rounded-lg transition cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
       )}

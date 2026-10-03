@@ -1838,6 +1838,7 @@ export const CollectionsView: React.FC = () => {
                             required
                             disabled={!selectedVoucher}
                             value={directAmount}
+                            onWheel={(e) => (e.target as HTMLElement).blur()}
                             onChange={(e) =>
                               setDirectAmount(
                                 e.target.value === '' ? '' : Number(e.target.value)

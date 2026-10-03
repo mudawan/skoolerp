@@ -273,6 +273,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 id="input-default-late-fee-rate"
                 disabled={!hasPermission('settings.manage')}
                 value={selectedLateFeeRate}
+                onWheel={(e) => (e.target as HTMLElement).blur()}
                 onChange={(e) => setSelectedLateFeeRate(Math.max(0, Number(e.target.value) || 0))}
                 className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
               />
@@ -316,6 +317,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 id="input-rounding-multiple"
                 disabled={!hasPermission('settings.manage')}
                 value={selectedRoundingMultiple}
+                onWheel={(e) => (e.target as HTMLElement).blur()}
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
                   if (!isNaN(val)) {
@@ -434,6 +436,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 id="input-transport-rounding-multiple"
                 disabled={!hasPermission('settings.manage')}
                 value={selectedTransportRoundingMultiple}
+                onWheel={(e) => (e.target as HTMLElement).blur()}
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
                   if (!isNaN(val)) {
@@ -549,6 +552,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 max="31"
                 disabled={!hasPermission('settings.manage')}
                 value={selectedDefaultDueDateEnabled ? selectedDefaultDueDay : ''}
+                onWheel={(e) => (e.target as HTMLElement).blur()}
                 onChange={(e) => {
                   const val = parseInt(e.target.value, 10);
                   if (!isNaN(val) && val > 0) {

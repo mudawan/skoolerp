@@ -75,6 +75,7 @@ export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
               min="0"
               disabled={!addLateFine}
               value={carryFineAmount}
+              onWheel={(e) => (e.target as HTMLElement).blur()}
               onChange={(e) => setCarryFineAmount(Math.max(0, Number(e.target.value) || 0))}
               className={`w-24 px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold text-right border transition-all ${
                 addLateFine

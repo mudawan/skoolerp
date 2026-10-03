@@ -428,6 +428,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                           min="0"
                           max={totalDaysInMonth}
                           value={asgnData.daysCharged}
+                          onWheel={(e) => (e.target as HTMLElement).blur()}
                           onChange={(e) =>
                             setAsgnData({
                               ...asgnData,
@@ -481,6 +482,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                         type="number"
                         min="0"
                         value={asgnData.discount}
+                        onWheel={(e) => (e.target as HTMLElement).blur()}
                         onChange={(e) =>
                           setAsgnData({
                             ...asgnData,

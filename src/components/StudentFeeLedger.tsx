@@ -1472,6 +1472,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                             required
                             min={1}
                             value={collectAmount}
+                            onWheel={(e) => (e.target as HTMLElement).blur()}
                             onChange={(e) => setCollectAmount(e.target.value)}
                             className="w-full h-[38px] pl-9 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                             placeholder="Enter Amount"

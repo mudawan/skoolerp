@@ -692,6 +692,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   min="0"
                   placeholder="0"
                   value={formData.monthlyDiscount}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) =>
                     setFormData({ ...formData, monthlyDiscount: Number(e.target.value) })
                   }

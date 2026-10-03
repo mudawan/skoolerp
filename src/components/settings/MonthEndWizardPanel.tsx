@@ -918,6 +918,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                         min="0"
                         step="50"
                         value={lateFineAmount}
+                        onWheel={(e) => (e.target as HTMLElement).blur()}
                         onChange={(e) => setLateFineAmount(Number(e.target.value))}
                         className="w-28 px-3 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
                       />
@@ -1211,6 +1212,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                   min="1"
                   max={collectingVoucher.balance}
                   value={collectingVoucher.amount}
+                  onWheel={(e) => (e.target as HTMLElement).blur()}
                   onChange={(e) =>
                     setCollectingVoucher((prev) => (prev ? { ...prev, amount: Number(e.target.value) } : null))
                   }
