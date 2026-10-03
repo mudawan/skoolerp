@@ -1,10 +1,9 @@
-// School Management System - Students Directory View
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentStatus } from '../types';
 import { formatCurrency, formatStudentAge, calculateAge, normalizeDateToISO } from '../utils/feeMath';
-import { parseCsvLine, downloadCsv } from '../utils/csv';
+import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { StudentFormModal } from './StudentFormModal';
@@ -542,8 +541,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
           return;
         }
 
-        const headerLine = lines[0].toLowerCase();
-        const headerTokens = headerLine.split(',').map((h) => h.replace(/["'\s_]/g, ''));
+        const delimiter = detectCsvDelimiter(lines[0]);
+        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
 
         const colMap = {
           regNo: headerTokens.findIndex((h) => h.includes('reg') || h.includes('id') || h.includes('roll')),
@@ -595,7 +594,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         const seenBFormInFile = new Map<string, string>();
 
         for (let i = 1; i < lines.length; i++) {
-          const row = parseCsvLine(lines[i]);
+          const row = parseCsvLine(lines[i], [delimiter]);
           if (row.length === 0 || row.every((c) => c === '')) continue;
 
           const rawRegNo = colMap.regNo !== -1 ? (row[colMap.regNo] || '').trim() : '';

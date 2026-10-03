@@ -3,8 +3,8 @@ import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem, PaymentReceiptData } from '../types';
 import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
-import { normalizePaymentMode } from '../utils/paymentMode';
-import { parseCsvLine, downloadCsv } from '../utils/csv';
+import { normalizePaymentMode, paymentModeText, DEFAULT_PAYMENT_MODE, PAYMENT_MODES, type PaymentMode } from '../utils/paymentMode';
+import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { DatePicker } from './DatePicker';
@@ -112,7 +112,7 @@ export const CollectionsView: React.FC = () => {
   const voucherPickerContainerRef = useRef<HTMLDivElement>(null);
   const voucherInputRef = useRef<HTMLInputElement>(null);
   const [directAmount, setDirectAmount] = useState<number | string>('');
-  const [directMode, setDirectMode] = useState<'Cash' | 'BankTransfer' | 'Cheque' | 'Online'>('Cash');
+  const [directMode, setDirectMode] = useState<PaymentMode>(DEFAULT_PAYMENT_MODE);
   const [directRef, setDirectRef] = useState('');
   const [directDate, setDirectDate] = useState(new Date().toISOString().split('T')[0]);
   const [directNotes, setDirectNotes] = useState('');
@@ -285,7 +285,7 @@ export const CollectionsView: React.FC = () => {
 
     setDirectSearch('');
     setHighlightedVoucherIndex(0);
-    setDirectMode('Cash');
+    setDirectMode(DEFAULT_PAYMENT_MODE);
     setDirectRef('');
     setDirectDate(new Date().toISOString().split('T')[0]);
     setDirectNotes('');
@@ -505,7 +505,8 @@ export const CollectionsView: React.FC = () => {
           return new Date().toISOString().split('T')[0];
         };
 
-        const firstTokens = parseCsvLine(rawLines[0]).map((t) => t.toLowerCase().replace(/["'\s_#\-]/g, ''));
+        const delimiter = detectCsvDelimiter(rawLines[0]);
+        const firstTokens = parseCsvLine(rawLines[0], [delimiter]).map((t) => t.toLowerCase().replace(/["'\s_#\-]/g, ''));
         const hasHeader =
           firstTokens.some((t) => t.includes('reg') || t.includes('student') || t.includes('roll') || t.includes('admission') || t === 'id') ||
           firstTokens.some((t) => t.includes('amount') || t.includes('paid') || t.includes('fee'));
@@ -539,7 +540,7 @@ export const CollectionsView: React.FC = () => {
           }
           dataLines = rawLines.slice(1);
         } else {
-          const sampleParts = parseCsvLine(rawLines[0]);
+          const sampleParts = parseCsvLine(rawLines[0], [delimiter]);
           if (sampleParts.length >= 6) {
             colMap = { regNo: 0, amount: 1, fine: 2, date: 3, paymentMode: 4, refNo: 5 };
           } else if (sampleParts.length >= 5) {
@@ -562,14 +563,14 @@ export const CollectionsView: React.FC = () => {
         const parsed: typeof bulkPreviewRows = [];
 
         dataLines.forEach((line, idx) => {
-          const parts = parseCsvLine(line);
+          const parts = parseCsvLine(line, [delimiter]);
           if (parts.length < 2 || parts.every((p) => !p)) return;
 
           const rawReg = (parts[colMap.regNo] || '').trim();
           const rawAmt = parts[colMap.amount] || '0';
           const rawFine = colMap.fine >= 0 && parts[colMap.fine] !== undefined ? parts[colMap.fine].trim() : '';
           const rawDate = colMap.date >= 0 && parts[colMap.date] ? parts[colMap.date].trim() : '';
-          const rawMode = colMap.paymentMode >= 0 && parts[colMap.paymentMode] ? parts[colMap.paymentMode].trim() : 'BankTransfer';
+          const rawMode = colMap.paymentMode >= 0 && parts[colMap.paymentMode] ? parts[colMap.paymentMode].trim() : '';
           const rawRef = colMap.refNo >= 0 && parts[colMap.refNo] ? parts[colMap.refNo].trim() : '';
 
           const amount = parseFloat(rawAmt.replace(/[^0-9.-]+/g, '')) || 0;
@@ -654,7 +655,7 @@ export const CollectionsView: React.FC = () => {
             errorMsg = 'Amount must be > 0';
           } else if (rawMode && !normalizePaymentMode(rawMode)) {
             isValid = false;
-            errorMsg = `Invalid payment mode "${rawMode}" (use Cash, BankTransfer, Cheque, Online)`;
+            errorMsg = `Invalid payment mode "${rawMode}" (use ${PAYMENT_MODES.join(', ')})`;
           }
 
           const isDuplicate = cleanReg ? seenRegNos.has(cleanReg) : false;
@@ -668,7 +669,7 @@ export const CollectionsView: React.FC = () => {
             amount,
             fine: fineValue,
             date: rowDate,
-            paymentMode: normalizePaymentMode(rawMode) || rawMode || 'BankTransfer',
+            paymentMode: normalizePaymentMode(rawMode) || DEFAULT_PAYMENT_MODE,
             refNo: rawRef,
             studentId: student?.id,
             studentName: student?.name,
@@ -768,17 +769,17 @@ export const CollectionsView: React.FC = () => {
         const regNo = student?.regNo || `REG-${1001 + i}`;
         const remaining = Math.max(0, v.netDue - v.amountPaid);
         const sampleFine = i === 0 ? 500 : 0;
-        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${sampleFine},${todayStr},BankTransfer,PK-BANK-${1000 + i}\n`;
+        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${sampleFine},${todayStr},BankDeposit,PK-BANK-${1000 + i}\n`;
       });
     } else {
       const sampleStudents = students.slice(0, 3);
       if (sampleStudents.length > 0) {
         sampleStudents.forEach((s, i) => {
           const sampleFine = i === 0 ? 500 : 0;
-          sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankTransfer,PK-BANK-${1001 + i}\n`;
+          sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankDeposit,PK-BANK-${1001 + i}\n`;
         });
       } else {
-        sampleContent += `REG-1001,8000,500,${todayStr},BankTransfer,TXN-9811\nREG-1002,3200,0,${todayStr},Cash,DESK-402\nREG-1003,4500,0,${todayStr},Online,ONL-9021\n`;
+        sampleContent += `REG-1001,8000,500,${todayStr},BankDeposit,TXN-9811\nREG-1002,3200,0,${todayStr},SchoolCashier,DESK-402\nREG-1003,4500,0,${todayStr},OnlineTransfer,ONL-9021\n`;
       }
     }
 
@@ -1219,7 +1220,7 @@ export const CollectionsView: React.FC = () => {
 
                             <div className="flex items-center gap-3">
                               <span className="text-[11px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-medium">
-                                {t.paymentMode} {t.referenceNo ? `(${t.referenceNo})` : ''}
+                                {paymentModeText(t.paymentMode)} {t.referenceNo ? `(${t.referenceNo})` : ''}
                               </span>
                               <span className="font-bold text-emerald-700">
                                 {formatCurrency(t.amount)}
@@ -1902,10 +1903,9 @@ export const CollectionsView: React.FC = () => {
                             onChange={(e) => setDirectMode(e.target.value as any)}
                             className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-400"
                           >
-                            <option value="Cash">Cash Desk</option>
-                            <option value="BankTransfer">Bank Transfer / Online</option>
-                            <option value="Cheque">Cheque Deposit</option>
-                            <option value="Online">Credit/Debit Card</option>
+                            <option value="SchoolCashier">School Cashier</option>
+                            <option value="BankDeposit">Bank Deposit</option>
+                            <option value="OnlineTransfer">Online Transfer</option>
                           </select>
                         </div>
 
@@ -2052,7 +2052,7 @@ export const CollectionsView: React.FC = () => {
                     Click to select CSV File
                   </span>
                   <span className="text-[11px] text-slate-500 block mt-1">
-                    Supports standard comma-separated .csv files (RegNo, PaidAmount, Fine, Date, PaymentMode, RefNo)
+                    Supports .csv files (comma, semicolon or tab separated) (RegNo, PaidAmount, Fine, Date, PaymentMode, RefNo)
                   </span>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2 bg-slate-100 text-slate-600 rounded-md text-[11px] font-medium border border-slate-200">
                     <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
@@ -2267,7 +2267,7 @@ export const CollectionsView: React.FC = () => {
                             {r.date}
                           </td>
                           <td className="p-3 text-slate-600">
-                            <span className="font-semibold block">{r.paymentMode}</span>
+                            <span className="font-semibold block">{paymentModeText(r.paymentMode)}</span>
                             {r.refNo && <span className="font-mono text-[10px] text-slate-500">{r.refNo}</span>}
                           </td>
                           <td className="p-3">

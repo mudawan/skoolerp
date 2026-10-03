@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
 import { calculateTransportFee, formatCurrency, getDaysInMonth } from '../utils/feeMath';
-import { parseCsvLine, downloadCsv } from '../utils/csv';
+import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { BusModal } from './transport/BusModal';
@@ -555,8 +555,8 @@ export const TransportView: React.FC = () => {
           return;
         }
 
-        const headerLine = lines[0].toLowerCase();
-        const headerTokens = headerLine.split(',').map((h) => h.replace(/["'\s_]/g, ''));
+        const delimiter = detectCsvDelimiter(lines[0]);
+        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
 
         const colMap = {
           regNo: headerTokens.findIndex((h) => h.includes('reg') || h.includes('student') || h.includes('roll') || h.includes('id')),
@@ -581,7 +581,7 @@ export const TransportView: React.FC = () => {
         const seenRegNos = new Set<string>();
 
         for (let i = 1; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]);
+          const cols = parseCsvLine(lines[i], [delimiter]);
           if (cols.length === 0 || cols.every((c) => !c)) continue;
 
           const rawRegNo = cols[colMap.regNo] || '';
@@ -910,8 +910,8 @@ export const TransportView: React.FC = () => {
           return;
         }
 
-        const headerLine = lines[0].toLowerCase();
-        const headerTokens = headerLine.split(',').map((h) => h.replace(/["'\s_]/g, ''));
+        const delimiter = detectCsvDelimiter(lines[0]);
+        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
 
         const colMap = {
           name: headerTokens.findIndex((h) => h.includes('stop') || h.includes('name') || h.includes('location') || h.includes('station') || h.includes('point')),
@@ -933,7 +933,7 @@ export const TransportView: React.FC = () => {
         const seenStopNames = new Set<string>();
 
         for (let i = 1; i < lines.length; i++) {
-          const cols = parseCsvLine(lines[i]);
+          const cols = parseCsvLine(lines[i], [delimiter]);
           if (cols.length === 0 || cols.every((c) => !c)) continue;
 
           const rawName = cols[colMap.name] || '';

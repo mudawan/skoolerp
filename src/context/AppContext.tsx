@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, X } from 'lucide-react';
-import { normalizePaymentMode } from '../utils/paymentMode';
-import { nextDocumentNumber, reconcileSequence, allocateDocumentNumbers, parseDocumentNumber } from '../utils/sequence';
-import { MIN_PASSWORD_LENGTH, hashPassword, verifyPassword } from '../utils/passwords';
+import { normalizePaymentMode, PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../utils/paymentMode';
+import { pendingDocumentNumber } from '../utils/sequence';
+import { MIN_PASSWORD_LENGTH } from '../utils/passwords';
 import {
   AppThemeConfig,
   AuditActionType,
@@ -92,6 +92,8 @@ import {
   apiDeleteInstitution,
   apiGenerateVouchers,
   apiReceiveCollection,
+  apiGetPreferences,
+  apiSavePreferences,
   apiCarryForwardVoucher,
   apiVoucherBatchUpdate,
   syncSimpleEntityCollectionNow,
@@ -120,6 +122,7 @@ interface AppContextType {
   currentInstitution: Institution | null;
   currentUser: User;
   isAuthenticated: boolean;
+  isSessionLoading: boolean;
   users: User[];
   invites: OperatorInvite[];
   registerInstitution: (params: {
@@ -438,6 +441,10 @@ const STORAGE_KEY = 'skooler_app_data_v1';
 // We purge all un-scoped entity cache keys so the server database remains authoritative.
 try {
   const legacyGlobalKeys = [
+    `${STORAGE_KEY}_auth_session`,
+    `${STORAGE_KEY}_institution`,
+    `${STORAGE_KEY}_sidebar_collapsed`,
+    `${STORAGE_KEY}_theme_config`,
     `${STORAGE_KEY}_users`,
     `${STORAGE_KEY}_students`,
     `${STORAGE_KEY}_classes`,
@@ -497,29 +504,9 @@ const SYNC_ENTITY_LABELS: Record<string, string> = {
  */
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Multi-Tenant Institution State
-  const [currentInstitution, setCurrentInstitution] = useState<Institution | null>(() => {
-    // Only restore institution if an active authenticated session exists
-    const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
-    if (!session) {
-      try {
-        localStorage.removeItem(`${STORAGE_KEY}_institution`);
-      } catch {}
-      return null;
-    }
-    const saved = localStorage.getItem(`${STORAGE_KEY}_institution`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.id) {
-          setActiveInstitutionId(parsed.id);
-          return parsed;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return null;
-  });
+  // The server session (HTTP-only cookie) is the only authority; nothing about the
+  // signed-in user or institution is cached in the browser.
+  const [currentInstitution, setCurrentInstitution] = useState<Institution | null>(null);
 
   const [invites, setInvites] = useState<OperatorInvite[]>([]);
 
@@ -579,62 +566,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Stored Users in Database (Direct from PostgreSQL, zero localStorage cache)
   const [users, setUsers] = useState<User[]>(() => SEEDED_USERS);
 
-  // Authentication State (Option B: Ephemeral Banking Model - invalidated on browser reopen)
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+  // Authentication State (Option B: Ephemeral Banking Model - invalidated on browser reopen).
+  // Starts signed-out; the server session is verified via /api/auth/me on mount.
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<User>(ANONYMOUS_USER);
+  // True only while an existing browser session is being verified against the server.
+  const [isSessionLoading, setIsSessionLoading] = useState<boolean>(() => {
     try {
-      const isSessionActive = sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
-      if (!isSessionActive) {
-        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
-        return false;
-      }
+      return sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
     } catch {
       return false;
     }
-    const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
-    if (!session) return false;
-    try {
-      const parsed = JSON.parse(session);
-      // Invalidate legacy demo account sessions
-      if (
-        (parsed?.id === 'usr-admin' && parsed?.username === 'admin' && parsed?.email === 'admin@school.edu') ||
-        (parsed?.id === 'usr-accountant' && parsed?.username === 'accountant') ||
-        (parsed?.id === 'usr-viewer' && parsed?.username === 'viewer')
-      ) {
-        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
-        return false;
-      }
-      return !!parsed?.id;
-    } catch {
-      return false;
-    }
-  });
-
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    try {
-      const isSessionActive = sessionStorage.getItem(`${STORAGE_KEY}_browser_session_active`) === '1';
-      if (!isSessionActive) {
-        return ANONYMOUS_USER;
-      }
-    } catch {
-      return ANONYMOUS_USER;
-    }
-    const session = localStorage.getItem(`${STORAGE_KEY}_auth_session`);
-    if (session) {
-      try {
-        const parsed = JSON.parse(session);
-        if (
-          (parsed?.id === 'usr-admin' && parsed?.username === 'admin' && parsed?.email === 'admin@school.edu') ||
-          (parsed?.id === 'usr-accountant' && parsed?.username === 'accountant') ||
-          (parsed?.id === 'usr-viewer' && parsed?.username === 'viewer')
-        ) {
-          return ANONYMOUS_USER;
-        }
-        return parsed;
-      } catch (e) {
-        // ignore
-      }
-    }
-    return ANONYMOUS_USER;
   });
 
   const [activeMonth, setActiveMonth] = useState<string>(getCurrentMonthString());
@@ -851,75 +793,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => []);
 
-  // Adopt the highest document number already present in the loaded data so
-  // the monotonic counters never re-issue a number that exists (e.g. after a
-  // restored backup or an import). Runs once on mount; the arrays are the
-  // freshly-initialized values above.
-  useEffect(() => {
-    const parseNum = (docNo: string, prefix: string) => {
-      if (!docNo || !docNo.startsWith(prefix)) return null;
-      const num = parseInt(docNo.slice(prefix.length + 1), 10);
-      const year = docNo.slice(prefix.length, prefix.length + 4);
-      return isNaN(num) || !/^\d{4}$/.test(year) ? null : { prefix, year, number: num };
-    };
-    const entries: { prefix: string; year: string; number: number }[] = [];
-    vouchers.forEach((v) => {
-      const p = parseNum(v.voucherNo, 'FE');
-      if (p) entries.push(p);
-    });
-    collections.forEach((c) => {
-      const p = parseNum(c.collectionNo, 'COL');
-      if (p) entries.push(p);
-    });
-    transactions.forEach((t) => {
-      const p = parseNum(t.txnNo, 'TXN');
-      if (p) entries.push(p);
-    });
-    reconcileSequence(entries);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const [institute, setInstitute] = useState<InstituteProfile>(() => INITIAL_INSTITUTE);
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => []);
 
-  // Sidebar state
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_sidebar_collapsed`);
-    return saved === 'true';
-  });
+  // Sidebar & theme preferences are per-user and stored server-side in PostgreSQL
+  // (users.preferences). They are loaded after authentication and saved on change.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [themeConfig, setThemeConfig] = useState<AppThemeConfig>(DEFAULT_THEME_CONFIG);
+  const themeConfigRef = useRef<AppThemeConfig>(DEFAULT_THEME_CONFIG);
+  const prefsReadyRef = useRef(false);
+  const savedSidebarRef = useRef<boolean>(false);
+
+  const loadUserPreferences = useCallback(async () => {
+    const res = await apiGetPreferences();
+    const prefs = res.success ? res.preferences : undefined;
+    const nextTheme = { ...DEFAULT_THEME_CONFIG, ...(prefs?.themeConfig || {}) } as AppThemeConfig;
+    const nextCollapsed = prefs?.sidebarCollapsed === true;
+    savedSidebarRef.current = nextCollapsed;
+    themeConfigRef.current = nextTheme;
+    setThemeConfig(nextTheme);
+    setIsSidebarCollapsed(nextCollapsed);
+    prefsReadyRef.current = true;
+  }, []);
+
+  const resetPreferencesState = useCallback(() => {
+    prefsReadyRef.current = false;
+    savedSidebarRef.current = false;
+    themeConfigRef.current = DEFAULT_THEME_CONFIG;
+    setThemeConfig(DEFAULT_THEME_CONFIG);
+    setIsSidebarCollapsed(false);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_sidebar_collapsed`, String(isSidebarCollapsed));
+    if (!prefsReadyRef.current || savedSidebarRef.current === isSidebarCollapsed) return;
+    savedSidebarRef.current = isSidebarCollapsed;
+    apiSavePreferences({ sidebarCollapsed: isSidebarCollapsed }).catch(() => {});
   }, [isSidebarCollapsed]);
 
-  // Theme & Appearance Configuration
-  const [themeConfig, setThemeConfig] = useState<AppThemeConfig>(() => {
-    const saved = localStorage.getItem(`${STORAGE_KEY}_theme_config`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return { ...DEFAULT_THEME_CONFIG, ...parsed };
-      } catch {
-        return DEFAULT_THEME_CONFIG;
-      }
-    }
-    return DEFAULT_THEME_CONFIG;
-  });
-
   const updateThemeConfig = useCallback((updates: Partial<AppThemeConfig>) => {
-    setThemeConfig((prev) => {
-      const next = { ...prev, ...updates };
-      localStorage.setItem(`${STORAGE_KEY}_theme_config`, JSON.stringify(next));
-      applyThemeToDom(next);
-      return next;
-    });
+    const next = { ...themeConfigRef.current, ...updates };
+    themeConfigRef.current = next;
+    setThemeConfig(next);
+    applyThemeToDom(next);
+    apiSavePreferences({ themeConfig: next }).catch(() => {});
   }, []);
 
   const resetThemeConfig = useCallback(() => {
+    themeConfigRef.current = DEFAULT_THEME_CONFIG;
     setThemeConfig(DEFAULT_THEME_CONFIG);
-    localStorage.setItem(`${STORAGE_KEY}_theme_config`, JSON.stringify(DEFAULT_THEME_CONFIG));
     applyThemeToDom(DEFAULT_THEME_CONFIG);
+    apiSavePreferences({ themeConfig: DEFAULT_THEME_CONFIG }).catch(() => {});
   }, []);
 
   // Ensure DOM is updated on initial mount and theme changes
@@ -1153,36 +1077,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(d.templates)) {
       setTemplates(d.templates.length > 0 ? d.templates : INITIAL_GLOBAL_TEMPLATES);
     }
-    const seqEntries: { prefix: string; year: string; number: number }[] = [];
-    if (Array.isArray(d.vouchers)) {
-      setVouchers(d.vouchers);
-      d.vouchers.forEach((v: any) => {
-        const p = parseDocumentNumber(v?.voucherNo);
-        if (p) seqEntries.push(p);
-      });
-    }
-    if (Array.isArray(d.collections)) {
-      setCollections(d.collections);
-      d.collections.forEach((c: any) => {
-        const p = parseDocumentNumber(c?.collectionNo);
-        if (p) seqEntries.push(p);
-      });
-    }
-    if (Array.isArray(d.transactions)) {
-      setTransactions(d.transactions);
-      d.transactions.forEach((t: any) => {
-        const p = parseDocumentNumber(t?.txnNo);
-        if (p) seqEntries.push(p);
-      });
-    }
-    if (seqEntries.length > 0) {
-      reconcileSequence(seqEntries);
-    }
+    if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
+    if (Array.isArray(d.collections)) setCollections(d.collections);
+    if (Array.isArray(d.transactions)) setTransactions(d.transactions);
     if (Array.isArray(d.bankAccounts)) setBankAccounts(d.bankAccounts);
     if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
     if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
     if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
-
     if (d.institute && d.institute.name) {
       setInstitute(d.institute);
       const s = d.institute.settings || {};
@@ -1290,7 +1191,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const fallback = users.find((u) => u.role === 'Admin') || users[0];
       if (fallback) {
         setCurrentUser(fallback);
-        localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(fallback));
       }
     }
   }, [users, currentUser, isAuthenticated]);
@@ -1321,13 +1221,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setUsers([res.user]);
       setIsAuthenticated(true);
       setActiveInstitutionId(res.institution.id);
+      loadUserPreferences().catch(() => {});
 
       try {
         sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
       } catch {}
 
-      localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
-      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
 
       // Update institutional header identity & currency
       setInstitute({
@@ -1426,13 +1325,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(res.user);
       setIsAuthenticated(true);
       setActiveInstitutionId(res.institution.id);
+      loadUserPreferences().catch(() => {});
 
       try {
         sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
       } catch {}
 
-      localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(res.institution));
-      localStorage.setItem(`${STORAGE_KEY}_auth_session`, JSON.stringify(res.user));
 
       // Hydrate state from server for this institution
       const serverState = await fetchServerState(res.institution.id);
@@ -1515,8 +1413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentInstitution(null);
         setActiveInstitutionId(null);
         setInstitute(INITIAL_INSTITUTE);
-        localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
-        localStorage.removeItem(`${STORAGE_KEY}_institution`);
+        setIsSessionLoading(false);
         return;
       }
     } catch {}
@@ -1526,10 +1423,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (me.success && me.user) {
         setCurrentUser(me.user);
         setIsAuthenticated(true);
+        loadUserPreferences().catch(() => {});
         if (me.institution) {
           setCurrentInstitution(me.institution);
           setActiveInstitutionId(me.institution.id);
-          localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(me.institution));
           try {
             const instSettings = me.institution.settings
               ? typeof me.institution.settings === 'string'
@@ -1579,14 +1476,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setLockedMonths([]);
         setInvites([]);
         try {
-          localStorage.removeItem(`${STORAGE_KEY}_auth_session`);
-          localStorage.removeItem(`${STORAGE_KEY}_institution`);
-          localStorage.removeItem(`${STORAGE_KEY}_institute`);
-          localStorage.removeItem('quickfees_recent_searched_students');
+          sessionStorage.removeItem(`${STORAGE_KEY}_browser_session_active`);
         } catch {}
+        resetPreferencesState();
         resetSyncSnapshots();
       }
-    }).catch(() => {});
+      setIsSessionLoading(false);
+    }).catch(() => {
+      if (isMounted) setIsSessionLoading(false);
+    });
     return () => {
       isMounted = false;
     };
@@ -1635,10 +1533,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         setCurrentUser(apiRes.user);
         setIsAuthenticated(true);
+        loadUserPreferences().catch(() => {});
         if (apiRes.institution) {
           setCurrentInstitution(apiRes.institution);
           setActiveInstitutionId(apiRes.institution.id);
-          localStorage.setItem(`${STORAGE_KEY}_institution`, JSON.stringify(apiRes.institution));
           if (apiRes.institution.name) {
             setInstitute((prev) => ({
               ...prev,
@@ -1662,67 +1560,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
         } catch {}
 
-        localStorage.setItem(
-          `${STORAGE_KEY}_auth_session`,
-          JSON.stringify({ ...apiRes.user, password: undefined })
-        );
         return { success: true, user: apiRes.user };
-      } else if (apiRes.error && !apiRes.error.includes('failed to fetch') && !apiRes.error.includes('Network')) {
-        // Authoritative server error (e.g. invalid password or user not found)
-        return { success: false, error: apiRes.error };
       }
+      // Authoritative server answer (e.g. invalid password or user not found)
+      return { success: false, error: apiRes.error || 'Login failed. Please check your credentials and try again.' };
     } catch {
-      // Backend unavailable, fallback to local match
+      // The database/server is the only authority — there is no offline login.
+      return { success: false, error: 'Unable to reach the server. Please check your connection and try again.' };
     }
-
-    const matchedUser = users.find(
-      (u) =>
-        u.username.toLowerCase() === trimmed ||
-        (u.email && u.email.toLowerCase() === trimmed)
-    );
-
-    if (!matchedUser) {
-      return {
-        success: false,
-        error: `User '${usernameOrEmail.trim()}' not found in authorization database. Please check username or school code.`,
-      };
-    }
-
-    let passwordValid = await verifyPassword(password, matchedUser.password);
-    
-    // Resilient fallback for legacy unhashed passwords that automatically upgrades to salted PBKDF2 hash
-    if (!passwordValid && matchedUser.password && !matchedUser.password.startsWith('pbkdf2$') && matchedUser.password === password) {
-      passwordValid = true;
-      try {
-        const newHash = await hashPassword(password);
-        const updatedUsers = users.map((u) => (u.id === matchedUser.id ? { ...u, password: newHash } : u));
-        setUsers(updatedUsers);
-      } catch {
-        // ignore error
-      }
-    }
-
-    if (!passwordValid) {
-      return {
-        success: false,
-        error: 'Invalid password. Please check your credentials and try again.',
-      };
-    }
-
-    const authedUser: User = { ...matchedUser, lastLogin: new Date().toISOString() };
-
-    try {
-      sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
-    } catch {}
-
-    setCurrentUser(authedUser);
-    setIsAuthenticated(true);
-    localStorage.setItem(
-      `${STORAGE_KEY}_auth_session`,
-      JSON.stringify({ ...authedUser, password: undefined })
-    );
-
-    return { success: true, user: authedUser };
   };
 
   const logout = () => {
@@ -1746,6 +1591,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStudentAccountHistory([]);
     setLockedMonths([]);
     setInvites([]);
+    resetPreferencesState();
 
     try {
       sessionStorage.removeItem(`${STORAGE_KEY}_browser_session_active`);
@@ -1858,12 +1704,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser.id === id) {
       const updatedCurrent = { ...currentUser, ...confirmedUpdates };
       setCurrentUser(updatedCurrent);
-      if (isAuthenticated) {
-        localStorage.setItem(
-          `${STORAGE_KEY}_auth_session`,
-          JSON.stringify({ ...updatedCurrent, password: undefined })
-        );
-      }
     }
     return { success: true };
   };
@@ -1939,6 +1779,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       // Reset all operational and administrative local states
+      resetPreferencesState();
       setIsAuthenticated(false);
       setCurrentUser(ANONYMOUS_USER);
       setCurrentInstitution(null);
@@ -3480,9 +3321,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
       setVouchers((prev) => [...prev, returnedVoucher]);
-      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
-        reportFinancialSyncFailure('Admission voucher creation', err);
-      });
+      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] })
+        .then((res) => {
+          if (res?.success) applyServerVoucherNumbers(res.vouchers);
+        })
+        .catch((err) => {
+          reportFinancialSyncFailure('Admission voucher creation', err);
+        });
       return { success: true, voucher: returnedVoucher };
     }
 
@@ -3534,10 +3379,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
     setVouchers((prev) => [...prev, returnedVoucher]);
-    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] }).catch((err) => {
-      reportFinancialSyncFailure('Admission voucher creation', err);
-    });
+    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] })
+      .then((res) => {
+        if (res?.success) applyServerVoucherNumbers(res.vouchers);
+      })
+      .catch((err) => {
+        reportFinancialSyncFailure('Admission voucher creation', err);
+      });
     return { success: true, voucher: returnedVoucher };
+  };
+
+  // Replace pending placeholder voucher numbers with the numbers the server
+  // minted (the database sequence is the single source of truth).
+  const applyServerVoucherNumbers = (list?: { id?: string; voucherNo?: string }[]) => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const numberById = new Map<string, string>();
+    list.forEach((sv) => {
+      if (sv?.id && sv?.voucherNo) numberById.set(sv.id, sv.voucherNo);
+    });
+    if (numberById.size === 0) return;
+    setVouchers((prev) =>
+      prev.map((v) => {
+        const serverNo = numberById.get(v.id);
+        return serverNo && serverNo !== v.voucherNo ? { ...v, voucherNo: serverNo } : v;
+      })
+    );
   };
 
   const buildAdmissionVoucher = (
@@ -3550,8 +3416,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     options: { dueDate?: string; lateFeeRate?: number; notes?: string }
   ): FeeVoucher => {
     const issueDate = new Date().toISOString().split('T')[0];
-    const yearStr = month.split('-')[0];
-    const voucherNo = nextDocumentNumber('FE', yearStr);
+    const voucherNo = pendingDocumentNumber();
 
     return {
       id: generateUniqueId('vch'),
@@ -3653,7 +3518,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const defaultDueDate = dueDate || (defaultDueDateEnabled ? getComputedDefaultDueDate(month) : '');
     const issueDate = new Date().toISOString().split('T')[0];
 
-    const yearStr = month.split('-')[0];
 
     // Track prior vouchers whose unpaid balance is being folded into a
     // newly-generated voucher this round (e.g. a pre-billing-start Admission
@@ -3662,15 +3526,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // records even after their balance has already moved to the new voucher.
     const priorVouchersToCarry = new Map<string, string>(); // voucherId -> carryForwardMonth
 
-    const allocatedNumbers = allocateDocumentNumbers('FE', yearStr, ungenerated.length);
-
-    const newVouchers: FeeVoucher[] = ungenerated.map((prev, idx) => {
-      const voucherNo = allocatedNumbers[idx];
+    const newVouchers: FeeVoucher[] = ungenerated.map((prev) => {
+      const voucherNo = pendingDocumentNumber();
 
       if (prev.priorVoucherShouldCarry && prev.priorVoucherId) {
         priorVouchersToCarry.set(prev.priorVoucherId, month);
       }
-
 
       return {
         id: generateUniqueId('vch'),
@@ -3800,35 +3661,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
       apiGenerateVouchers(newVouchers, carriedPriorList)
         .then((res) => {
-          if (res?.success && Array.isArray(res.vouchers)) {
-            const reissuedMap = new Map<string, string>();
-            res.vouchers.forEach((sv: any) => {
-              if (sv?.id && sv?.voucherNo) {
-                reissuedMap.set(sv.id, sv.voucherNo);
-              }
-            });
-            if (reissuedMap.size > 0) {
-              setVouchers((prev) =>
-                prev.map((v) => {
-                  const authoritativeNo = reissuedMap.get(v.id);
-                  return authoritativeNo && authoritativeNo !== v.voucherNo
-                    ? { ...v, voucherNo: authoritativeNo }
-                    : v;
-                })
-              );
-              const seqEntries = Array.from(reissuedMap.values())
-                .map((docNo) => parseDocumentNumber(docNo))
-                .filter(Boolean) as { prefix: string; year: string; number: number }[];
-              if (seqEntries.length > 0) {
-                reconcileSequence(seqEntries);
-              }
-            }
+          if (res?.success) applyServerVoucherNumbers(res.vouchers);
+          else if (res && !res.success) {
+            reportFinancialSyncFailure('Voucher generation', new Error(res.error || 'Server rejected voucher generation'));
           }
         })
         .catch((err) => {
           reportFinancialSyncFailure('Voucher generation', err);
         });
-
 
       const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
       logAuditEvent({
@@ -4022,9 +3862,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
     }
 
-    const yearStr = new Date().getFullYear().toString();
-    const collectionNo = nextDocumentNumber('COL', yearStr);
-    const txnNo = nextDocumentNumber('TXN', yearStr);
+    const collectionNo = pendingDocumentNumber();
+    const txnNo = pendingDocumentNumber();
 
     const collectionId = `col-${Date.now()}`;
 
@@ -4206,9 +4045,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newTxns: PaymentTransaction[] = [];
     let batchTotal = 0;
 
-    const yearStr = new Date().getFullYear().toString();
     const collectionId = `col-bulk-${Date.now()}`;
-    const collectionNo = nextDocumentNumber('COL', yearStr);
+    const collectionNo = pendingDocumentNumber();
 
     const updatedVouchersMap = new Map<
       string,
@@ -4292,11 +4130,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const normalizedMode = normalizePaymentMode(rawModeInput);
       if (rawModeInput && !normalizedMode) {
         errors.push(
-          `Row ${idx + 1}: Invalid payment mode "${rawModeInput}". Allowed: Cash, BankTransfer, Cheque, Online.`
+          `Row ${idx + 1}: Invalid payment mode "${rawModeInput}". Allowed: ${PAYMENT_MODES.join(', ')}.`
         );
         return;
       }
-      const mode: PaymentTransaction['paymentMode'] = normalizedMode || 'BankTransfer';
+      const mode: PaymentTransaction['paymentMode'] = normalizedMode || DEFAULT_PAYMENT_MODE;
 
       const currentEntry = updatedVouchersMap.get(voucher.id);
       let cleanParticulars = currentEntry?.particulars
@@ -4356,7 +4194,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         netDue: effectiveNetDue,
       });
 
-      const txnNo = nextDocumentNumber('TXN', yearStr);
+      const txnNo = pendingDocumentNumber();
 
       const rowDate = row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date : defaultDate;
       const studentRegText = matchedStudent?.regNo ? ` [Reg #${matchedStudent.regNo}]` : '';
@@ -4663,7 +4501,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         targetMonth < student.firstBillingMonth;
 
       if (shouldAutoCreate) {
-        const yearStr = targetMonth.split('-')[0];
         const issuedDate = new Date().toISOString().split('T')[0];
 
         // Due date for the auto-created destination voucher: use the day from
@@ -4677,7 +4514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const newVoucher: FeeVoucher = {
           id: generateUniqueId('vch'),
-          voucherNo: nextDocumentNumber('FE', yearStr),
+          voucherNo: pendingDocumentNumber(),
           studentId: voucher.studentId,
           month: targetMonth,
           classId: student?.classId || voucher.classId,
@@ -4721,9 +4558,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // and any downstream vouchers recalculateVouchersSequence touched.
     apiVoucherBatchUpdate({
       voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
-    }).catch((err) => {
-      reportFinancialSyncFailure('Carry-forward chain recalculation', err);
-    });
+    })
+      .then((res) => {
+        if (res?.success) applyServerVoucherNumbers(res.vouchers);
+      })
+      .catch((err) => {
+        reportFinancialSyncFailure('Carry-forward chain recalculation', err);
+      });
 
     // Audit Logging: Carry forward operation
     const student = students.find((s) => s.id === voucher.studentId);
@@ -5854,6 +5695,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentInstitution,
         currentUser,
         isAuthenticated,
+        isSessionLoading,
         users,
         invites,
         registerInstitution,

@@ -1,31 +1,42 @@
 import React from 'react';
-import { FeeVoucher, PaymentMode, Student, VoucherItem } from '../../types';
-import { formatCurrency } from '../../utils/feeMath';
-import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { X, CheckCircle2, DollarSign, Calendar } from 'lucide-react';
+import type { PaymentMode } from '../../utils/paymentMode';
+import { FeeVoucher, Student, VoucherItem } from '../../types';
+import {
+  formatCurrency,
+  formatMonthName,
+  getEffectiveMultiple,
+  roundUpToMultiple,
+} from '../../utils/feeMath';
+import { useApp } from '../../context/AppContext';
+import { VoucherParticularsEditor } from '../VoucherParticularsEditor';
+import { DatePicker } from '../DatePicker';
+import { StudentAvatar } from '../StudentAvatar';
+import { Coins, Info, Receipt, X } from 'lucide-react';
 
-export interface CollectPaymentModalProps {
+export type CollectMode = PaymentMode;
+
+interface CollectPaymentModalProps {
   voucher: FeeVoucher;
   students: Student[];
   items: VoucherItem[];
   setItems: (items: VoucherItem[]) => void;
-  amount: number;
-  setAmount: (amt: number) => void;
-  mode: PaymentMode;
-  setMode: (mode: PaymentMode) => void;
+  amount: number | string;
+  setAmount: (v: number | string) => void;
+  mode: CollectMode;
+  setMode: (m: CollectMode) => void;
   refNo: string;
-  setRefNo: (ref: string) => void;
+  setRefNo: (v: string) => void;
   notes: string;
-  setNotes: (notes: string) => void;
+  setNotes: (v: string) => void;
   date: string;
-  setDate: (date: string) => void;
+  setDate: (v: string) => void;
   themeColor?: string;
   dynamicNetDue: number;
   dynamicRemaining: number;
-  roundingEnabled?: boolean;
-  roundingMultiple?: number;
-  onSaveLineItems?: () => void;
-  onSubmit: () => void;
+  roundingEnabled: boolean;
+  roundingMultiple: number;
+  onSaveLineItems: () => void;
+  onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
 }
 
@@ -33,6 +44,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
   voucher,
   students,
   items,
+  setItems,
   amount,
   setAmount,
   mode,
@@ -43,129 +55,349 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
   setNotes,
   date,
   setDate,
+  themeColor,
   dynamicNetDue,
   dynamicRemaining,
+  roundingEnabled,
+  roundingMultiple,
+  onSaveLineItems,
   onSubmit,
   onClose,
 }) => {
-  useEscapeKey(onClose, true);
+  const { classes } = useApp();
   const student = students.find((s) => s.id === voucher.studentId);
+  const studentClass = classes.find(
+    (c) => c.id === voucher.classId || c.id === student?.classId
+  );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-emerald-50 text-emerald-700 rounded-xl">
-              <DollarSign className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-4xl w-full p-3 sm:p-5 shadow-2xl space-y-3 my-auto animate-in fade-in duration-200 border border-slate-200/80 max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2.5rem)] flex flex-col overflow-hidden">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">
+              <Coins className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
             </div>
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm">Collect Fee Payment</h3>
-              <p className="text-[11px] text-slate-500">
-                Voucher #{voucher.voucherNo} • {student?.name || 'Student'} ({student?.regNo})
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">Collect Payment</h3>
+                <span className="font-mono font-bold text-[11px] sm:text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
+                  {voucher.voucherNo}
+                </span>
+                <span
+                  className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                    voucher.status === 'Paid'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : voucher.status === 'Partial'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-rose-100 text-rose-800'
+                  }`}
+                >
+                  {voucher.status}
+                </span>
+              </div>
+              <p className="text-[10px] sm:text-[11px] text-slate-500 truncate hidden xs:block">
+                Collect full, remaining, or partial fee payments directly
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition">
-            <X className="w-4 h-4" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer shrink-0"
+            aria-label="Close modal"
+          >
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
-            <div>
-              <div className="text-[10px] text-slate-500 font-semibold">Total Due</div>
-              <div className="text-sm font-bold font-mono text-slate-900">{formatCurrency(dynamicNetDue)}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-500 font-semibold">Remaining Balance</div>
-              <div className="text-sm font-bold font-mono text-rose-600">{formatCurrency(dynamicRemaining)}</div>
+        {/* Student & Balance Ribbon in Header */}
+        <div className="bg-slate-50/90 rounded-xl p-2.5 sm:px-3 sm:py-2 border border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shrink-0">
+          {/* Student Info */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <StudentAvatar
+              photoUrl={student?.photoUrl}
+              name={student?.name || 'Student'}
+              size="sm"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate">
+                  {student?.name || 'Unknown Student'}
+                </h4>
+              </div>
+              <p className="text-[10px] sm:text-[11px] text-slate-500 font-mono flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                <span className="font-semibold">{voucher.voucherNo}</span>
+                {student?.regNo && (
+                  <>
+                    <span>&bull;</span>
+                    <span>Reg: {student.regNo}</span>
+                  </>
+                )}
+                {studentClass?.name && (
+                  <>
+                    <span>&bull;</span>
+                    <span>Class: {studentClass.name}</span>
+                  </>
+                )}
+                <span>&bull;</span>
+                <span>{formatMonthName(voucher.month)}</span>
+              </p>
             </div>
           </div>
 
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Amount to Collect (Rs.) *</label>
-              <input
-                type="number"
-                min="1"
-                max={dynamicRemaining > 0 ? dynamicRemaining : undefined}
-                value={amount || ''}
-                onChange={(e) => setAmount(Number(e.target.value) || 0)}
-                className="w-full px-3 py-2 text-sm font-bold font-mono bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
-                placeholder="0"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
-                <select
-                  value={mode}
-                  onChange={(e) => setMode(e.target.value as PaymentMode)}
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="Cash">Cash</option>
-                  <option value="BankTransfer">Bank Transfer</option>
-                  <option value="Cheque">Cheque</option>
-                  <option value="Online">Online</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Date</label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
-                />
+          {/* 3 Metric Pills */}
+          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 font-mono text-center shrink-0">
+            <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
+              <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Original Due</div>
+              <div className="font-bold text-slate-800 text-[10px] sm:text-xs truncate">
+                {formatCurrency(voucher.netDue)}
               </div>
             </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Reference / Cheque #</label>
-              <input
-                type="text"
-                value={refNo}
-                onChange={(e) => setRefNo(e.target.value)}
-                placeholder="Optional bank txn or cheque number"
-                className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
-              />
+            <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
+              <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Already Paid</div>
+              <div className="font-bold text-emerald-700 text-[10px] sm:text-xs truncate">
+                {formatCurrency(voucher.amountPaid)}
+              </div>
             </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Notes / Remarks</label>
-              <textarea
-                rows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional collection notes"
-                className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500"
-              />
+            <div className="bg-emerald-50 px-1.5 sm:px-2 py-1 rounded-md border border-emerald-200 min-w-0">
+              <div className="text-[8px] sm:text-[9px] text-emerald-800 font-sans font-bold">
+                {voucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Remaining'}
+              </div>
+              <div className="font-black text-emerald-800 text-[10px] sm:text-xs truncate">
+                {voucher.amountPaid >= dynamicNetDue
+                  ? voucher.amountPaid > dynamicNetDue
+                    ? `+${formatCurrency(voucher.amountPaid - dynamicNetDue)} Adv`
+                    : 'Settled'
+                  : formatCurrency(dynamicRemaining)}
+              </div>
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 transition cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={amount <= 0}
-              onClick={onSubmit}
-              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Confirm Payment
-            </button>
+        {/* Main Content Grid: Left & Right Panes */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5 items-stretch overflow-y-auto flex-1 min-h-0 pr-0.5">
+          {/* Left Pane: Particulars Editor */}
+          <div className="lg:col-span-6 flex flex-col min-h-[220px] lg:h-full lg:min-h-0 w-full">
+            <VoucherParticularsEditor
+              compact={true}
+              items={items}
+              onChange={(updated) => {
+                setItems(updated);
+                const mult = getEffectiveMultiple(
+                  roundingEnabled,
+                  roundingMultiple,
+                  voucher?.roundingMultiple
+                );
+                const newNet = Math.max(
+                  0,
+                  roundUpToMultiple(
+                    updated.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+                    mult
+                  )
+                );
+                const newRem = Math.max(0, newNet - (voucher.amountPaid || 0));
+                if (Number(amount) === dynamicRemaining && newRem >= 0) {
+                  setAmount(newRem);
+                }
+              }}
+              originalItems={voucher.particulars}
+              onResetToOriginal={() => {
+                setItems(voucher.particulars.map((p) => ({ ...p })));
+                const rem = Math.max(0, voucher.netDue - voucher.amountPaid);
+                setAmount(rem > 0 ? rem : voucher.netDue);
+              }}
+              onSaveLineItems={onSaveLineItems}
+              amountPaid={voucher.amountPaid}
+              studentId={voucher.studentId}
+            />
+          </div>
+
+          {/* Right Pane: Collection Form */}
+          <div className="lg:col-span-6 flex flex-col min-h-[260px] lg:h-full lg:min-h-0 w-full">
+            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-2xs flex flex-col w-full h-full">
+              {/* Header Bar */}
+              <div className="bg-slate-50 border-b border-slate-200 px-2.5 py-1.5 sm:px-3 sm:py-2 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <Coins className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="font-bold text-xs text-slate-800">Collection & Payment Details</span>
+                </div>
+                <span className="text-[10px] font-medium text-slate-500 font-mono">
+                  {formatMonthName(voucher.month)}
+                </span>
+              </div>
+
+              {/* Form Content */}
+              <form onSubmit={onSubmit} className="flex flex-col justify-between flex-1 min-h-0 text-xs">
+                <div className="p-3 sm:p-3.5 overflow-y-auto flex-1 space-y-2.5 bg-slate-50/40">
+                  {/* Amount Section */}
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                      <label className="block font-bold text-slate-700 text-[11px]">
+                        Collection Amount (Rs.) *
+                      </label>
+                      {dynamicRemaining > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setAmount(dynamicRemaining)}
+                          className="text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
+                        >
+                          Auto-fill Remaining ({formatCurrency(dynamicRemaining)})
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setAmount(dynamicNetDue)}
+                          className="text-[10px] sm:text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
+                        >
+                          Fill Voucher Fee ({formatCurrency(dynamicNetDue)})
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">
+                        Rs.
+                      </span>
+                      <input
+                        type="number"
+                        step="1"
+                        required
+                        min="1"
+                        value={amount}
+                        onChange={(e) =>
+                          setAmount(e.target.value === '' ? '' : Number(e.target.value))
+                        }
+                        className="w-full h-[38px] pl-9 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                        placeholder="Enter Amount"
+                      />
+                    </div>
+
+                    {/* Quick suggestion chips */}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {dynamicRemaining > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setAmount(dynamicRemaining)}
+                          className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
+                        >
+                          Full Balance: {formatCurrency(dynamicRemaining)}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setAmount(dynamicNetDue)}
+                          className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
+                        >
+                          Fill Fee: {formatCurrency(dynamicNetDue)}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setAmount(dynamicNetDue)}
+                        className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-semibold transition cursor-pointer"
+                      >
+                        Net Due: {formatCurrency(dynamicNetDue)}
+                      </button>
+                    </div>
+
+                    {typeof amount === 'number' && amount > dynamicRemaining && (
+                      <div className="mt-1.5 flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-md px-2 py-1">
+                        <Info className="w-3 h-3 shrink-0" />
+                        <span className="text-[10px] font-medium">
+                          Excess {formatCurrency(amount - dynamicRemaining)} to be held as credit / advance.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Mode & Date */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                        Payment Mode *
+                      </label>
+                      <select
+                        value={mode}
+                        onChange={(e) => setMode(e.target.value as CollectMode)}
+                        className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      >
+                        <option value="SchoolCashier">School Cashier</option>
+                        <option value="BankDeposit">Bank Deposit</option>
+                        <option value="OnlineTransfer">Online Transfer</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                        Collection Date *
+                      </label>
+                      <DatePicker
+                        value={date}
+                        required
+                        themeColor={themeColor || 'teal'}
+                        onChange={(newDate) => setDate(newDate)}
+                        idPrefix="voucher-collect-date"
+                        placeholder="Select Collection Date"
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Compacted Bank Ref & Notes */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                        Bank Ref / Slip #
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. TXN-988471"
+                        value={refNo}
+                        onChange={(e) => setRefNo(e.target.value)}
+                        className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                        Notes (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Optional receipt notes"
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Modal Footer Controls */}
+                <div className="bg-slate-50 border-t border-slate-200 p-2.5 sm:px-3 sm:py-2.5 flex items-center justify-end gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-3.5 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer font-semibold text-xs transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={Number(amount) <= 0}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Confirm & Post ({amount ? formatCurrency(Number(amount)) : 'Rs. 0'})</span>
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 };
+

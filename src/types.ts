@@ -84,7 +84,6 @@ export interface SchoolClass {
   active: boolean;
   studentCount?: number;
 }
-export type Class = SchoolClass;
 
 export type StudentStatus = 'Active' | 'Inactive' | 'AutoDeactivated' | 'Withdrawn' | 'Graduated';
 
@@ -234,7 +233,8 @@ export interface FeeVoucher {
   createdDate: string;
 }
 
-export type PaymentMode = 'Cash' | 'BankTransfer' | 'Cheque' | 'Online';
+import type { PaymentMode } from './utils/paymentMode';
+export type { PaymentMode };
 
 export interface PaymentTransaction {
   id: string;
@@ -430,3 +430,5 @@ export interface StudentAccountHistoryEntry {
   month?: string; // Optional billing month if applicable
   metadata?: Record<string, any>;
 }
+
+

@@ -21,7 +21,7 @@ import {
   getMonthPickerWindow,
   mergeWithDataMonths,
 } from '../utils/feeMath';
-import { parseCsvLine, CSV_DELIMITERS_TEMPLATE } from '../utils/csv';
+import { parseCsvLine, detectCsvDelimiter } from '../utils/csv';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
 import { UserModal, UserModalSaveData } from './UserModal';
@@ -1284,7 +1284,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
-    const firstLineCells = parseCsvLine(lines[0], CSV_DELIMITERS_TEMPLATE);
+    const delimiter = detectCsvDelimiter(lines[0]);
+    const firstLineCells = parseCsvLine(lines[0], [delimiter]);
     const firstLineClean = firstLineCells.map((c) => c.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
     // Check if first line is a header
@@ -1426,7 +1427,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const results: ParsedCsvTemplateRow[] = [];
 
     dataLines.forEach((line, idx) => {
-      const cells = parseCsvLine(line, CSV_DELIMITERS_TEMPLATE);
+      const cells = parseCsvLine(line, [delimiter]);
       if (cells.length === 0 || (cells.length === 1 && !cells[0].trim())) return;
 
       const rawId = (cells[idIdx] || '').trim();

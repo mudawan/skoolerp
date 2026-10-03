@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import pg from 'pg';
+import { PAYMENT_MODES, isPaymentMode } from '../src/utils/paymentMode';
 
 export interface DbInstitution {
   id: string;
@@ -318,7 +319,6 @@ class DatabaseService {
   private isInitialized = false;
   private revisions: Map<string, { revision: number; lastModified: string }> = new Map();
   private globalRevision: number = 1;
-  private fallbackSequences: Map<string, number> = new Map();
 
   constructor() {
     const host = process.env.POSTGRES_HOST || '127.0.0.1';
@@ -561,6 +561,8 @@ class DatabaseService {
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
+
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}'::jsonb;
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_institution_username ON users (institution_id, LOWER(username));
 
@@ -1114,6 +1116,33 @@ class DatabaseService {
     return { success: false, error: 'Database unavailable' };
   }
 
+  /** Per-user UI preferences (theme, sidebar) stored in PostgreSQL. */
+  public async getUserPreferences(userId: string): Promise<Record<string, any>> {
+    await this.init();
+    if (this.engine === 'postgres' && this.pgPool) {
+      const res = await this.pgPool.query('SELECT preferences FROM users WHERE id = $1', [userId]);
+      const prefs = res.rows[0]?.preferences;
+      return prefs && typeof prefs === 'object' ? prefs : {};
+    }
+    return {};
+  }
+
+  /** Shallow-merges the given keys into the user's stored preferences and returns the result. */
+  public async updateUserPreferences(userId: string, patch: Record<string, any>): Promise<Record<string, any>> {
+    await this.init();
+    if (this.engine === 'postgres' && this.pgPool) {
+      const res = await this.pgPool.query(
+        `UPDATE users
+            SET preferences = COALESCE(preferences, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+          WHERE id = $1
+        RETURNING preferences`,
+        [userId, JSON.stringify(patch)]
+      );
+      return res.rows[0]?.preferences || {};
+    }
+    return {};
+  }
+
   public async getUserByUsername(username: string, institutionId?: string): Promise<DbUser | null> {
     await this.init();
     const clean = username.trim().toLowerCase();
@@ -1439,19 +1468,6 @@ class DatabaseService {
   }
 
   /**
-   * Generates the next monotonic sequence number for a document prefix and year.
-   * Guarantees atomic, collision-free numbers even under high concurrent load.
-   */
-  public async nextSequenceNumber(
-    institutionId: string,
-    prefix: string,
-    year: string
-  ): Promise<number> {
-    const block = await this.nextSequenceBlock(institutionId, prefix, year, 1);
-    return block.end;
-  }
-
-  /**
    * Atomically reserves a block of `count` monotonic sequence numbers.
    * Advances the sequence by count in a single O(1) statement and returns { start, end, count }.
    */
@@ -1482,11 +1498,10 @@ class DatabaseService {
       return { start, end, count: safeCount };
     }
 
-    const key = `${tenantId}:${cleanPrefix}:${cleanYear}`;
-    const prev = this.fallbackSequences.get(key) || 0;
-    const end = prev + safeCount;
-    this.fallbackSequences.set(key, end);
-    return { start: prev + 1, end, count: safeCount };
+    // The database is the single source of truth for document numbering.
+    // There is deliberately no in-memory fallback: a process-local counter would
+    // restart from 1 and could issue duplicate numbers.
+    throw new Error('Document numbering requires an active PostgreSQL connection.');
   }
 
   /**
@@ -1511,47 +1526,6 @@ class DatabaseService {
     return result;
   }
 
-  /**
-   * Formats a complete document number, e.g. FE2026-000042
-   */
-  public async nextDocumentNumber(
-    institutionId: string,
-    prefix: string,
-    year: string,
-    digits: number = 6
-  ): Promise<string> {
-    const list = await this.mintDocumentNumberBlock(institutionId, prefix, year, 1, digits);
-    return list[0];
-  }
-
-
-  /**
-   * Reconciles sequence counters by adopting max existing values
-   */
-  public async reconcileSequence(
-    institutionId: string,
-    prefix: string,
-    year: string,
-    highestObservedNumber: number
-  ): Promise<void> {
-    if (highestObservedNumber <= 0) return;
-    await this.init();
-    const tenantId = institutionId || 'default';
-    const now = new Date().toISOString();
-    const cleanPrefix = prefix.trim().toUpperCase();
-    const cleanYear = year.trim();
-
-    if (this.engine === 'postgres' && this.pgPool) {
-      await this.pgPool.query(
-        `INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (institution_id, prefix, year)
-         DO UPDATE SET last_value = GREATEST(system_sequences.last_value, $4), updated_at = $5`,
-        [tenantId, cleanPrefix, cleanYear, highestObservedNumber, now]
-      );
-      return;
-    }
-  }
 
   /**
    * Runs `mutator` with exclusive, transactional access to a set of voucher
@@ -1739,6 +1713,9 @@ class DatabaseService {
         }
 
         for (const t of writes.newTransactions || []) {
+          if (!isPaymentMode(t.paymentMode)) {
+            throw new Error(`Invalid payment mode "${String(t.paymentMode)}". Allowed: ${PAYMENT_MODES.join(', ')}.`);
+          }
           await client.query(
             `INSERT INTO transactions (id, institution_id, txn_no, collection_id, voucher_id, student_id, month, amount, fine_added, payment_mode, reference_no, notes, date, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,

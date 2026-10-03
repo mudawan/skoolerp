@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { paymentModeText, isBankedMode } from '../utils/paymentMode';
 import {
   Printer,
   Download,
@@ -220,7 +221,7 @@ Student: ${student?.name} (Reg: ${student?.regNo})
 Class: ${schoolClass?.name || 'General'}
 Voucher #: ${voucher?.voucherNo} (${formatMonthName(voucher?.month || '')})
 Amount Paid: Rs. ${txn?.amount?.toLocaleString('en-PK')}
-Payment Mode: ${txn?.paymentMode}${txn?.referenceNo ? ` [Ref: ${txn.referenceNo}]` : ''}
+Payment Mode: ${paymentModeText(txn?.paymentMode)}${txn?.referenceNo ? ` [Ref: ${txn.referenceNo}]` : ''}
 Status: ${isFullyPaid ? 'FULLY PAID' : `PARTIAL (Remaining: ${formatCurrency(remaining || 0)})`}
 Amount in Words: ${numberToWords(txn?.amount || 0)}
 Thank you for your payment!`;
@@ -322,7 +323,7 @@ Thank you for your payment!`;
           <div className="flex items-center gap-2 col-span-2">
             <span className="text-slate-400 font-medium">Payment Mode:</span>
             <span className="font-semibold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200 text-[11px]">
-              {txn?.paymentMode} {txn?.referenceNo ? `[Ref: ${txn.referenceNo}]` : ''}
+              {paymentModeText(txn?.paymentMode)} {txn?.referenceNo ? `[Ref: ${txn.referenceNo}]` : ''}
             </span>
             {student?.fatherName && (
               <span className="text-slate-500 text-[11px] ml-auto">Father: {student.fatherName}</span>
@@ -402,7 +403,7 @@ Thank you for your payment!`;
         {(txn?.notes || activeBank) && (
           <div className="mt-2 text-[11px] text-slate-500 bg-slate-50/60 p-2 rounded border border-slate-100">
             {txn?.notes && <p className="font-medium text-slate-700">Remarks: {txn.notes}</p>}
-            {activeBank && txn?.paymentMode !== 'Cash' && (
+            {activeBank && isBankedMode(txn?.paymentMode) && (
               <p className="text-[10px] text-slate-500">
                 Deposit Bank: {activeBank.bankName} | A/C: {activeBank.accountNumber} | Title: {activeBank.title}
               </p>
@@ -471,7 +472,7 @@ Thank you for your payment!`;
           </div>
           <div className="flex justify-between">
             <span>Mode:</span>
-            <span>{txn?.paymentMode}</span>
+            <span>{paymentModeText(txn?.paymentMode)}</span>
           </div>
         </div>
 

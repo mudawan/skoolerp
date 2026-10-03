@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { DEFAULT_PAYMENT_MODE } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, VoucherItem, ParticularKind } from '../types';
@@ -177,7 +178,7 @@ export const DefaultersView: React.FC = () => {
   // Collect Payment Modal State
   const [collectingVoucher, setCollectingVoucher] = useState<FeeVoucher | null>(null);
   const [collectAmount, setCollectAmount] = useState<number | string>('');
-  const [collectMode, setCollectMode] = useState<PaymentTransaction['paymentMode']>('Cash');
+  const [collectMode, setCollectMode] = useState<PaymentTransaction['paymentMode']>(DEFAULT_PAYMENT_MODE);
   const [collectRef, setCollectRef] = useState('');
   const [collectDate, setCollectDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectNotes, setCollectNotes] = useState('');
@@ -378,7 +379,7 @@ export const DefaultersView: React.FC = () => {
     setCollectItems(v.particulars.map((p) => ({ ...p })));
     const remaining = Math.max(0, v.netDue - v.amountPaid);
     setCollectAmount(remaining);
-    setCollectMode('Cash');
+    setCollectMode(DEFAULT_PAYMENT_MODE);
     setCollectRef('');
     setCollectDate(new Date().toISOString().split('T')[0]);
     setCollectNotes('');

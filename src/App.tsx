@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
-import { VerticalSidebar } from './components/VerticalSidebar.tsx';
+import { VerticalSidebar } from './components/VerticalSidebar';
 import { DashboardView } from './components/DashboardView';
 import { StudentsView } from './components/StudentsView';
 import { FamiliesView } from './components/FamiliesView';
@@ -28,6 +28,7 @@ function MainApp() {
     currentUser,
     hasPermission,
     isAuthenticated,
+    isSessionLoading,
     isSidebarCollapsed,
     institute,
     activeMonth,
@@ -155,6 +156,14 @@ function MainApp() {
       setActiveTab(firstAllowedTab);
     }
   }, [currentUser?.id, currentUser?.permissions, activeTab]);
+
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300 text-sm font-sans">
+        Restoring your session…
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <LoginView />;

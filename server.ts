@@ -19,6 +19,7 @@ import {
 } from './server/db';
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
+import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE, isPaymentMode } from './src/utils/paymentMode';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
@@ -73,7 +74,6 @@ async function startServer() {
 
   // Parse JSON payloads up to 50MB (to support bulk uploads, CSV imports, and document attachments)
   app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   /**
    * Rate-limit store shared across every app instance via Postgres, so a
@@ -150,6 +150,41 @@ async function startServer() {
   await dbService.init();
 
   // Enforce zero caching on all API endpoints across all browsers, proxies, and intermediaries
+  // CSRF defence in depth (on top of the SameSite=Lax session cookie): browsers
+  // always attach an Origin (or at least a Referer) header to cross-site
+  // state-changing requests, so reject any unsafe-method request whose origin
+  // is not this server. Requests with neither header (curl, server-to-server)
+  // are not browser CSRF vectors and are allowed. Extra trusted origins can be
+  // listed in ALLOWED_ORIGINS (comma-separated), e.g. when behind a proxy.
+  const extraAllowedHosts = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((o) => {
+      try {
+        return new URL(o).host.toLowerCase();
+      } catch {
+        return o.toLowerCase();
+      }
+    });
+  app.use('/api', (req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+    const source = (req.headers.origin as string) || (req.headers.referer as string);
+    if (!source) return next();
+    let sourceHost = '';
+    try {
+      sourceHost = new URL(source).host.toLowerCase();
+    } catch {
+      return res.status(403).json({ success: false, error: 'Cross-site request blocked (invalid origin).' });
+    }
+    const ownHosts = [req.headers.host, req.headers['x-forwarded-host']]
+      .flatMap((h) => String(h || '').split(','))
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+    if (ownHosts.includes(sourceHost) || extraAllowedHosts.includes(sourceHost)) return next();
+    return res.status(403).json({ success: false, error: 'Cross-site request blocked.' });
+  });
+
   app.use('/api', (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -883,6 +918,45 @@ async function startServer() {
       user: userClientData,
       institution: req.institution,
     });
+  });
+
+  // Per-user UI preferences (theme + sidebar), persisted in the database
+  const THEME_COLORS = ['teal', 'navy', 'indigo', 'emerald', 'amber', 'rose', 'slate'];
+  const SIDEBAR_THEMES = ['dark', 'light', 'branded'];
+
+  app.get('/api/auth/preferences', async (req: AuthenticatedRequest, res) => {
+    if (!req.user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+    try {
+      const preferences = await dbService.getUserPreferences(req.user.id);
+      res.json({ success: true, preferences });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to load preferences' });
+    }
+  });
+
+  app.put('/api/auth/preferences', async (req: AuthenticatedRequest, res) => {
+    if (!req.user) return res.status(401).json({ success: false, error: 'Not authenticated' });
+    try {
+      const body = req.body || {};
+      const patch: Record<string, any> = {};
+      if (body.themeConfig && typeof body.themeConfig === 'object') {
+        const t = body.themeConfig;
+        const themeConfig: Record<string, string> = {};
+        if (THEME_COLORS.includes(t.color)) themeConfig.color = t.color;
+        if (SIDEBAR_THEMES.includes(t.sidebarTheme)) themeConfig.sidebarTheme = t.sidebarTheme;
+        if (Object.keys(themeConfig).length > 0) patch.themeConfig = themeConfig;
+      }
+      if (typeof body.sidebarCollapsed === 'boolean') patch.sidebarCollapsed = body.sidebarCollapsed;
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ success: false, error: 'No valid preferences supplied.' });
+      }
+      const current = await dbService.getUserPreferences(req.user.id);
+      if (patch.themeConfig) patch.themeConfig = { ...(current.themeConfig || {}), ...patch.themeConfig };
+      const preferences = await dbService.updateUserPreferences(req.user.id, patch);
+      res.json({ success: true, preferences });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to save preferences' });
+    }
   });
 
   // Authenticated Logout: revokes session from database and clears HTTP-only cookie
@@ -1728,26 +1802,6 @@ async function startServer() {
 
   // --- Phase 3: Granular Transactional Financial Endpoints ---
 
-  // 1. Next Atomic Sequence / Document Number (supports single or batch block reservation)
-  app.post('/api/sequences/next', requireAuth(), async (req: AuthenticatedRequest, res) => {
-    try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { prefix, year, digits = 6, count } = req.body;
-      if (!prefix || !year) {
-        return res.status(400).json({ success: false, error: 'Both prefix and year are required.' });
-      }
-      if (typeof count === 'number' && count > 1) {
-        const documentNumbers = await dbService.mintDocumentNumberBlock(institutionId, prefix, year, count, digits);
-        return res.json({ success: true, documentNumbers, documentNumber: documentNumbers[0], count: documentNumbers.length, prefix, year });
-      }
-      const documentNumber = await dbService.nextDocumentNumber(institutionId, prefix, year, digits);
-      res.json({ success: true, documentNumber, documentNumbers: [documentNumber], count: 1, prefix, year });
-    } catch (err: any) {
-      console.error('[API] Sequence generation failed:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Sequence generation failure' });
-    }
-  });
-
   // 2. Transactional Fee Voucher Generation
   app.post('/api/vouchers/generate', requireAuth('fees.generate'), async (req: AuthenticatedRequest, res) => {
     try {
@@ -1781,44 +1835,42 @@ async function startServer() {
             .map((v: any) => `${v.studentId}:${v.month}`)
         );
 
-        // O(1) set of existing voucher numbers to detect collisions instantly
-        const existingVoucherNoSet = new Set(
-          Array.from(lockedVouchers.values())
-            .map((v: any) => v.voucherNo)
-            .filter(Boolean)
-        );
-
+        // Pass 1: drop students who already have a voucher for the month
+        // (also de-duplicates repeated items inside the same request).
+        const pending: any[] = [];
         for (const item of rawVouchers) {
           const key = `${item.studentId}:${item.month}`;
           if (existingKeySet.has(key)) {
             continue; // Skip already generated
           }
-
-          const yearStr = item.month.split('-')[0];
-          let voucherNo = item.voucherNo;
-
-          // DIRECTIVE 1 (Silent Reissuance, No Rejections):
-          // If the candidate voucher number is missing, temporary, or collides with ANY
-          // existing voucher in this tenant, silently reissue the next monotonic number.
-          if (!voucherNo || voucherNo.startsWith('TEMP_') || existingVoucherNoSet.has(voucherNo)) {
-            voucherNo = await helpers.mintDocumentNumber('FE', yearStr);
-          }
-
-          // Register in the set to protect consecutive items in the same batch
-          existingVoucherNoSet.add(voucherNo);
-
-          const newVoucher = {
-            ...item,
-            id: item.id || `vch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-            voucherNo,
-            createdDate: item.createdDate || new Date().toISOString().split('T')[0],
-          };
-
-          createdVouchers.push(newVoucher);
-          voucherUpserts[newVoucher.id] = newVoucher;
           existingKeySet.add(key);
+          pending.push(item);
         }
 
+        // Pass 2: the server is the sole authority for voucher numbers. Any number
+        // supplied by the client is ignored. One atomic block is reserved per
+        // billing year inside this same locked transaction, so numbers are
+        // contiguous, monotonic and can never collide.
+        const itemsByYear = new Map<string, any[]>();
+        for (const item of pending) {
+          const yearStr = String(item.month).split('-')[0];
+          if (!itemsByYear.has(yearStr)) itemsByYear.set(yearStr, []);
+          itemsByYear.get(yearStr)!.push(item);
+        }
+
+        for (const [yearStr, yearItems] of itemsByYear) {
+          const numbers = await helpers.mintDocumentNumberBlock('FE', yearStr, yearItems.length);
+          yearItems.forEach((item, idx) => {
+            const newVoucher = {
+              ...item,
+              id: item.id || `vch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              voucherNo: numbers[idx],
+              createdDate: item.createdDate || new Date().toISOString().split('T')[0],
+            };
+            createdVouchers.push(newVoucher);
+            voucherUpserts[newVoucher.id] = newVoucher;
+          });
+        }
 
         // Mark any folded prior unpaid vouchers as Carried
         for (const prior of carriedPriorVouchers) {
@@ -1891,6 +1943,16 @@ async function startServer() {
 
       if (!Array.isArray(payments) || payments.length === 0) {
         return res.status(400).json({ success: false, error: 'At least one payment line is required.' });
+      }
+
+      for (let i = 0; i < payments.length; i++) {
+        const mode = payments[i]?.paymentMode;
+        if (mode !== undefined && mode !== null && mode !== '' && !isPaymentMode(mode)) {
+          return res.status(400).json({
+            success: false,
+            error: `Payment ${i + 1}: invalid payment mode "${String(mode)}". Allowed: ${PAYMENT_MODES.join(', ')}.`,
+          });
+        }
       }
 
       const yearStr = new Date().getFullYear().toString();
@@ -1997,7 +2059,7 @@ async function startServer() {
               month: v.month,
               amount: item.amount,
               fineAdded: item.fineAdded,
-              paymentMode: item.paymentMode || 'Cash',
+              paymentMode: item.paymentMode || DEFAULT_PAYMENT_MODE,
               referenceNo: item.referenceNo,
               notes: item.notes || `Payment for ${v.voucherNo}`,
               date: item.date || date,
@@ -2318,6 +2380,7 @@ async function startServer() {
       const yearStr = new Date().getFullYear().toString();
       let deletedVoucherLabels: string[] = [];
       let editedVoucherLabels: string[] = [];
+      const assignedVoucherNumbers: { id: string; voucherNo: string }[] = [];
 
       await dbService.runVoucherTransaction(institutionId, { voucherIds }, async (_locked, helpers) => {
         // amountPaid must never increase for an existing voucher through this
@@ -2338,21 +2401,41 @@ async function startServer() {
         deletedVoucherLabels = deleteVoucherIds.map((id: string) => _locked.get(id)?.voucherNo || id);
         editedVoucherLabels = voucherUpserts.map((v: any) => v.voucherNo || v.id);
 
+        // Voucher numbers are server-authoritative. A voucher that already exists
+        // keeps its stored number (clients cannot renumber it); a brand-new voucher
+        // always receives the next number from the database sequence, one atomic
+        // block per billing year, regardless of what the client sent.
         const upserts: Record<string, any> = {};
+        const newVouchersByYear = new Map<string, any[]>();
         for (const v of voucherUpserts) {
-          if (v?.id) upserts[v.id] = v;
+          if (!v?.id) continue;
+          const existing = _locked.get(v.id);
+          if (existing) {
+            upserts[v.id] = { ...v, voucherNo: existing.voucherNo };
+          } else {
+            upserts[v.id] = { ...v };
+            const monthStr = String(v.month || '');
+            const vYear = /^\d{4}/.test(monthStr) ? monthStr.slice(0, 4) : yearStr;
+            if (!newVouchersByYear.has(vYear)) newVouchersByYear.set(vYear, []);
+            newVouchersByYear.get(vYear)!.push(upserts[v.id]);
+          }
+        }
+        for (const [vYear, list] of newVouchersByYear) {
+          const numbers = await helpers.mintDocumentNumberBlock('FE', vYear, list.length);
+          list.forEach((v, i) => {
+            v.voucherNo = numbers[i];
+            assignedVoucherNumbers.push({ id: v.id, voucherNo: numbers[i] });
+          });
         }
         const collectionUpdatesMap: Record<string, { totalAmount: number; transactionCount: number }> = {};
         for (const c of collectionUpdates) {
           if (c?.id) collectionUpdatesMap[c.id] = { totalAmount: c.totalAmount, transactionCount: c.transactionCount };
         }
 
-        // Never trust client-computed document numbers for anything actually
-        // persisted — they're optimistic local placeholders (see
-        // src/utils/sequence.ts). Re-mint authoritative ones here, exactly
-        // like /api/collections/receive and /api/vouchers/generate do,
-        // so a client's local counter drifting out of sync with the real
-        // server sequence can never produce colliding document numbers.
+        // Never trust client-supplied document numbers for anything actually
+        // persisted — the client only sends pending placeholders. Mint
+        // authoritative ones here, exactly like /api/collections/receive and
+        // /api/vouchers/generate do.
         const remintedTransactions = [];
         for (const t of newTransactions) {
           const txnNo = await helpers.mintDocumentNumber('TXN', yearStr);
@@ -2422,7 +2505,7 @@ async function startServer() {
         institutionId
       );
 
-      res.json({ success: true, revision: revInfo.revision });
+      res.json({ success: true, revision: revInfo.revision, vouchers: assignedVoucherNumbers });
     } catch (err: any) {
       console.error('[API] Failed to apply voucher batch update:', err);
       res.status(500).json({ success: false, error: err?.message || 'Batch update failed' });

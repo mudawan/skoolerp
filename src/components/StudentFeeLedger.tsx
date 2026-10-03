@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { DEFAULT_PAYMENT_MODE, paymentModeText } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
@@ -102,7 +103,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   const [isPrinting, setIsPrinting] = useState(false);
   const [collectModalVoucher, setCollectModalVoucher] = useState<FeeVoucher | null>(null);
   const [collectAmount, setCollectAmount] = useState<number | string>('');
-  const [collectMode, setCollectMode] = useState<PaymentTransaction['paymentMode']>('Cash');
+  const [collectMode, setCollectMode] = useState<PaymentTransaction['paymentMode']>(DEFAULT_PAYMENT_MODE);
   const [collectRef, setCollectRef] = useState('');
   const [collectDate, setCollectDate] = useState(new Date().toISOString().split('T')[0]);
   const [collectNotes, setCollectNotes] = useState('');
@@ -422,7 +423,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     setCollectItems(voucher.particulars.map((p) => ({ ...p })));
     const rem = Math.max(0, voucher.netDue - voucher.amountPaid);
     setCollectAmount(rem > 0 ? rem : voucher.netDue);
-    setCollectMode('Cash');
+    setCollectMode(DEFAULT_PAYMENT_MODE);
     setCollectRef('');
     setCollectDate(new Date().toISOString().split('T')[0]);
     setCollectNotes(`Direct student ledger collection for ${voucher.voucherNo}`);
@@ -1050,7 +1051,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                                 </span>
                                 {entry.paymentMode && (
                                   <span className="inline-block text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded mt-0.5">
-                                    {entry.paymentMode}
+                                    {paymentModeText(entry.paymentMode)}
                                   </span>
                                 )}
                               </div>
@@ -1203,7 +1204,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                       <div className="flex items-center justify-between">
                         <span className="font-mono font-bold text-slate-900">{txn.txnNo}</span>
                         <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded text-[10px]">
-                          {txn.paymentMode}
+                          {paymentModeText(txn.paymentMode)}
                         </span>
                       </div>
 
@@ -1517,10 +1518,9 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                             }
                             className="w-full h-[38px] px-2.5 bg-white border border-slate-200 rounded-lg font-semibold text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                           >
-                            <option value="Cash">Cash Desk</option>
-                            <option value="BankTransfer">Bank Transfer / Online</option>
-                            <option value="Cheque">Cheque Deposit</option>
-                            <option value="Online">Credit/Debit Card</option>
+                            <option value="SchoolCashier">School Cashier</option>
+                            <option value="BankDeposit">Bank Deposit</option>
+                            <option value="OnlineTransfer">Online Transfer</option>
                           </select>
                         </div>
 

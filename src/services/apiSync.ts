@@ -992,6 +992,35 @@ export async function apiGetMe(): Promise<{
   }
 }
 
+export interface UserPreferences {
+  themeConfig?: { color?: string; sidebarTheme?: string };
+  sidebarCollapsed?: boolean;
+}
+
+export async function apiGetPreferences(): Promise<{ success: boolean; preferences?: UserPreferences; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/preferences');
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to load preferences' };
+  }
+}
+
+export async function apiSavePreferences(
+  patch: UserPreferences
+): Promise<{ success: boolean; preferences?: UserPreferences; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to save preferences' };
+  }
+}
+
 export async function apiLogout(): Promise<{ success: boolean }> {
   setActiveInstitutionId(null);
   resetSyncSnapshots();
@@ -1131,60 +1160,6 @@ export async function apiListInvites(
 
 // --- Granular Transactional Financial API Helpers (Phase 3) ---
 
-export async function apiNextDocumentNumber(
-  prefix: string,
-  year: string,
-  digits: number = 6
-): Promise<string | null> {
-  try {
-    const instId = activeInstitutionId || 'default';
-    const res = await fetch('/api/sequences/next', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-institution-id': instId,
-      },
-      body: JSON.stringify({ prefix, year, digits }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.success ? data.documentNumber : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function apiNextDocumentBlock(
-  prefix: string,
-  year: string,
-  count: number = 1,
-  digits: number = 6
-): Promise<string[] | null> {
-  if (count <= 0) return [];
-  try {
-    const instId = activeInstitutionId || 'default';
-    const res = await fetch('/api/sequences/next', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-institution-id': instId,
-      },
-      body: JSON.stringify({ prefix, year, count, digits }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && Array.isArray(data.documentNumbers)) {
-      return data.documentNumbers;
-    }
-    if (data.success && data.documentNumber) {
-      return [data.documentNumber];
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 
 export async function apiGenerateVouchers(
   vouchers: any[],
@@ -1312,7 +1287,7 @@ export async function apiVoucherBatchUpdate(params: {
   newCollections?: any[];
   collectionUpdates?: { id: string; totalAmount: number; transactionCount: number }[];
   deleteCollectionIds?: string[];
-}): Promise<{ success: boolean; revision?: number; error?: string }> {
+}): Promise<{ success: boolean; revision?: number; vouchers?: { id: string; voucherNo: string }[]; error?: string }> {
   if (!isConnected) {
     return {
       success: false,

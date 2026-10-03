@@ -1,21 +1,24 @@
 import React from 'react';
 import { TransportBus } from '../../types';
-import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { X, Bus, AlertCircle } from 'lucide-react';
+import { X } from 'lucide-react';
 
-export interface BusModalProps {
+export interface BusFormData {
+  busNumber: string;
+  model: string;
+  regNumber: string;
+  driverName: string;
+  driverPhone: string;
+  routeName: string;
+  active: boolean;
+  sortOrder: number;
+}
+
+interface BusModalProps {
   show: boolean;
   onClose: () => void;
   editingBus: TransportBus | null;
-  busData: {
-    busNumber: string;
-    model: string;
-    regNumber: string;
-    driverName: string;
-    driverPhone: string;
-    routeName: string;
-  };
-  setBusData: React.Dispatch<React.SetStateAction<any>>;
+  busData: BusFormData;
+  setBusData: React.Dispatch<React.SetStateAction<BusFormData>>;
   formError: string;
   onSubmit: (e: React.FormEvent) => void;
 }
@@ -29,121 +32,84 @@ export const BusModal: React.FC<BusModalProps> = ({
   formError,
   onSubmit,
 }) => {
-  useEscapeKey(onClose, show);
-
   if (!show) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
-              <Bus className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="font-bold text-slate-900 text-sm">
-                {editingBus ? `Edit Bus #${editingBus.busNumber}` : 'Add Bus / Route'}
-              </h3>
-              <p className="text-[11px] text-slate-500">Fleet vehicle and route configuration</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition">
-            <X className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+          <h3 className="text-base font-bold text-slate-900">
+            {editingBus ? 'Edit School Bus' : 'Add School Bus'}
+          </h3>
+          <button onClick={onClose} className="text-slate-400">
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {formError && (
-          <div className="m-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-            <span>{formError}</span>
-          </div>
-        )}
+        {formError && <p className="text-xs text-rose-600">{formError}</p>}
 
-        <form onSubmit={onSubmit} className="p-4 space-y-3 text-xs">
+        <form onSubmit={onSubmit} className="space-y-3 text-xs">
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Bus / Van Number *</label>
+            <label className="block font-bold mb-1">Bus Number *</label>
             <input
               type="text"
               required
               value={busData.busNumber}
-              onChange={(e) => setBusData((prev: any) => ({ ...prev, busNumber: e.target.value }))}
-              placeholder="e.g. Bus-01, Van-04"
-              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
+              onChange={(e) => setBusData({ ...busData, busNumber: e.target.value })}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
             />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Route Name *</label>
-              <input
-                type="text"
-                required
-                value={busData.routeName}
-                onChange={(e) => setBusData((prev: any) => ({ ...prev, routeName: e.target.value }))}
-                placeholder="e.g. Gulberg Line"
-                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Reg Number</label>
-              <input
-                type="text"
-                value={busData.regNumber}
-                onChange={(e) => setBusData((prev: any) => ({ ...prev, regNumber: e.target.value }))}
-                placeholder="e.g. LEA-1234"
-                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Vehicle Model</label>
-              <input
-                type="text"
-                value={busData.model}
-                onChange={(e) => setBusData((prev: any) => ({ ...prev, model: e.target.value }))}
-                placeholder="e.g. Toyota Coaster"
-                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Driver Name</label>
-              <input
-                type="text"
-                value={busData.driverName}
-                onChange={(e) => setBusData((prev: any) => ({ ...prev, driverName: e.target.value }))}
-                placeholder="e.g. Muhammad Ali"
-                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
           </div>
 
           <div>
-            <label className="block font-bold text-slate-700 mb-1">Driver Phone</label>
+            <label className="block font-bold mb-1">Model & Registration</label>
             <input
               type="text"
-              value={busData.driverPhone}
-              onChange={(e) => setBusData((prev: any) => ({ ...prev, driverPhone: e.target.value }))}
-              placeholder="e.g. 0300-1234567"
-              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500"
+              value={busData.model}
+              onChange={(e) => setBusData({ ...busData, model: e.target.value })}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
             />
           </div>
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+          <div>
+            <label className="block font-bold mb-1">Driver Name & Phone</label>
+            <input
+              type="text"
+              value={busData.driverName}
+              onChange={(e) => setBusData({ ...busData, driverName: e.target.value })}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
+            />
+          </div>
+
+          <div>
+            <label className="block font-bold mb-1">Route Description</label>
+            <input
+              type="text"
+              value={busData.routeName}
+              onChange={(e) => setBusData({ ...busData, routeName: e.target.value })}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
+            />
+          </div>
+
+          <div>
+            <label className="block font-bold mb-1">Sort Position #</label>
+            <input
+              type="number"
+              min="1"
+              value={busData.sortOrder}
+              onChange={(e) => setBusData({ ...busData, sortOrder: Number(e.target.value) })}
+              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-800 transition cursor-pointer"
+              className="px-4 py-2 border rounded-xl"
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
-            >
-              {editingBus ? 'Save Changes' : 'Add Bus'}
+            <button type="submit" className="px-4 py-2 bg-teal-600 text-white font-bold rounded-xl">
+              {editingBus ? 'Update Bus' : 'Save Bus'}
             </button>
           </div>
         </form>
