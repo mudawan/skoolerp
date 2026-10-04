@@ -4441,13 +4441,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     startActionLock(
       'Carrying Forward Defaulter Balances',
       voucherIds.length,
-      `Preparing ${voucherIds.length} defaulter vouchers for atomic database carry-forward...`
+      `Preparing ${voucherIds.length} defaulter vouchers for carry-forward...`
     );
 
     try {
       updateActionLock({
         current: Math.max(1, Math.round(voucherIds.length * 0.2)),
-        message: `Executing atomic ledger transaction for ${voucherIds.length} vouchers in PostgreSQL...`,
+        message: `Processing and updating ${voucherIds.length} vouchers on the server...`,
       });
 
       const batchRes = await apiCarryForwardBatch({

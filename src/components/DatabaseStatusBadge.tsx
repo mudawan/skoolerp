@@ -46,10 +46,10 @@ export const DatabaseStatusBadge: React.FC = () => {
       }`}
       title={
         isSyncing
-          ? 'Saving changes to PostgreSQL server...'
+          ? 'Saving changes to server...'
           : isOnline
-          ? 'Connected to PostgreSQL • All records saved in real time'
-          : 'PostgreSQL Offline • Check network connection. Modifications and financial actions are paused until reconnected.'
+          ? 'Connected • All records saved in real time'
+          : 'Server Offline • Check network connection. Modifications and financial actions are paused until reconnected.'
       }
     >
       <span className="relative flex h-2 w-2 shrink-0">

@@ -303,9 +303,9 @@ function MainApp() {
               <div className="flex items-center gap-2.5">
                 <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                 <div>
-                  <span className="font-semibold">Database Connection Lost:</span>{' '}
+                  <span className="font-semibold">Server Connection Lost:</span>{' '}
                   <span>
-                    PostgreSQL database is currently offline or unreachable. To protect accounting integrity and prevent multi-operator conflicts, all data modifications, voucher generations, and fee collections are paused until the connection is restored.
+                    The database server is currently offline or unreachable. To protect accounting records and prevent data conflicts, all data modifications, voucher generations, and fee collections are paused until connection is restored.
                   </span>
                 </div>
               </div>

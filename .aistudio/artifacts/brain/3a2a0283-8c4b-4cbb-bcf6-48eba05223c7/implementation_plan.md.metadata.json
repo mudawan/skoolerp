@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to remove rounding factor indicators from Net Due labels across the entire application, presenting clean, professional financial summaries.",
-  "updatedAt":  "2026-10-03T10:10:42.195722438Z",
+  "summary":  "Implementation plan to visually unify the three tabs under Defaulters & Arrears (Unpaid Defaulters, Zero-Due / Settled, and Carried Forward) with consistent columns, page-relative serial numbers, checkboxes, and tab-specific bulk action buttons.",
+  "updatedAt":  "2026-10-04T02:33:02.340400949Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
