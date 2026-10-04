@@ -476,17 +476,11 @@ function renderVoucherToPdfPage(
     doc.setDrawColor(203, 213, 225); // slate-300
     doc.rect(colX + 3, netDueY, colWidth - 6, 6.5, 'FD');
 
+    const effectiveRoundingMultiple = voucher.roundingMultiple ?? context.roundingMultiple ?? 10;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7);
     doc.setTextColor(30, 41, 59); // slate-800
-    const effectiveRoundingMultiple = voucher.roundingMultiple ?? context.roundingMultiple ?? 10;
-    doc.text(
-      effectiveRoundingMultiple > 1
-        ? `NET DUE AMOUNT (ROUNDED TO ${effectiveRoundingMultiple}):`
-        : 'NET DUE AMOUNT:',
-      colX + 5,
-      netDueY + 4.5
-    );
+    doc.text('NET DUE AMOUNT:', colX + 5, netDueY + 4.5);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);

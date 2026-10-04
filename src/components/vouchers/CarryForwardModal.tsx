@@ -1,5 +1,5 @@
 import React from 'react';
-import { FeeVoucher, SchoolClass, Student } from '../../types';
+import { FeeVoucher } from '../../types';
 import { formatCurrency, formatMonthName } from '../../utils/feeMath';
 import { ArrowRight, X } from 'lucide-react';
 
@@ -11,27 +11,36 @@ export interface CarryModalState {
 
 interface CarryForwardModalProps {
   carryModal: CarryModalState;
-  students: Student[];
-  classes: SchoolClass[];
   addLateFine: boolean;
   setAddLateFine: (v: boolean) => void;
   carryFineAmount: number;
   setCarryFineAmount: (v: number) => void;
+  isProcessing?: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }
 
+/**
+ * Shared "Confirm Carry Forward" dialog used by every carry-forward entry point
+ * (Defaulters, Vouchers, Month-End Wizard). The vouchers being carried are already
+ * visible in the calling view, so this shows only a summary and the late-fine option.
+ */
 export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
   carryModal,
-  students,
-  classes,
   addLateFine,
   setAddLateFine,
   carryFineAmount,
   setCarryFineAmount,
+  isProcessing = false,
   onClose,
   onConfirm,
 }) => {
+  const count = carryModal.targetVouchers.length;
+  const arrears = carryModal.targetVouchers.reduce((sum, v) => sum + (v.netDue - v.amountPaid), 0);
+  const fineEach = addLateFine ? carryFineAmount : 0;
+  const totalFines = fineEach * count;
+  const targetLabel = formatMonthName(carryModal.targetMonth);
+
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
@@ -41,18 +50,14 @@ export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
               <ArrowRight className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Confirm Carry Forward to {formatMonthName(carryModal.targetMonth)}
-              </h3>
+              <h3 className="text-base font-bold text-slate-900">Confirm Carry Forward to {targetLabel}</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Carrying forward will mark selected voucher(s) as 'Carried' and transfer arrears as Previous Balance into {formatMonthName(carryModal.targetMonth)}.
+                Carrying forward will mark the voucher(s) as 'Carried' and transfer the unpaid arrears as Previous
+                Balance into {targetLabel}.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 cursor-pointer"
-          >
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 cursor-pointer" disabled={isProcessing}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -87,43 +92,24 @@ export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <div className="text-[11px] font-bold text-slate-700 flex justify-between">
-            <span>Vouchers to Carry ({carryModal.targetVouchers.length}):</span>
-            <span className="text-amber-800">
-              Total Arrears:{' '}
-              {formatCurrency(
-                carryModal.targetVouchers.reduce(
-                  (sum, v) => sum + (v.netDue - v.amountPaid) + (addLateFine ? carryFineAmount : 0),
-                  0
-                )
-              )}
-            </span>
+        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-slate-600">Vouchers to carry</span>
+            <span className="font-bold text-slate-900">{count}</span>
           </div>
-          <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50 space-y-1.5 text-xs">
-            {carryModal.targetVouchers.map((v) => {
-              const student = students.find((s) => s.id === v.studentId);
-              const cls = classes.find((c) => c.id === v.classId);
-              const arrears = v.netDue - v.amountPaid + (addLateFine ? carryFineAmount : 0);
-
-              return (
-                <div
-                  key={v.id}
-                  className="flex items-center justify-between bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs"
-                >
-                  <div>
-                    <div className="font-bold text-slate-900">
-                      {student?.name || 'Student'} ({v.voucherNo})
-                    </div>
-                    <div className="text-[10px] text-slate-500">{cls?.name}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono font-bold text-amber-700">{formatCurrency(arrears)}</div>
-                    <div className="text-[9px] text-slate-400">Target: {carryModal.targetMonth}</div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="flex justify-between">
+            <span className="text-slate-600">Unpaid arrears</span>
+            <span className="font-mono font-bold text-slate-900">{formatCurrency(arrears)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600">
+              Late fines{addLateFine && count > 0 ? ` (${count} × ${formatCurrency(fineEach)})` : ''}
+            </span>
+            <span className="font-mono font-bold text-slate-900">{formatCurrency(totalFines)}</span>
+          </div>
+          <div className="flex justify-between pt-1.5 border-t border-slate-200">
+            <span className="font-bold text-slate-800">Total carried into {targetLabel}</span>
+            <span className="font-mono font-bold text-amber-700">{formatCurrency(arrears + totalFines)}</span>
           </div>
         </div>
 
@@ -131,16 +117,18 @@ export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold rounded-xl text-xs cursor-pointer"
+            disabled={isProcessing}
+            className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold rounded-xl text-xs cursor-pointer disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
+            disabled={isProcessing || count === 0}
+            className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
-            <span>Confirm & Carry Forward ({carryModal.targetVouchers.length})</span>
+            <span>{isProcessing ? 'Processing...' : `Confirm & Carry Forward (${count})`}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

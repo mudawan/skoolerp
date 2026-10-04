@@ -20,6 +20,8 @@ import {
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE, isPaymentMode } from './src/utils/paymentMode';
+import { applyCarryForward } from './src/utils/feeMath';
+import type { FeeVoucher } from './src/types';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
@@ -2135,137 +2137,202 @@ async function startServer() {
     }
   });
 
-  // 4. Carry Forward Unpaid Balance Transaction
-  app.post('/api/vouchers/carry-forward', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
+  // 4. Bulk Carry Forward of defaulter balances (atomic).
+  //
+  // Everything happens inside ONE PostgreSQL transaction with every voucher of
+  // the tenant locked FOR UPDATE, using the shared applyCarryForward() rules
+  // (src/utils/feeMath.ts): the source voucher is marked Carried with its
+  // carriedLateFine, the target month voucher's Previous Balance is replaced
+  // with the outstanding amount and its Fine carries the chosen fine, the
+  // student's voucher chain is recalculated, and Admission vouchers carried
+  // into pre-billing months get a destination voucher whose number is minted
+  // here (never by the client). Policy that only the client knows (rounding,
+  // default fine, due-date setting) is supplied in `policy` and validated.
+  app.post('/api/vouchers/carry-forward-batch', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
     try {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
-      const { voucherId, targetMonth, addLateFine = false, customFineAmount } = req.body;
+      const { voucherIds: rawVoucherIds, targetMonth, addLateFine = false, customFineAmount, perVoucherFines, policy } = req.body;
 
-      if (!voucherId || !targetMonth) {
-        return res.status(400).json({ success: false, error: 'voucherId and targetMonth are required.' });
+      // ---- Input validation -------------------------------------------------
+      const isNonNegNumber = (n: any) => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+      if (
+        !Array.isArray(rawVoucherIds) ||
+        rawVoucherIds.length === 0 ||
+        rawVoucherIds.length > 5000 ||
+        !rawVoucherIds.every((id: any) => typeof id === 'string' && id.length > 0)
+      ) {
+        return res.status(400).json({ success: false, error: 'voucherIds must be a non-empty array of voucher ids.' });
+      }
+      if (typeof targetMonth !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) {
+        return res.status(400).json({ success: false, error: 'targetMonth must be in YYYY-MM format.' });
+      }
+      if (typeof addLateFine !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'addLateFine must be a boolean.' });
+      }
+      if (customFineAmount !== undefined && customFineAmount !== null && !isNonNegNumber(customFineAmount)) {
+        return res.status(400).json({ success: false, error: 'customFineAmount must be a non-negative number.' });
+      }
+      if (perVoucherFines !== undefined && perVoucherFines !== null) {
+        if (
+          typeof perVoucherFines !== 'object' ||
+          Array.isArray(perVoucherFines) ||
+          !Object.values(perVoucherFines).every(isNonNegNumber)
+        ) {
+          return res.status(400).json({ success: false, error: 'perVoucherFines must map voucher ids to non-negative numbers.' });
+        }
+      }
+      if (
+        !policy ||
+        typeof policy.roundingEnabled !== 'boolean' ||
+        !Number.isInteger(policy.roundingMultiple) ||
+        policy.roundingMultiple < 1 ||
+        policy.roundingMultiple > 100000 ||
+        !isNonNegNumber(policy.defaultLateFeeRate) ||
+        typeof policy.settingsDueDate !== 'string' ||
+        !/^(\d{4}-\d{2}-\d{2})?$/.test(policy.settingsDueDate)
+      ) {
+        return res.status(400).json({ success: false, error: 'A valid policy (rounding, default late fee, due date) is required.' });
       }
 
-      let sourceVoucherResult: any = null;
-      let targetVoucherResult: any = null;
+      const voucherIds: string[] = Array.from(new Set<string>(rawVoucherIds));
 
-      // Locks the whole vouchers collection for this tenant: the matching
-      // target voucher (same student, target month) isn't known by ID
-      // upfront and must be found by scanning, so — same reasoning as
-      // voucher generation — the whole collection needs to be locked to
-      // make "find target, then fold balance into it" atomic against a
-      // concurrent carry-forward or generation run. Carry-forward is a
-      // low-frequency, typically month-end/admin-driven operation, so this
-      // trade-off (favoring correctness over fine-grained concurrency) is
-      // appropriate here.
+      interface Processed {
+        sourceId: string;
+        outstandingBalance: number;
+        fineApplied: number;
+      }
+      let txResult: { processed: Processed[]; errors: string[]; updated: FeeVoucher[] } | null = null;
+
       try {
-        await dbService.runVoucherTransaction(institutionId, { allVouchers: true }, async (lockedVouchers) => {
+        await dbService.runVoucherTransaction(institutionId, { allVouchers: true }, async (lockedVouchers, helpers) => {
+          const originals = new Map<string, any>(lockedVouchers);
+          let list: FeeVoucher[] = Array.from(lockedVouchers.values()) as unknown as FeeVoucher[];
+          const processed: Processed[] = [];
+          const errors: string[] = [];
+          const createdIds: string[] = [];
+
+          for (const voucherId of voucherIds) {
+            const src = list.find((v) => v.id === voucherId);
+            const student =
+              src && src.voucherType === 'Admission' ? await dbService.getStudentById(institutionId, src.studentId) : null;
+
+            const result = applyCarryForward(list, {
+              voucherId,
+              targetMonth,
+              addLateFine,
+              customFineAmount: perVoucherFines?.[voucherId] ?? customFineAmount ?? undefined,
+              defaultLateFeeRate: policy.defaultLateFeeRate,
+              policy: { roundingEnabled: policy.roundingEnabled, roundingMultiple: policy.roundingMultiple },
+              student: student ? { classId: student.classId, firstBillingMonth: student.firstBillingMonth } : undefined,
+              settingsDueDate: policy.settingsDueDate,
+              newVoucherId: () => `vch-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            });
+
+            if (!result.ok) {
+              errors.push(result.error || `Voucher ${voucherId} could not be carried forward.`);
+              continue;
+            }
+            list = result.list;
+            if (result.createdVoucherId) createdIds.push(result.createdVoucherId);
+            processed.push({ sourceId: voucherId, outstandingBalance: result.outstandingBalance, fineApplied: result.fineApplied });
+          }
+
+          // Number any auto-created destination vouchers on the server (atomic block).
+          if (createdIds.length > 0) {
+            const year = targetMonth.split('-')[0];
+            const numbers = await helpers.mintDocumentNumberBlock('FE', year, createdIds.length);
+            list = list.map((v) => {
+              const idx = createdIds.indexOf(v.id);
+              return idx >= 0 ? { ...v, voucherNo: numbers[idx] } : v;
+            });
+          }
+
+          const updated = list.filter((v) => originals.get(v.id) !== (v as any));
           const voucherUpserts: Record<string, any> = {};
-          const source = lockedVouchers.get(voucherId);
-          if (!source) {
-            throw Object.assign(new Error('Voucher not found.'), { httpStatus: 404 });
-          }
-          const voucher = { ...source };
-
-          if (voucher.status === 'Reversed') {
-            throw Object.assign(new Error('Voucher is reversed and cannot be carried forward.'), { httpStatus: 400 });
-          }
-          if (voucher.status === 'Paid' || voucher.status === 'Carried') {
-            throw Object.assign(new Error(`Voucher is already in '${voucher.status}' status.`), { httpStatus: 400 });
+          if (processed.length > 0) {
+            for (const v of updated) voucherUpserts[v.id] = v;
           }
 
-          const outstandingBalance = voucher.netDue - voucher.amountPaid;
-          if (outstandingBalance <= 0) {
-            throw Object.assign(new Error('Voucher has no outstanding balance to carry forward.'), { httpStatus: 400 });
-          }
-
-          // Mark source voucher as carried
-          voucher.status = 'Carried';
-          voucher.carryForwardMonth = targetMonth;
-          voucherUpserts[voucherId] = voucher;
-
-          // Check if target voucher exists
-          const targetSource = Array.from(lockedVouchers.values()).find(
-            (v: any) => v.id !== voucherId && v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed'
-          );
-
-          const fineToApply = addLateFine
-            ? customFineAmount !== undefined
-              ? customFineAmount
-              : voucher.lateFeeRate || 0
-            : 0;
-
-          let targetVoucher: any = null;
-          if (targetSource) {
-            targetVoucher = { ...targetSource };
-            const prevBalIndex = targetVoucher.particulars.findIndex((p: any) => p.kind === 'PreviousBalance');
-            if (prevBalIndex >= 0) {
-              targetVoucher.particulars[prevBalIndex].amount += outstandingBalance;
-            } else {
-              targetVoucher.particulars.push({
-                kind: 'PreviousBalance',
-                label: `Arrears (${voucher.month})`,
-                amount: outstandingBalance,
-              });
-            }
-
-            if (fineToApply > 0) {
-              const fineIndex = targetVoucher.particulars.findIndex((p: any) => p.kind === 'Fine');
-              if (fineIndex >= 0) {
-                targetVoucher.particulars[fineIndex].amount += fineToApply;
-              } else {
-                targetVoucher.particulars.push({
-                  kind: 'Fine',
-                  label: 'Late Fee',
-                  amount: fineToApply,
-                });
-              }
-            }
-
-            targetVoucher.prevBalance = (targetVoucher.prevBalance || 0) + outstandingBalance;
-            targetVoucher.netDue = targetVoucher.particulars.reduce((s: number, p: any) => s + Number(p.amount), 0);
-            if (targetVoucher.amountPaid >= targetVoucher.netDue && targetVoucher.netDue > 0) {
-              targetVoucher.status = 'Paid';
-            } else if (targetVoucher.amountPaid > 0) {
-              targetVoucher.status = 'Partial';
-            } else {
-              targetVoucher.status = 'Issued';
-            }
-
-            voucherUpserts[targetVoucher.id] = targetVoucher;
-          }
-
-          sourceVoucherResult = voucher;
-          targetVoucherResult = targetVoucher;
-
+          txResult = { processed, errors, updated: processed.length > 0 ? updated : [] };
           return { writes: { voucherUpserts }, result: null };
         });
       } catch (txErr: any) {
         const status = txErr?.httpStatus || 500;
-        return res.status(status).json({ success: false, error: txErr?.message || 'Carry forward failed' });
+        return res.status(status).json({ success: false, error: txErr?.message || 'Bulk carry forward failed' });
+      }
+
+      const { processed, errors, updated } = txResult!;
+
+      // Nothing could be carried: nothing was written, so no revision bump / audit.
+      if (processed.length === 0) {
+        return res.status(409).json({
+          success: false,
+          error: errors.length > 0 ? errors.slice(0, 3).join(' ') : 'No vouchers were carried forward.',
+          errors,
+        });
       }
 
       dbService.incrementRevision(institutionId);
       const revInfo = dbService.getRevisionInfo(institutionId);
 
-      await recordAudit(req, {
-        actionType: 'carry_forward',
-        actionTitle: 'Balance Carried Forward',
-        module: 'Defaulters',
-        description: `Carried outstanding balance from voucher ${sourceVoucherResult.voucherNo} (${sourceVoucherResult.month}) to ${targetMonth}${addLateFine ? ' with a late fine' : ''}.`,
-        targetId: sourceVoucherResult.voucherNo,
-        targetLabel: `${sourceVoucherResult.voucherNo} → ${targetMonth}`,
-        month: targetMonth,
-        amount: sourceVoucherResult.netDue - sourceVoucherResult.amountPaid,
-        metadata: { voucherId, targetVoucherId: targetVoucherResult?.id, addLateFine, customFineAmount },
-      });
+      // Per-voucher audit trail (same entries the single-voucher flow always produced).
+      for (const item of processed) {
+        const v = updated.find((u) => u.id === item.sourceId);
+        if (!v) continue;
+        let studentLabel = v.voucherNo;
+        let studentName = 'Unknown';
+        try {
+          const st = await dbService.getStudentById(institutionId, v.studentId);
+          if (st) {
+            studentName = st.name;
+            studentLabel = `${st.name} (${st.regNo})`;
+          }
+        } catch {
+          /* label only */
+        }
+        await recordAudit(req, {
+          actionType: 'carry_forward',
+          actionTitle: 'Defaulter Voucher Carried Forward',
+          module: 'Defaulters',
+          description: `Carried forward outstanding arrears of Rs ${item.outstandingBalance.toLocaleString()} on voucher ${v.voucherNo} (${studentName}) from ${v.month} to ${targetMonth}${item.fineApplied > 0 ? ` with Rs ${item.fineApplied.toLocaleString()} late fine` : ''}.`,
+          targetId: v.voucherNo,
+          targetLabel: studentLabel,
+          month: v.month,
+          amount: item.outstandingBalance,
+          newValue: `Carried to ${targetMonth}`,
+          metadata: {
+            voucherId: v.id,
+            voucherNo: v.voucherNo,
+            studentId: v.studentId,
+            fromMonth: v.month,
+            targetMonth,
+            outstandingBalance: item.outstandingBalance,
+            fineApplied: item.fineApplied,
+          },
+        });
+        if (item.fineApplied > 0) {
+          await recordAudit(req, {
+            actionType: 'fine_modification',
+            actionTitle: 'Late Carry Fine Imposed',
+            module: 'Defaulters',
+            description: `Imposed Rs ${item.fineApplied.toLocaleString()} late payment fine during carry-forward of voucher ${v.voucherNo} into ${targetMonth}.`,
+            targetId: v.voucherNo,
+            targetLabel: studentLabel,
+            month: targetMonth,
+            amount: item.fineApplied,
+            newValue: item.fineApplied,
+            metadata: { voucherId: v.id, targetMonth, fineAmount: item.fineApplied },
+          });
+        }
+      }
 
       broadcastEvent(
         {
-          type: 'voucher_carried',
+          type: 'vouchers_bulk_carried',
           institutionId,
-          voucherId,
           targetMonth,
+          count: processed.length,
           revision: revInfo.revision,
           originClientId: clientId,
           lastModified: revInfo.lastModified,
@@ -2275,13 +2342,14 @@ async function startServer() {
 
       res.json({
         success: true,
-        sourceVoucher: sourceVoucherResult,
-        targetVoucher: targetVoucherResult || null,
+        count: processed.length,
+        updatedVouchers: updated,
+        errors,
         revision: revInfo.revision,
       });
     } catch (err: any) {
-      console.error('[API] Error carrying forward voucher:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Carry forward failed' });
+      console.error('[API] Error in bulk carry forward:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Bulk carry forward failed' });
     }
   });
 

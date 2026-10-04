@@ -55,12 +55,17 @@ export const SessionInactivityGuard: React.FC = () => {
       return;
     }
 
+    const timeoutMs = (sessionTimeoutMinutes || 10) * 60 * 1000;
+
     // Initialize with current time or last recorded time across tabs
     try {
       const stored = localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY);
       if (stored) {
         const parsed = Number(stored);
-        if (!isNaN(parsed) && parsed > 0 && parsed <= Date.now()) {
+        // Only accept the stored timestamp if it is recent (within the current timeout window).
+        // If it is older than timeoutMs (e.g. from yesterday or prior session before browser close),
+        // it is stale and must be refreshed to Date.now() so fresh logins are never immediately kicked out.
+        if (!isNaN(parsed) && parsed > 0 && parsed <= Date.now() && Date.now() - parsed < timeoutMs) {
           lastActivityRef.current = parsed;
         } else {
           recordActivity(true);
@@ -76,7 +81,7 @@ export const SessionInactivityGuard: React.FC = () => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === LAST_ACTIVITY_STORAGE_KEY && e.newValue) {
         const remoteTime = Number(e.newValue);
-        if (!isNaN(remoteTime) && remoteTime > lastActivityRef.current) {
+        if (!isNaN(remoteTime) && remoteTime > lastActivityRef.current && Date.now() - remoteTime < timeoutMs) {
           lastActivityRef.current = remoteTime;
           if (isWarningOpenRef.current) {
             isWarningOpenRef.current = false;

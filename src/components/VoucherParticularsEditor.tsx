@@ -453,7 +453,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
         </div>
         <div className={`bg-teal-50 rounded border border-teal-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
           <div className="text-[9px] text-teal-800 font-sans font-bold">
-            {roundingEnabled ? `Net Due (${roundingMultiple ?? 10})` : 'Net Due'}
+            Net Due
           </div>
           <div className={`font-black text-teal-900 ${compact ? 'text-[11px]' : 'text-xs'}`}>
             {formatCurrency(netDue)}

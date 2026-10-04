@@ -68,6 +68,7 @@ import {
   getNextMonthString,
   getPreviousMonthString,
   roundUpToMultiple,
+  recalculateVoucherChain,
   VoucherPreviewCalculation,
   normalizeDateToISO,
   normalizeCnic,
@@ -94,7 +95,7 @@ import {
   apiReceiveCollection,
   apiGetPreferences,
   apiSavePreferences,
-  apiCarryForwardVoucher,
+  apiCarryForwardBatch,
   apiVoucherBatchUpdate,
   syncSimpleEntityCollectionNow,
   subscribeSyncFailures,
@@ -103,7 +104,18 @@ import {
   checkMutationAllowed,
   subscribeDbStatus,
   apiUpdateInstituteSettings,
+  setActionLockActive,
 } from '../services/apiSync';
+import { DatabaseActionLockModal } from '../components/DatabaseActionLockModal';
+
+export interface ActionLockState {
+  active: boolean;
+  title: string;
+  current: number;
+  total: number;
+  message?: string;
+  phase?: 'processing' | 'persisting' | 'completed';
+}
 
 export interface DownstreamConflict {
   voucher: FeeVoucher;
@@ -311,19 +323,13 @@ interface AppContextType {
     month: string,
     date?: string
   ) => { success: boolean; successCount: number; errors: string[] };
-  carryForwardDefaulter: (
-    voucherId: string,
-    targetMonth: string,
-    addLateFine: boolean,
-    customFineAmount?: number
-  ) => { success: boolean; error?: string };
   bulkCarryForwardDefaulters: (
     voucherIds: string[],
     targetMonth: string,
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ) => { success: boolean; successCount: number; errors: string[] };
+  ) => Promise<{ success: boolean; successCount: number; errors: string[] }>;
   undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
   defaultLateFeeRate: number;
   setDefaultLateFeeRate: (rate: number) => void;
@@ -427,6 +433,12 @@ interface AppContextType {
 
   // Global In-App Notifications / Toasts
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', durationMs?: number) => void;
+
+  // Transactional Action Lock
+  actionLock: ActionLockState | null;
+  startActionLock: (title: string, total: number, message?: string) => void;
+  updateActionLock: (updates: Partial<Omit<ActionLockState, 'active'>>) => void;
+  stopActionLock: (completionMessage?: string, delayMs?: number) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -531,6 +543,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTimeout(() => {
         setToast((current) => (current?.id === id ? null : current));
       }, durationMs);
+    },
+    []
+  );
+
+  // Central Database Action Lock (guards in-process transactions and UI operations)
+  const [actionLock, setActionLock] = useState<ActionLockState | null>(null);
+  const actionLockSafetyTimerRef = useRef<any>(null);
+
+  const startActionLock = useCallback(
+    (title: string, total: number, message?: string) => {
+      if (actionLockSafetyTimerRef.current) {
+        clearTimeout(actionLockSafetyTimerRef.current);
+      }
+      setActionLockActive(true);
+      setActionLock({
+        active: true,
+        title,
+        current: 0,
+        total: Math.max(1, total),
+        message,
+        phase: 'processing',
+      });
+      // Safety auto-unlock after 35 seconds to prevent permanent UI lockup if an unhandled network error occurs
+      actionLockSafetyTimerRef.current = setTimeout(() => {
+        setActionLockActive(false);
+        setActionLock(null);
+      }, 35000);
+    },
+    []
+  );
+
+  const updateActionLock = useCallback(
+    (updates: Partial<Omit<ActionLockState, 'active'>>) => {
+      setActionLock((prev) => (prev && prev.active ? { ...prev, ...updates } : prev));
+    },
+    []
+  );
+
+  const stopActionLock = useCallback(
+    async (completionMessage?: string, delayMs: number = 300) => {
+      if (actionLockSafetyTimerRef.current) {
+        clearTimeout(actionLockSafetyTimerRef.current);
+        actionLockSafetyTimerRef.current = null;
+      }
+      if (completionMessage) {
+        setActionLock((prev) =>
+          prev && prev.active
+            ? {
+                ...prev,
+                current: prev.total,
+                message: completionMessage,
+                phase: 'completed',
+              }
+            : null
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      setActionLockActive(false);
+      setActionLock(null);
     },
     []
   );
@@ -779,12 +850,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [collections, setCollections] = useState<FeeCollection[]>(() => []);
 
   // Live mirror of the vouchers state, same rationale as studentsRef/familiesRef
-  // above: bulkCarryForwardDefaulters() calls carryForwardDefaulter() in a
-  // synchronous loop, and that function's "already Carried/Paid" duplicate
-  // guard needs to see status changes made by earlier vouchers in the same
-  // batch, not the pre-batch render snapshot. Kept current inside
-  // carryForwardDefaulter() itself and re-synced from state after every
-  // commit so it never drifts stale between unrelated actions.
+  // above: lets synchronous callbacks (bulk carry-forward result merge, undo)
+  // read the latest vouchers instead of a stale render snapshot. Re-synced from
+  // state after every commit so it never drifts stale between unrelated actions.
   const vouchersRef = useRef<FeeVoucher[]>(vouchers);
 
   useEffect(() => {
@@ -1424,6 +1492,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser(me.user);
         setIsAuthenticated(true);
         loadUserPreferences().catch(() => {});
+        try {
+          sessionStorage.removeItem('school_timeout_notice');
+          localStorage.setItem('quickfees_last_activity_timestamp', String(Date.now()));
+        } catch {}
         if (me.institution) {
           setCurrentInstitution(me.institution);
           setActiveInstitutionId(me.institution.id);
@@ -1558,6 +1630,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         try {
           sessionStorage.setItem(`${STORAGE_KEY}_browser_session_active`, '1');
+          sessionStorage.removeItem('school_timeout_notice');
+          localStorage.setItem('quickfees_last_activity_timestamp', String(Date.now()));
         } catch {}
 
         return { success: true, user: apiRes.user };
@@ -4347,293 +4421,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: successCount > 0, successCount, errors };
   };
 
-  // Carry Forward Defaulters
-  const carryForwardDefaulter = (
-    voucherId: string,
-    targetMonth: string,
-    addLateFine: boolean,
-    customFineAmount?: number
-  ) => {
-    const perm = ensureMutationAllowed('Carry forward defaulter');
-    if (!perm.allowed) return { success: false, error: perm.error };
-
-    // Read via the ref (not the outer `vouchers` state) so that vouchers
-    // already processed earlier in the same bulkCarryForwardDefaulters()
-    // loop are visible here. Previously this read the outer closure, which
-    // stays pinned to the pre-batch snapshot for the whole synchronous
-    // loop -- so the "already Carried/Paid" duplicate guard just below
-    // could not detect a voucher this same batch had already carried
-    // forward, letting it be processed a second time.
-    const baseList = vouchersRef.current;
-    const voucher = baseList.find((v) => v.id === voucherId);
-    if (!voucher) return { success: false, error: 'Voucher not found' };
-
-    if (voucher.status === 'Reversed') {
-      return { success: false, error: `Voucher ${voucher.voucherNo} is reversed and cannot be carried forward.` };
-    }
-    if (voucher.status === 'Paid' || voucher.status === 'Carried') {
-      return { success: false, error: `Voucher is already in '${voucher.status}' status.` };
-    }
-
-    const outstandingBalance = voucher.netDue - voucher.amountPaid;
-    if (outstandingBalance <= 0) {
-      return { success: false, error: 'Voucher has no outstanding balance to carry forward.' };
-    }
-
-    // Check if target month voucher already exists for this student
-    const existingTargetVoucher = baseList.find(
-      (v) => v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed'
-    );
-
-    const targetMult = getEffectiveMultiple(roundingEnabled, roundingMultiple, existingTargetVoucher?.roundingMultiple);
-
-    const fineAmountToApply = addLateFine
-      ? roundUpToMultiple(
-          customFineAmount !== undefined ? customFineAmount : (voucher.lateFeeRate || defaultLateFeeRate),
-          targetMult
-        )
-      : 0;
-
-    // Mark current voucher as Carried and update or recalculate target/future
-    // vouchers. Built from `baseList` (the ref) rather than setVouchers's
-    // `prev` callback, so the result is available synchronously right here
-    // and vouchersRef can be updated immediately -- keeping it correct for
-    // the very next voucher processed in the same bulk carry-forward loop,
-    // instead of waiting for React to flush and re-render.
-    let updatedList = baseList.map((v) => {
-      if (v.id !== voucherId) return v;
-
-      return {
-        ...v,
-        status: 'Carried' as VoucherStatus,
-        carryForwardMonth: targetMonth,
-        carriedLateFine: fineAmountToApply,
-      };
-    });
-
-    if (existingTargetVoucher) {
-      let targetParticulars = existingTargetVoucher.particulars.filter(
-        (p) => p.kind !== 'PreviousBalance'
-      );
-
-      targetParticulars.push({
-        kind: 'PreviousBalance',
-        label: outstandingBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
-        amount: outstandingBalance,
-      });
-
-      if (fineAmountToApply > 0) {
-        const fineIdx = targetParticulars.findIndex((p) => p.kind === 'Fine');
-        if (fineIdx >= 0) {
-          targetParticulars[fineIdx] = {
-            ...targetParticulars[fineIdx],
-            amount: fineAmountToApply,
-            label: 'Late Payment Carry Fine',
-          };
-        } else {
-          targetParticulars.push({
-            kind: 'Fine',
-            label: 'Late Payment Carry Fine',
-            amount: fineAmountToApply,
-          });
-        }
-      }
-
-      const grossTotal = targetParticulars
-        .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-        .reduce((sum, p) => sum + p.amount, 0);
-
-      const discountTotal = targetParticulars
-        .filter((p) => p.kind === 'Discount')
-        .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-
-      const netDue = roundUpToMultiple(
-        targetParticulars.reduce((sum, p) => sum + p.amount, 0),
-        targetMult
-      );
-
-      let targetStatus = existingTargetVoucher.status;
-      if (existingTargetVoucher.amountPaid >= netDue) {
-        targetStatus = 'Paid';
-      } else if (existingTargetVoucher.amountPaid > 0) {
-        targetStatus = 'Partial';
-      } else if (existingTargetVoucher.status === 'Carried') {
-        targetStatus = 'Carried';
-      } else {
-        targetStatus = 'Issued';
-      }
-
-      const updatedTargetVoucher: FeeVoucher = {
-        ...existingTargetVoucher,
-        particulars: targetParticulars,
-        grossTotal,
-        discountTotal,
-        prevBalance: outstandingBalance,
-        roundingMultiple: targetMult,
-        netDue,
-        status: targetStatus,
-      };
-
-      const targetIdx = updatedList.findIndex((item) => item.id === existingTargetVoucher.id);
-      if (targetIdx !== -1) {
-        updatedList[targetIdx] = updatedTargetVoucher;
-      }
-
-      updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
-    } else {
-      // No voucher exists for this student in the target month.
-      //
-      // Only auto-create a destination voucher for an Admission (ADM) voucher
-      // being carried through the pre-billing months (targetMonth before the
-      // student's firstBillingMonth). This keeps a June admission voucher for
-      // a September-starting student visible as it is carried on to July and
-      // August, with the destination voucher inheriting the Admission type so
-      // it keeps the ADM marker in the listing.
-      //
-      // A normal monthly voucher, by contrast, is simply marked Carried; its
-      // outstanding balance is not folded anywhere until the target month
-      // voucher actually exists (e.g. when September is generated normally),
-      // so carrying forward August does NOT auto-create a September voucher.
-      const student = students.find((s) => s.id === voucher.studentId);
-      const shouldAutoCreate =
-        voucher.voucherType === 'Admission' &&
-        !!student?.firstBillingMonth &&
-        targetMonth < student.firstBillingMonth;
-
-      if (shouldAutoCreate) {
-        const issuedDate = new Date().toISOString().split('T')[0];
-
-        // Due date for the auto-created destination voucher: use the day from
-        // settings when present; otherwise inherit the same day as the source
-        // (carried) voucher for the target month.
-        const settingsDueDate = getComputedDefaultDueDate(targetMonth);
-        const sourceDay =
-          voucher.dueDate && voucher.dueDate.includes('-') ? voucher.dueDate.split('-')[2] : null;
-        const targetDueDate =
-          settingsDueDate || (sourceDay ? `${targetMonth}-${sourceDay}` : '');
-
-        const newVoucher: FeeVoucher = {
-          id: generateUniqueId('vch'),
-          voucherNo: pendingDocumentNumber(),
-          studentId: voucher.studentId,
-          month: targetMonth,
-          classId: student?.classId || voucher.classId,
-          issueDate: issuedDate,
-          dueDate: targetDueDate,
-          particulars: [],
-          grossTotal: 0,
-          discountTotal: 0,
-          prevBalance: 0,
-          lateFeeRate: voucher.lateFeeRate ?? defaultLateFeeRate,
-          roundingMultiple: roundingEnabled ? roundingMultiple : 1,
-          netDue: 0,
-          amountPaid: 0,
-          status: 'Issued',
-          voucherType: voucher.voucherType,
-          createdDate: issuedDate,
-        };
-
-        updatedList.push(newVoucher);
-      }
-
-      updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
-    }
-
-    vouchersRef.current = updatedList;
-    setVouchers(updatedList);
-
-    // Phase 3: Transactional server-side API call
-    apiCarryForwardVoucher({
-      voucherId,
-      targetMonth,
-      addLateFine,
-      customFineAmount,
-    }).catch((err) => {
-      reportFinancialSyncFailure('Balance carry-forward', err);
-    });
-
-    // Also persist the full recalculated chain for this student — covers
-    // cases the single-pair carry-forward endpoint above doesn't handle:
-    // auto-creating a destination Admission voucher for pre-billing months,
-    // and any downstream vouchers recalculateVouchersSequence touched.
-    apiVoucherBatchUpdate({
-      voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
-    })
-      .then((res) => {
-        if (res?.success) applyServerVoucherNumbers(res.vouchers);
-      })
-      .catch((err) => {
-        reportFinancialSyncFailure('Carry-forward chain recalculation', err);
-      });
-
-    // Audit Logging: Carry forward operation
-    const student = students.find((s) => s.id === voucher.studentId);
-    logAuditEvent({
-      actionType: 'carry_forward',
-      actionTitle: 'Defaulter Voucher Carried Forward',
-      description: `Carried forward outstanding arrears of Rs ${outstandingBalance.toLocaleString()} on voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}) from ${voucher.month} to ${targetMonth}${fineAmountToApply > 0 ? ` with Rs ${fineAmountToApply.toLocaleString()} late fine` : ''}.`,
-      module: 'Defaulters',
-      targetId: voucher.voucherNo,
-      targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
-      month: voucher.month,
-      amount: outstandingBalance,
-      newValue: `Carried to ${targetMonth}`,
-      metadata: {
-        voucherId: voucher.id,
-        voucherNo: voucher.voucherNo,
-        studentId: voucher.studentId,
-        fromMonth: voucher.month,
-        targetMonth,
-        outstandingBalance,
-        fineApplied: fineAmountToApply,
-      },
-    });
-
-    if (fineAmountToApply > 0) {
-      logAuditEvent({
-        actionType: 'fine_modification',
-        actionTitle: 'Late Carry Fine Imposed',
-        description: `Imposed Rs ${fineAmountToApply.toLocaleString()} late payment fine during carry-forward of voucher ${voucher.voucherNo} into ${targetMonth}.`,
-        module: 'Defaulters',
-        targetId: voucher.voucherNo,
-        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
-        month: targetMonth,
-        amount: fineAmountToApply,
-        newValue: fineAmountToApply,
-        metadata: {
-          voucherId: voucher.id,
-          targetMonth,
-          fineAmount: fineAmountToApply,
-        },
-      });
-    }
-
-    return { success: true };
-  };
-
-  const bulkCarryForwardDefaulters = (
+  // Bulk carry-forward. The whole batch is executed atomically by the server
+  // (one PostgreSQL transaction, vouchers locked FOR UPDATE, any new Admission
+  // destination vouchers numbered by the server) using the shared
+  // applyCarryForward() rules. The client only sends the operator's choices and
+  // the school policy, then adopts the vouchers the server returns -- it never
+  // recomputes or writes the ledger itself.
+  const bulkCarryForwardDefaulters = async (
     voucherIds: string[],
     targetMonth: string,
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ): { success: boolean; successCount: number; errors: string[] } => {
-    let successCount = 0;
-    const errors: string[] = [];
-    voucherIds.forEach((vId) => {
-      const fineToUse = perVoucherFines?.[vId] ?? customFineAmount;
-      const res = carryForwardDefaulter(vId, targetMonth, addLateFine, fineToUse);
-      if (res.success) {
-        successCount++;
-      } else if (res.error) {
-        errors.push(res.error);
+  ): Promise<{ success: boolean; successCount: number; errors: string[] }> => {
+    const perm = ensureMutationAllowed('Bulk carry forward defaulters');
+    if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error || 'Blocked'] };
+    if (!voucherIds || voucherIds.length === 0) return { success: true, successCount: 0, errors: [] };
+
+    startActionLock(
+      'Carrying Forward Defaulter Balances',
+      voucherIds.length,
+      `Preparing ${voucherIds.length} defaulter vouchers for atomic database carry-forward...`
+    );
+
+    try {
+      updateActionLock({
+        current: Math.max(1, Math.round(voucherIds.length * 0.2)),
+        message: `Executing atomic ledger transaction for ${voucherIds.length} vouchers in PostgreSQL...`,
+      });
+
+      const batchRes = await apiCarryForwardBatch({
+        voucherIds,
+        targetMonth,
+        addLateFine,
+        customFineAmount,
+        perVoucherFines,
+        policy: {
+          roundingEnabled,
+          roundingMultiple,
+          defaultLateFeeRate,
+          settingsDueDate: getComputedDefaultDueDate(targetMonth),
+        },
+      });
+
+      if (!batchRes.success) {
+        throw new Error(batchRes.error || 'Bulk carry-forward transaction failed on server.');
       }
-    });
-    return {
-      success: successCount > 0,
-      successCount,
-      errors,
-    };
+
+      updateActionLock({
+        current: Math.round(voucherIds.length * 0.85),
+        message: `Applying ${batchRes.count ?? 0} updated vouchers to ledger...`,
+      });
+
+      // Adopt the server's finished vouchers (carried sources, updated targets,
+      // recalculated downstream vouchers and any new destination vouchers).
+      const updates = Array.isArray(batchRes.updatedVouchers) ? batchRes.updatedVouchers : [];
+      const updateMap = new Map<string, FeeVoucher>();
+      updates.forEach((uv: any) => {
+        if (uv && uv.id) updateMap.set(uv.id, uv);
+      });
+      const currentList = vouchersRef.current;
+      const mergedList = currentList.map((v) => updateMap.get(v.id) || v);
+      updates.forEach((uv: any) => {
+        if (uv && uv.id && !currentList.some((v) => v.id === uv.id)) mergedList.push(uv);
+      });
+      vouchersRef.current = mergedList;
+      setVouchers(mergedList);
+
+      const successCount = batchRes.count ?? 0;
+      updateActionLock({
+        current: voucherIds.length,
+        message: `Successfully saved ${successCount} carried vouchers in database.`,
+        phase: 'completed',
+      });
+
+      await stopActionLock(`Completed: ${successCount} defaulters carried forward`, 350);
+
+      return { success: true, successCount, errors: batchRes.errors || [] };
+    } catch (err: any) {
+      console.error('[BulkCarryForward] Error:', err);
+      await stopActionLock();
+      showToast(err?.message || 'Failed to carry forward defaulters', 'error');
+      return {
+        success: false,
+        successCount: 0,
+        errors: [err?.message || 'Carry-forward failed'],
+      };
+    }
   };
 
   const undoCarryForwardVoucher = (
@@ -4716,112 +4590,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
+  // Thin wrapper: the chain math lives in feeMath.recalculateVoucherChain so the
+  // server's atomic carry-forward uses exactly the same rules.
   const recalculateVouchersSequence = (
     allVouchers: FeeVoucher[],
     affectedStudentIds: string[]
-  ): FeeVoucher[] => {
-    const result = [...allVouchers];
-
-    affectedStudentIds.forEach((studentId) => {
-      // Find all non-reversed vouchers for this student sorted by month ASC
-      const studentVouchers = result
-        .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
-        .sort((a, b) => a.month.localeCompare(b.month));
-
-      studentVouchers.forEach((v, idx) => {
-        let newPrevBalance = 0;
-        let carriedFine = 0;
-
-        const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
-
-        if (idx > 0) {
-          const prevVoucher = studentVouchers[idx - 1];
-          if (
-            prevVoucher.status === 'Carried' ||
-            prevVoucher.status === 'Issued' ||
-            prevVoucher.status === 'Partial'
-          ) {
-            newPrevBalance = prevVoucher.netDue - prevVoucher.amountPaid;
-            if (prevVoucher.status === 'Carried' && prevVoucher.carriedLateFine && prevVoucher.carriedLateFine > 0) {
-              carriedFine = roundUpToMultiple(prevVoucher.carriedLateFine, mult);
-            }
-          } else if (prevVoucher.status === 'Paid') {
-            const excess = prevVoucher.amountPaid - prevVoucher.netDue;
-            if (excess > 0) newPrevBalance = -excess;
-          }
-        }
-
-        const cleanParticulars = v.particulars.filter((p) => p.kind !== 'PreviousBalance');
-        if (newPrevBalance !== 0) {
-          cleanParticulars.push({
-            kind: 'PreviousBalance',
-            label: newPrevBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
-            amount: newPrevBalance,
-          });
-        }
-
-        if (carriedFine > 0) {
-          const fineIdx = cleanParticulars.findIndex((p) => p.kind === 'Fine');
-          if (fineIdx >= 0) {
-            cleanParticulars[fineIdx] = {
-              ...cleanParticulars[fineIdx],
-              amount: carriedFine,
-              label: cleanParticulars[fineIdx].label || 'Late Payment Carry Fine',
-            };
-          } else {
-            cleanParticulars.push({
-              kind: 'Fine',
-              label: 'Late Payment Carry Fine',
-              amount: carriedFine,
-            });
-          }
-        }
-
-        const grossTotal = cleanParticulars
-          .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-          .reduce((sum, p) => sum + p.amount, 0);
-
-        const discountTotal = cleanParticulars
-          .filter((p) => p.kind === 'Discount')
-          .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-
-        const netDue = roundUpToMultiple(
-          cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
-          mult
-        );
-
-        let status = v.status;
-        if (v.status === 'Carried') {
-          status = 'Carried';
-        } else if (v.amountPaid >= netDue) {
-          status = 'Paid';
-        } else if (v.amountPaid > 0) {
-          status = 'Partial';
-        } else {
-          status = 'Issued';
-        }
-
-        const updatedVoucher: FeeVoucher = {
-          ...v,
-          particulars: cleanParticulars,
-          grossTotal,
-          discountTotal,
-          prevBalance: newPrevBalance,
-          roundingMultiple: mult,
-          netDue,
-          status,
-        };
-
-        const vIndex = result.findIndex((item) => item.id === v.id);
-        if (vIndex !== -1) {
-          result[vIndex] = updatedVoucher;
-        }
-        studentVouchers[idx] = updatedVoucher;
-      });
-    });
-
-    return result;
-  };
+  ): FeeVoucher[] =>
+    recalculateVoucherChain(allVouchers, affectedStudentIds, { roundingEnabled, roundingMultiple });
 
   const getDownstreamVouchersInfo = (ids: string[]) => {
     const selected = vouchers.filter((v) => ids.includes(v.id));
@@ -5766,9 +5541,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         collectVoucherPayment,
         updateVoucherParticulars,
         bulkCsvCollection,
-        carryForwardDefaulter,
         bulkCarryForwardDefaulters,
         undoCarryForwardVoucher,
+        actionLock,
+        startActionLock,
+        updateActionLock,
+        stopActionLock,
         getDownstreamVouchersInfo,
         deleteVoucher,
         bulkDeleteVouchers,
@@ -5859,6 +5637,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           </div>
         </div>
       )}
+
+      {/* Global Database Action Lock Modal */}
+      <DatabaseActionLockModal actionLock={actionLock} />
     </AppContext.Provider>
   );
 };

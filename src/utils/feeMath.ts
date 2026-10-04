@@ -9,7 +9,9 @@ import {
   TransportAssignment,
   TransportStop,
   VoucherItem,
+  VoucherStatus,
 } from '../types';
+import { pendingDocumentNumber } from './sequence';
 
 /**
  * Rounds a positive amount UP to the nearest multiple (e.g. 3042/10 -> 3050,
@@ -1031,3 +1033,291 @@ export function numberToWords(num: number): string {
   return `${words} Rupees Only`;
 }
 
+
+// ---------------------------------------------------------------------------
+// Voucher chain recalculation & balance carry-forward.
+//
+// These are pure functions shared by the server (atomic batch carry-forward)
+// and the client (undo / other chain recalculations) so the money math has a
+// single implementation.
+//
+// Design:
+//   * Carrying a voucher marks it `Carried`, stores `carryForwardMonth` and
+//     `carriedLateFine` (the fine chosen by the operator) on the SOURCE voucher.
+//   * The target month voucher's `PreviousBalance` is the source's outstanding
+//     balance (replaced, never added) and its `Fine` carries `carriedLateFine`.
+//   * When the target voucher is generated later, generateVoucherPreview reads
+//     the same `carriedLateFine` from the Carried source.
+// ---------------------------------------------------------------------------
+
+export interface RoundingPolicy {
+  roundingEnabled: boolean;
+  roundingMultiple: number;
+}
+
+/**
+ * Re-derives Previous Balance / carried fine / net due / status for every
+ * non-reversed voucher of the given students, walking each student's vouchers
+ * in month order. Returns a new list; only the affected students' vouchers
+ * are replaced.
+ */
+export function recalculateVoucherChain(
+  allVouchers: FeeVoucher[],
+  affectedStudentIds: string[],
+  policy: RoundingPolicy
+): FeeVoucher[] {
+  const result = [...allVouchers];
+
+  affectedStudentIds.forEach((studentId) => {
+    const studentVouchers = result
+      .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    studentVouchers.forEach((v, idx) => {
+      let newPrevBalance = 0;
+      let carriedFine = 0;
+
+      const mult = getEffectiveMultiple(policy.roundingEnabled, policy.roundingMultiple, v.roundingMultiple);
+
+      if (idx > 0) {
+        const prevVoucher = studentVouchers[idx - 1];
+        if (prevVoucher.status === 'Carried' || prevVoucher.status === 'Issued' || prevVoucher.status === 'Partial') {
+          newPrevBalance = prevVoucher.netDue - prevVoucher.amountPaid;
+          if (prevVoucher.status === 'Carried' && prevVoucher.carriedLateFine && prevVoucher.carriedLateFine > 0) {
+            carriedFine = roundUpToMultiple(prevVoucher.carriedLateFine, mult);
+          }
+        } else if (prevVoucher.status === 'Paid') {
+          const excess = prevVoucher.amountPaid - prevVoucher.netDue;
+          if (excess > 0) newPrevBalance = -excess;
+        }
+      }
+
+      const cleanParticulars = v.particulars.filter((p) => p.kind !== 'PreviousBalance');
+      if (newPrevBalance !== 0) {
+        cleanParticulars.push({
+          kind: 'PreviousBalance',
+          label: newPrevBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
+          amount: newPrevBalance,
+        });
+      }
+
+      if (carriedFine > 0) {
+        const fineIdx = cleanParticulars.findIndex((p) => p.kind === 'Fine');
+        if (fineIdx >= 0) {
+          cleanParticulars[fineIdx] = {
+            ...cleanParticulars[fineIdx],
+            amount: carriedFine,
+            label: cleanParticulars[fineIdx].label || 'Late Payment Carry Fine',
+          };
+        } else {
+          cleanParticulars.push({ kind: 'Fine', label: 'Late Payment Carry Fine', amount: carriedFine });
+        }
+      }
+
+      const grossTotal = cleanParticulars
+        .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
+        .reduce((sum, p) => sum + p.amount, 0);
+
+      const discountTotal = cleanParticulars
+        .filter((p) => p.kind === 'Discount')
+        .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+
+      const netDue = roundUpToMultiple(
+        cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
+        mult
+      );
+
+      let status: VoucherStatus = v.status;
+      if (v.status === 'Carried') {
+        status = 'Carried';
+      } else if (v.amountPaid >= netDue) {
+        status = 'Paid';
+      } else if (v.amountPaid > 0) {
+        status = 'Partial';
+      } else {
+        status = 'Issued';
+      }
+
+      const updatedVoucher: FeeVoucher = {
+        ...v,
+        particulars: cleanParticulars,
+        grossTotal,
+        discountTotal,
+        prevBalance: newPrevBalance,
+        roundingMultiple: mult,
+        netDue,
+        status,
+      };
+
+      const vIndex = result.findIndex((item) => item.id === v.id);
+      if (vIndex !== -1) result[vIndex] = updatedVoucher;
+      studentVouchers[idx] = updatedVoucher;
+    });
+  });
+
+  return result;
+}
+
+export interface CarryForwardOptions {
+  voucherId: string;
+  targetMonth: string;
+  addLateFine: boolean;
+  /** Fine chosen by the operator; when undefined the voucher's own rate / default rate is used. */
+  customFineAmount?: number;
+  defaultLateFeeRate: number;
+  policy: RoundingPolicy;
+  /** Student of the source voucher (needed for the Admission auto-create rule). */
+  student?: { classId?: string; firstBillingMonth?: string };
+  /** Due date derived from settings for the target month ('' when disabled). */
+  settingsDueDate: string;
+  /** Generates the id of an auto-created destination voucher. */
+  newVoucherId: () => string;
+}
+
+export interface CarryForwardResult {
+  ok: boolean;
+  error?: string;
+  list: FeeVoucher[];
+  outstandingBalance: number;
+  fineApplied: number;
+  /** Id of an auto-created destination voucher (its voucherNo is a TEMP_ placeholder), if any. */
+  createdVoucherId?: string;
+}
+
+/**
+ * Carries one voucher's outstanding balance into `targetMonth` and returns the
+ * updated voucher list (input is not mutated). Rules:
+ *  - source: status Carried, carryForwardMonth, carriedLateFine = fine applied;
+ *  - existing target voucher: PreviousBalance = outstanding (replaced), Fine =
+ *    fine when > 0, totals / status re-derived;
+ *  - no target voucher: only an Admission voucher carried into a month before
+ *    the student's first billing month gets an auto-created destination
+ *    voucher; otherwise the source is simply marked Carried and the balance is
+ *    picked up when the target month is generated;
+ *  - the student's whole voucher chain is then recalculated.
+ */
+export function applyCarryForward(list: FeeVoucher[], opts: CarryForwardOptions): CarryForwardResult {
+  const { voucherId, targetMonth, policy } = opts;
+  const fail = (error: string): CarryForwardResult => ({ ok: false, error, list, outstandingBalance: 0, fineApplied: 0 });
+
+  const voucher = list.find((v) => v.id === voucherId);
+  if (!voucher) return fail(`Voucher ${voucherId} not found.`);
+  if (voucher.status === 'Reversed') {
+    return fail(`Voucher ${voucher.voucherNo} is reversed and cannot be carried forward.`);
+  }
+  if (voucher.status === 'Paid' || voucher.status === 'Carried') {
+    return fail(`Voucher ${voucher.voucherNo} is already in '${voucher.status}' status.`);
+  }
+
+  const outstandingBalance = voucher.netDue - voucher.amountPaid;
+  if (outstandingBalance <= 0) {
+    return fail(`Voucher ${voucher.voucherNo} has no outstanding balance to carry forward.`);
+  }
+
+  const existingTarget = list.find(
+    (v) => v.studentId === voucher.studentId && v.month === targetMonth && v.status !== 'Reversed'
+  );
+
+  const targetMult = getEffectiveMultiple(policy.roundingEnabled, policy.roundingMultiple, existingTarget?.roundingMultiple);
+
+  const fineApplied = opts.addLateFine
+    ? roundUpToMultiple(
+        opts.customFineAmount !== undefined ? opts.customFineAmount : voucher.lateFeeRate || opts.defaultLateFeeRate,
+        targetMult
+      )
+    : 0;
+
+  let updated = list.map((v) =>
+    v.id !== voucherId
+      ? v
+      : { ...v, status: 'Carried' as VoucherStatus, carryForwardMonth: targetMonth, carriedLateFine: fineApplied }
+  );
+
+  let createdVoucherId: string | undefined;
+
+  if (existingTarget) {
+    const particulars = existingTarget.particulars.filter((p) => p.kind !== 'PreviousBalance');
+    particulars.push({
+      kind: 'PreviousBalance',
+      label: outstandingBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
+      amount: outstandingBalance,
+    });
+
+    if (fineApplied > 0) {
+      const fineIdx = particulars.findIndex((p) => p.kind === 'Fine');
+      if (fineIdx >= 0) {
+        particulars[fineIdx] = { ...particulars[fineIdx], amount: fineApplied, label: 'Late Payment Carry Fine' };
+      } else {
+        particulars.push({ kind: 'Fine', label: 'Late Payment Carry Fine', amount: fineApplied });
+      }
+    }
+
+    const grossTotal = particulars
+      .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
+      .reduce((sum, p) => sum + p.amount, 0);
+    const discountTotal = particulars
+      .filter((p) => p.kind === 'Discount')
+      .reduce((sum, p) => sum + Math.abs(p.amount), 0);
+    const netDue = roundUpToMultiple(
+      particulars.reduce((sum, p) => sum + p.amount, 0),
+      targetMult
+    );
+
+    let status: VoucherStatus;
+    if (existingTarget.amountPaid >= netDue) status = 'Paid';
+    else if (existingTarget.amountPaid > 0) status = 'Partial';
+    else if (existingTarget.status === 'Carried') status = 'Carried';
+    else status = 'Issued';
+
+    const idx = updated.findIndex((v) => v.id === existingTarget.id);
+    if (idx !== -1) {
+      updated[idx] = {
+        ...existingTarget,
+        particulars,
+        grossTotal,
+        discountTotal,
+        prevBalance: outstandingBalance,
+        roundingMultiple: targetMult,
+        netDue,
+        status,
+      };
+    }
+  } else {
+    const shouldAutoCreate =
+      voucher.voucherType === 'Admission' &&
+      !!opts.student?.firstBillingMonth &&
+      targetMonth < opts.student.firstBillingMonth;
+
+    if (shouldAutoCreate) {
+      const issuedDate = new Date().toISOString().split('T')[0];
+      const sourceDay = voucher.dueDate && voucher.dueDate.includes('-') ? voucher.dueDate.split('-')[2] : null;
+      const dueDate = opts.settingsDueDate || (sourceDay ? `${targetMonth}-${sourceDay}` : '');
+      createdVoucherId = opts.newVoucherId();
+
+      updated.push({
+        id: createdVoucherId,
+        voucherNo: pendingDocumentNumber(),
+        studentId: voucher.studentId,
+        month: targetMonth,
+        classId: opts.student?.classId || voucher.classId,
+        issueDate: issuedDate,
+        dueDate,
+        particulars: [],
+        grossTotal: 0,
+        discountTotal: 0,
+        prevBalance: 0,
+        lateFeeRate: voucher.lateFeeRate ?? opts.defaultLateFeeRate,
+        roundingMultiple: policy.roundingEnabled ? policy.roundingMultiple : 1,
+        netDue: 0,
+        amountPaid: 0,
+        status: 'Issued',
+        voucherType: voucher.voucherType,
+        createdDate: issuedDate,
+      });
+    }
+  }
+
+  updated = recalculateVoucherChain(updated, [voucher.studentId], policy);
+
+  return { ok: true, list: updated, outstandingBalance, fineApplied, createdVoucherId };
+}

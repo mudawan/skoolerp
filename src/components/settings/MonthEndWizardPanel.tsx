@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   Lock,
   Unlock,
-  Sparkles,
   ChevronRight,
   ChevronLeft,
   ArrowRight,
@@ -25,6 +24,8 @@ import {
 } from 'lucide-react';
 import { formatMonthName, getNextMonthString, getPreviousMonthString, normalizeMonthString } from '../../utils/feeMath';
 import { PaymentMode } from '../../types';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { CarryForwardModal } from '../vouchers/CarryForwardModal';
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE, paymentModeText } from '../../utils/paymentMode';
 
 interface MonthEndWizardPanelProps {
@@ -52,6 +53,8 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     unlockMonth,
     isMonthLocked,
     bulkCarryForwardDefaulters,
+    startActionLock,
+    stopActionLock,
     collectVoucherPayment,
     defaultLateFeeRate,
     currentUser,
@@ -205,6 +208,18 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   const [addLateFine, setAddLateFine] = useState(true);
   const [lateFineAmount, setLateFineAmount] = useState<number>(defaultLateFeeRate || 500);
   const [isProcessingCarry, setIsProcessingCarry] = useState(false);
+  const [carryModalOpen, setCarryModalOpen] = useState(false);
+
+  useEscapeKey(() => setCarryModalOpen(false), carryModalOpen && !isProcessingCarry);
+
+  // The carry never runs straight from the banner button: it opens the shared
+  // confirmation dialog first so the operator reviews the late-fine option.
+  const handleOpenCarryModal = () => {
+    if (uncarriedDefaulters.length === 0) return;
+    setAddLateFine(true);
+    setLateFineAmount(defaultLateFeeRate || 500);
+    setCarryModalOpen(true);
+  };
 
   // Quick payment modal in Step 3
   const [collectingVoucher, setCollectingVoucher] = useState<{
@@ -226,13 +241,13 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false);
 
   // Execute Carry Forward
-  const handleCarryForwardAll = () => {
+  const handleCarryForwardAll = async () => {
     if (uncarriedDefaulters.length === 0) return;
     setIsProcessingCarry(true);
 
     try {
       const ids = uncarriedDefaulters.map((v) => v.id);
-      const res = bulkCarryForwardDefaulters(
+      const res = await bulkCarryForwardDefaulters(
         ids,
         nextMonthStr,
         addLateFine,
@@ -244,6 +259,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
           `Successfully carried forward ${res.successCount} defaulter(s) to ${formatMonthName(nextMonthStr)}.`,
           'success'
         );
+        setCarryModalOpen(false);
       } else {
         const errorMsg = res.errors && res.errors.length > 0 ? res.errors[0] : 'Failed to carry forward defaulters.';
         showToast(errorMsg, 'error');
@@ -282,40 +298,58 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   };
 
   // Final Lock Fee Books
-  const handleFinalLock = () => {
+  const handleFinalLock = async () => {
     if (uncarriedDefaulters.length > 0) {
       showToast('Cannot lock fee books: outstanding defaulters must be carried forward first.', 'error');
       return;
     }
 
     setIsLocking(true);
-    const res = lockMonth(
-      selectedMonth,
-      closureNotes ||
-        `Month-End closure and fee books finalized for ${formatMonthName(selectedMonth)}. Collections reconciled.`
+    startActionLock(
+      'Locking Fee Books',
+      1,
+      `Finalizing ledger and sealing fee books for ${formatMonthName(selectedMonth)}...`
     );
-
-    if (res.success) {
-      if (advanceActiveMonth) {
-        setActiveMonth(nextMonthStr);
-      }
-      showToast(
-        `Fee books for ${formatMonthName(selectedMonth)} have been locked & sealed!`,
-        'success'
+    try {
+      const res = lockMonth(
+        selectedMonth,
+        closureNotes ||
+          `Month-End closure and fee books finalized for ${formatMonthName(selectedMonth)}. Collections reconciled.`
       );
-    } else {
-      showToast(res.error || 'Failed to lock fee books.', 'error');
+
+      if (res.success) {
+        if (advanceActiveMonth) {
+          setActiveMonth(nextMonthStr);
+        }
+        showToast(
+          `Fee books for ${formatMonthName(selectedMonth)} have been locked & sealed!`,
+          'success'
+        );
+      } else {
+        showToast(res.error || 'Failed to lock fee books.', 'error');
+      }
+    } finally {
+      setIsLocking(false);
+      await stopActionLock('Fee books locked successfully', 300);
     }
-    setIsLocking(false);
   };
 
   // Unlock Fee Books
-  const handleUnlock = () => {
-    const res = unlockMonth(selectedMonth);
-    if (res.success) {
-      setUnlockConfirmOpen(false);
-    } else {
-      showToast(res.error || 'Failed to unlock fee books.', 'error');
+  const handleUnlock = async () => {
+    startActionLock(
+      'Unlocking Fee Books',
+      1,
+      `Re-opening fee books for ${formatMonthName(selectedMonth)}...`
+    );
+    try {
+      const res = unlockMonth(selectedMonth);
+      if (res.success) {
+        setUnlockConfirmOpen(false);
+      } else {
+        showToast(res.error || 'Failed to unlock fee books.', 'error');
+      }
+    } finally {
+      await stopActionLock('Fee books unlocked', 300);
     }
   };
 
@@ -867,7 +901,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 <button
                   id="btn-carry-forward-all-wizard"
                   disabled={isProcessingCarry}
-                  onClick={handleCarryForwardAll}
+                  onClick={handleOpenCarryModal}
                   className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5" />
@@ -875,56 +909,6 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                     {isProcessingCarry ? 'Processing...' : `Carry Forward All to ${formatMonthName(nextMonthStr)}`}
                   </span>
                 </button>
-              </div>
-            </div>
-          )}
-
-          {/* Carry Forward Settings Card */}
-          {uncarriedDefaulters.length > 0 && (
-            <div className="bg-white p-6 rounded-3xl border border-slate-200/90 shadow-xs space-y-4">
-              <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                Carry-Forward & Late Fine Policy
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                <div className="space-y-1">
-                  <span className="text-xs font-bold text-slate-700 block">Target Billing Month</span>
-                  <span className="text-sm font-black text-slate-900 block">
-                    {formatMonthName(nextMonthStr)}
-                  </span>
-                  <p className="text-[11px] text-slate-500">
-                    Defaulter balances will appear as &quot;Previous Balance Arrears&quot; on the {formatMonthName(nextMonthStr)} voucher.
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={addLateFine}
-                      onChange={(e) => setAddLateFine(e.target.checked)}
-                      className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500"
-                    />
-                    <span className="text-xs font-bold text-slate-800">
-                      Apply Late Fine to carried balance
-                    </span>
-                  </label>
-
-                  {addLateFine && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-600">Fine Amount (Rs):</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="50"
-                        value={lateFineAmount}
-                        onWheel={(e) => (e.target as HTMLElement).blur()}
-                        onChange={(e) => setLateFineAmount(Number(e.target.value))}
-                        className="w-28 px-3 py-1 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           )}
@@ -1182,6 +1166,19 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
       )}
 
       {/* QUICK PAYMENT COLLECTION MODAL (STEP 3) */}
+      {carryModalOpen && (
+        <CarryForwardModal
+          carryModal={{ isOpen: true, targetVouchers: uncarriedDefaulters, targetMonth: nextMonthStr }}
+          addLateFine={addLateFine}
+          setAddLateFine={setAddLateFine}
+          carryFineAmount={lateFineAmount}
+          setCarryFineAmount={setLateFineAmount}
+          isProcessing={isProcessingCarry}
+          onClose={() => setCarryModalOpen(false)}
+          onConfirm={handleCarryForwardAll}
+        />
+      )}
+
       {collectingVoucher && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">

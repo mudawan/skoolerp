@@ -73,6 +73,8 @@ export const VouchersView: React.FC = () => {
     bulkDeleteVouchers,
     bulkCarryForwardDefaulters,
     undoCarryForwardVoucher,
+    startActionLock,
+    stopActionLock,
     hasPermission,
     getMonthClosureStatus,
     themeConfig,
@@ -466,11 +468,11 @@ export const VouchersView: React.FC = () => {
     });
   };
 
-  const executeCarryForwardFromVouchers = () => {
+  const executeCarryForwardFromVouchers = async () => {
     if (!carryModal || carryModal.targetVouchers.length === 0) return;
 
     const idsToCarry = carryModal.targetVouchers.map((v) => v.id);
-    const { successCount } = bulkCarryForwardDefaulters(
+    const { successCount } = await bulkCarryForwardDefaulters(
       idsToCarry,
       carryModal.targetMonth,
       addLateFine,
@@ -630,24 +632,33 @@ export const VouchersView: React.FC = () => {
     );
   };
 
-  const executeCommitGeneration = () => {
-    const res = commitVoucherGeneration(
-      targetMonth,
-      'students',
-      undefined,
-      selectedGenStudentIds,
-      dueDateInput,
-      Number(lateFeeInput) || 200
+  const executeCommitGeneration = async () => {
+    startActionLock(
+      'Generating Fee Vouchers',
+      selectedGenStudentIds.length,
+      `Generating and saving ${selectedGenStudentIds.length} vouchers to database...`
     );
-
-    if (res.success) {
-      showToast(
-        `Successfully generated ${res.generatedCount} new fee voucher(s) for ${formatMonthName(targetMonth)}!`
+    try {
+      const res = commitVoucherGeneration(
+        targetMonth,
+        'students',
+        undefined,
+        selectedGenStudentIds,
+        dueDateInput,
+        Number(lateFeeInput) || 200
       );
-      setShowGeneratorModal(false);
-      setPolicyConfirmModal(null);
-    } else {
-      showToast(res.error || 'Failed to generate vouchers', 'error');
+
+      if (res.success) {
+        showToast(
+          `Successfully generated ${res.generatedCount} new fee voucher(s) for ${formatMonthName(targetMonth)}!`
+        );
+        setShowGeneratorModal(false);
+        setPolicyConfirmModal(null);
+      } else {
+        showToast(res.error || 'Failed to generate vouchers', 'error');
+      }
+    } finally {
+      await stopActionLock('Vouchers generated and persisted', 350);
     }
   };
 
@@ -2140,8 +2151,6 @@ export const VouchersView: React.FC = () => {
       {carryModal && (
         <CarryForwardModal
           carryModal={carryModal}
-          students={students}
-          classes={classes}
           addLateFine={addLateFine}
           setAddLateFine={setAddLateFine}
           carryFineAmount={carryFineAmount}
