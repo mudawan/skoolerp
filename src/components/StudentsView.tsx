@@ -113,6 +113,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
   // Helper to strictly evaluate row validity matching Student Registration Modal requirements
   const evaluateRowValidation = (r: {
+    regNo?: string;
     name?: string;
     admissionDate?: string;
     firstBillingMonth?: string;
@@ -134,6 +135,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     }
 
     const missing: string[] = [];
+    if (!r.regNo?.trim()) missing.push('Reg #');
     if (!r.name?.trim()) missing.push('Student Name');
     if (!r.admissionDate?.trim()) missing.push('Admission Date');
     if (!r.firstBillingMonth?.trim()) missing.push('First Billing Month');
@@ -650,6 +652,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
           // Strictly evaluate against all mandatory fields matching the student add modal
           const evalRes = evaluateRowValidation({
+            regNo: rawRegNo,
             name,
             admissionDate,
             firstBillingMonth,
@@ -1788,7 +1791,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
                                     {r.regNo}
                                   </span>
                                 ) : (
-                                  <span className="text-slate-400 italic text-[11px]">(Auto)</span>
+                                  <span className="text-rose-600 font-bold italic">MISSING *</span>
                                 )}
                               </td>
                               <td className="p-3 font-medium text-slate-900">

@@ -2064,7 +2064,7 @@ export const CollectionsView: React.FC = () => {
                   </span>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2 bg-slate-100 text-slate-600 rounded-md text-[11px] font-medium border border-slate-200">
                     <Calendar className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                    <span>Accepted Date format: <strong>YYYY-MM-DD</strong> or <strong>DD/MM/YYYY</strong> (e.g. 2026-09-07 or 07/09/2026)</span>
+                    <span>Accepted Date format: <strong>YYYY-MM-DD</strong> or <strong>DD/MM/YYYY</strong></span>
                   </div>
                   <button
                     type="button"

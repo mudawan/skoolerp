@@ -1415,6 +1415,9 @@ async function startServer() {
       if (!body.name || !String(body.name).trim()) {
         return res.status(400).json({ success: false, error: 'Student name is required.' });
       }
+      if (!body.regNo || !String(body.regNo).trim()) {
+        return res.status(400).json({ success: false, error: 'Student registration number (Reg #) is required.' });
+      }
       const duplicate = await dbService.findDuplicateStudent(institutionId, {
         studentNationalId: body.studentNationalId,
       });

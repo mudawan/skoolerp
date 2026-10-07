@@ -53,9 +53,10 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   const doc2FileInputRef = useRef<HTMLInputElement>(null);
   const doc3FileInputRef = useRef<HTMLInputElement>(null);
 
-  // Compute the last used ID and next suggested ID
-  type ParsedRegNo = { prefix: string; num: number; width: number; padded: boolean };
-  const parseRegNo = (regNo: string): ParsedRegNo | null => {
+  // Both "Last used" and "Suggested" come from the highest-numbered Reg #
+  type ParsedRegNo = { prefix: string; num: number; width: number; padded: boolean; raw: string };
+  const parseRegNo = (regNo?: string): ParsedRegNo | null => {
+    if (!regNo) return null;
     const m = regNo.trim().match(/^(.*?)(\d+)$/);
     if (!m) return null;
     return {
@@ -63,31 +64,36 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       num: parseInt(m[2], 10),
       width: m[2].length,
       padded: m[2].length > 1 && m[2][0] === '0',
+      raw: regNo.trim(),
     };
   };
 
-  const lastUsedRegNo = useMemo(() => {
-    if (!students || students.length === 0) return 'None';
-    let best: { regNo: string; date: string; idx: number } | null = null;
-    for (const [idx, s] of students.entries()) {
-      const date = s.createdDate || '';
-      if (!best || date > best.date || (date === best.date && idx > best.idx)) {
-        best = { regNo: s.regNo, date, idx };
-      }
-    }
-    return best ? best.regNo : 'None';
-  }, [students]);
-
-  const computeNextRegNo = () => {
+  const highestNumberedReg = useMemo(() => {
     let best: ParsedRegNo | null = null;
     for (const s of students || []) {
       const parsed = parseRegNo(s.regNo);
-      if (parsed && (!best || parsed.num > best.num)) best = parsed;
+      if (parsed && (!best || parsed.num > best.num)) {
+        best = parsed;
+      }
     }
-    if (!best) return 'REG-1001';
-    const next = best.padded ? String(best.num + 1).padStart(best.width, '0') : String(best.num + 1);
-    return `${best.prefix}${next}`;
+    return best;
+  }, [students]);
+
+  const lastUsedRegNo = useMemo(() => {
+    return highestNumberedReg ? highestNumberedReg.raw : 'None';
+  }, [highestNumberedReg]);
+
+  const computeNextRegNo = () => {
+    if (!highestNumberedReg) return 'REG-1001';
+    const next = highestNumberedReg.padded
+      ? String(highestNumberedReg.num + 1).padStart(highestNumberedReg.width, '0')
+      : String(highestNumberedReg.num + 1);
+    return `${highestNumberedReg.prefix}${next}`;
   };
+
+  const suggestedRegNo = useMemo(() => {
+    return computeNextRegNo();
+  }, [highestNumberedReg]);
 
   const [formData, setFormData] = useState({
     // 1. Basic Information
@@ -139,46 +145,6 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   });
 
   const [formError, setFormError] = useState('');
-
-  // Live suggestion that adapts to what the user has typed so far.
-  const suggestedRegNo = useMemo(() => {
-    const t = (formData.regNo || '').trim();
-    if (!t) return computeNextRegNo();
-    let maxNum = -Infinity;
-    let width = 0;
-    let hasPrefixSeries = false;
-    let isExactExisting = false;
-    for (const s of students || []) {
-      const r = s.regNo?.trim() || '';
-      if (!r) continue;
-      if (r === t) {
-        isExactExisting = true;
-        continue;
-      }
-      if (!r.startsWith(t)) continue;
-      const rem = r.slice(t.length);
-      if (/^\d+$/.test(rem)) {
-        hasPrefixSeries = true;
-        const padded = rem.length > 1 && rem[0] === '0';
-        const n = parseInt(rem, 10);
-        if (n > maxNum) {
-          maxNum = n;
-          width = padded ? rem.length : 0;
-        }
-      }
-    }
-    if (hasPrefixSeries) {
-      const next = width ? String(maxNum + 1).padStart(width, '0') : String(maxNum + 1);
-      return `${t}${next}`;
-    }
-    const trail = t.match(/^(.*?)(\d+)$/);
-    if (trail) {
-      if (!isExactExisting) return t;
-      return `${trail[1]}${parseInt(trail[2], 10) + 1}`;
-    }
-    return `${t}1001`;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.regNo, students]);
 
   const [isAutoPopulatedFamily, setIsAutoPopulatedFamily] = useState(false);
   const [matchedFamilyInfo, setMatchedFamilyInfo] = useState<{
@@ -606,9 +572,14 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                     <span className="text-[10px] text-slate-600 font-semibold bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 whitespace-nowrap">
                       Last used: {lastUsedRegNo}
                     </span>
-                    <span className="text-[10px] text-teal-700 font-semibold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200 whitespace-nowrap truncate">
+                    <button
+                      type="button"
+                      onClick={() => setFormData((prev) => ({ ...prev, regNo: suggestedRegNo }))}
+                      title="Click to apply suggested Reg #"
+                      className="text-[10px] text-teal-700 font-semibold bg-teal-50 hover:bg-teal-100 px-1.5 py-0.5 rounded border border-teal-200 whitespace-nowrap truncate cursor-pointer transition"
+                    >
                       Suggested: {suggestedRegNo}
-                    </span>
+                    </button>
                   </div>
                 )}
                 {isDuplicateRegNo && !isEdit && (

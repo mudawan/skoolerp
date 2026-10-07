@@ -92,7 +92,7 @@ export const STUDENT_CSV: CsvSpec<StudentCsvKey> = {
     motherNationalId: "Mother's National ID",
     motherPhone: 'Mother Mobile',
   },
-  required: ['name', 'admissionDate', 'firstBillingMonth', 'class', 'discount', 'fatherName', 'fatherNationalId', 'fatherPhone'],
+  required: ['regNo', 'name', 'admissionDate', 'firstBillingMonth', 'class', 'discount', 'fatherName', 'fatherNationalId', 'fatherPhone'],
 };
 /** Columns written by the student export that the import ignores. */
 export const STUDENT_CSV_EXPORT_ONLY = {

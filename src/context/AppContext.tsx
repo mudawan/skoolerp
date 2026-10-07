@@ -2088,28 +2088,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const year = new Date().getFullYear();
 
-    // Check if regNo already exists (read via ref so rows added earlier in a
-    // synchronous bulk-import loop are visible to later rows)
-    if (studentData.regNo?.trim()) {
-      const targetReg = studentData.regNo.trim().toLowerCase();
-      const existing = studentsRef.current.find(
-        (s) => s.regNo.toLowerCase() === targetReg || s.studentNo.toLowerCase() === targetReg
-      );
-      if (existing) {
-        return {
-          success: false,
-          error: `Registration No. '${studentData.regNo}' is already assigned.`,
-        };
-      }
+    const regNo = (studentData.regNo || '').trim();
+    if (!regNo) {
+      return {
+        success: false,
+        error: 'Student registration number (Reg #) is required.',
+      };
     }
 
-    // Use a ref-backed counter rather than students.length: when addStudent()
-    // is invoked repeatedly inside a synchronous loop (bulk CSV import),
-    // students.length stays stale across every iteration until React flushes
-    // state, which previously caused every blank-Reg# row to receive the
-    // same auto-generated regNo.
+    // Check if regNo already exists (read via ref so rows added earlier in a
+    // synchronous bulk-import loop are visible to later rows)
+    const targetReg = regNo.toLowerCase();
+    const existing = studentsRef.current.find(
+      (s) => s.regNo.toLowerCase() === targetReg || s.studentNo.toLowerCase() === targetReg
+    );
+    if (existing) {
+      return {
+        success: false,
+        error: `Registration No. '${regNo}' is already assigned.`,
+      };
+    }
+
     studentSeqRef.current += 1;
-    const regNo = studentData.regNo?.trim() || `REG-${(1000 + studentSeqRef.current).toString()}`;
     const studentNo = studentData.studentNo?.trim() || regNo;
 
     // Auto family linking strictly by Father National ID (reads via refs so a family created
