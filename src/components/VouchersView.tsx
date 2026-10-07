@@ -4,7 +4,7 @@ import { DEFAULT_PAYMENT_MODE, type PaymentMode } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, roundUpToMultiple, VoucherPreviewCalculation } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, roundUpToMultiple, VoucherPreviewCalculation, getCurrencyCode } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { PrintVoucherModal } from './PrintVoucherModal';
@@ -68,6 +68,7 @@ export const VouchersView: React.FC = () => {
     commitVoucherGeneration,
     collectVoucherPayment,
     updateVoucherParticulars,
+    reissueVoucher,
     getDownstreamVouchersInfo,
     deleteVoucher,
     bulkDeleteVouchers,
@@ -472,7 +473,7 @@ export const VouchersView: React.FC = () => {
     if (!carryModal || carryModal.targetVouchers.length === 0) return;
 
     const idsToCarry = carryModal.targetVouchers.map((v) => v.id);
-    const { successCount } = await bulkCarryForwardDefaulters(
+    const { successCount, errors: carryErrors } = await bulkCarryForwardDefaulters(
       idsToCarry,
       carryModal.targetMonth,
       addLateFine,
@@ -488,7 +489,7 @@ export const VouchersView: React.FC = () => {
       setSelectedIds((prev) => prev.filter((id) => !idsToCarry.includes(id)));
       setCarryModal(null);
     } else {
-      showToast('Failed to carry forward selected voucher(s).', 'error');
+      showToast(carryErrors?.[0] || 'Failed to carry forward selected voucher(s).', 'error');
     }
   };
 
@@ -915,7 +916,7 @@ export const VouchersView: React.FC = () => {
 
           {selectedIds.length > 0 &&
             vouchers.some((v) => selectedIds.includes(v.id) && v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed') &&
-            hasPermission('fees.generate') && (
+            hasPermission('defaulters.manage') && (
               <button
                 onClick={handleOpenCarryModalForSelected}
                 className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
@@ -1142,9 +1143,9 @@ export const VouchersView: React.FC = () => {
                   const schoolClass = classes.find((c) => c.id === v.classId);
                   const isSelected = selectedIds.includes(v.id);
                   const canCollect = v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.collect');
-                  const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.generate');
-                  const canUndoCarry = v.status === 'Carried' && hasPermission('fees.generate');
-                  const canDelete = hasPermission('fees.generate');
+                  const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('defaulters.manage');
+                  const canUndoCarry = v.status === 'Carried' && hasPermission('defaulters.manage');
+                  const canDelete = hasPermission('fees.delete');
 
                   return (
                     <tr
@@ -1697,7 +1698,7 @@ export const VouchersView: React.FC = () => {
 
                   <div>
                     <div className="flex items-center justify-between mb-0.5 sm:mb-1">
-                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Late Fine (Rs.)</label>
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Late Fine ({getCurrencyCode()})</label>
                     </div>
                     <input
                       type="number"
@@ -2107,8 +2108,22 @@ export const VouchersView: React.FC = () => {
           particulars={sortedDetailParticulars}
           roundingEnabled={roundingEnabled}
           roundingMultiple={roundingMultiple}
-          canUndoCarry={hasPermission('fees.generate')}
+          canUndoCarry={hasPermission('defaulters.manage')}
           canDelete={hasPermission('fees.delete')}
+          canReissue={hasPermission('fees.generate')}
+          onReissue={(v) => {
+            const res = reissueVoucher(v.id);
+            if (!res.success) {
+              showToast(res.error || 'Failed to reissue voucher.', 'error', 9000);
+              return;
+            }
+            showToast(
+              res.changedCount === 0
+                ? `Voucher ${v.voucherNo} already matches the current fee settings.`
+                : `Voucher ${v.voucherNo} reissued${(res.changedCount || 0) > 1 ? ` and ${(res.changedCount || 1) - 1} later voucher(s) recalculated` : ''}.`
+            );
+            setDetailVoucher(res.voucher || null);
+          }}
           onUndoCarry={handleOpenUndoCarryModal}
           onDelete={handleOpenDeleteSingle}
           onClose={() => setDetailVoucher(null)}

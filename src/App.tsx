@@ -15,6 +15,7 @@ import { SettingsView } from './components/SettingsView';
 import { MonthEndWizardView } from './components/MonthEndWizardView';
 import { LoginView } from './components/LoginView';
 import { SessionInactivityGuard } from './components/SessionInactivityGuard';
+import { TableColumnResizer } from './components/TableColumnResizer';
 import { MonthPicker } from './components/MonthPicker';
 import { GlobalStudentSearch } from './components/GlobalStudentSearch';
 import { DatabaseStatusBadge } from './components/DatabaseStatusBadge';
@@ -398,6 +399,7 @@ function MainApp() {
         </main>
       </div>
       <SessionInactivityGuard />
+      <TableColumnResizer />
     </div>
   );
 }

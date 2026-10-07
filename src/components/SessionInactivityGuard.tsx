@@ -96,6 +96,10 @@ export const SessionInactivityGuard: React.FC = () => {
     // Throttled user activity listener on window
     let lastThrottle = 0;
     const onUserInteraction = () => {
+      // While the warning is showing, page activity must not dismiss it: a mouse move (or the
+      // mousedown that starts a click on "Lock Now") would close the dialog before the button
+      // could be used. Only the dialog's own "Stay Logged In" button refreshes the session.
+      if (isWarningOpenRef.current) return;
       const now = Date.now();
       if (now - lastThrottle > 1500) {
         lastThrottle = now;

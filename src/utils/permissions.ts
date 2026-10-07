@@ -490,7 +490,7 @@ export function getEffectiveRole(permissions: string[]): UserRole {
 }
 
 /**
- * Check whether a user has a specific permission, respecting Admin wildcards and backward-compatible aliases.
+ * Check whether a user has a specific permission, respecting Admin wildcards. There are no aliases: only explicitly listed codes count.
  */
 export function isPermissionAllowed(
   user: { role?: UserRole; permissions?: string[] } | null | undefined,
@@ -510,52 +510,8 @@ export function isPermissionAllowed(
     return true;
   }
 
-  // Permission alias resolution for backward compatibility
-  if (permission.endsWith('.delete')) {
-    const managePerm = permission.replace('.delete', '.manage');
-    if (userPerms.includes(managePerm)) return true;
-  }
-
-  if (permission === 'fees.reverse' && userPerms.includes('fees.delete')) {
-    return true;
-  }
-
-  // NOTE: 'fees.manage' is not a currently assignable permission code (it
-  // does not appear in ALL_PERMISSION_CODES / the permission picker UI). It
-  // used to be referenced directly by several hasPermission() call sites,
-  // which have since been corrected to check 'fees.edit' directly. These two
-  // aliases are kept only for backward compatibility with any user record
-  // that may already have the literal string 'fees.manage' stored in its
-  // permissions array from before that fix — do not use 'fees.manage' in any
-  // new code.
-  if (permission === 'fees.edit' && (userPerms.includes('fees.generate') || userPerms.includes('fees.manage'))) {
-    return true;
-  }
-
-  if (
-    permission === 'vouchers:edit' &&
-    (userPerms.includes('fees.collect') || userPerms.includes('fees.generate') || userPerms.includes('fees.edit'))
-  ) {
-    return true;
-  }
-
-  if (permission === 'defaulters.view' && (userPerms.includes('fees.view') || userPerms.includes('fees.report'))) {
-    return true;
-  }
-
-  // See 'fees.manage' backward-compatibility note above.
-  if (permission === 'defaulters.manage' && (userPerms.includes('fees.generate') || userPerms.includes('fees.manage'))) {
-    return true;
-  }
-
-  if ((permission === 'audit.view' || permission === 'audit.export') && (userPerms.includes('fees.report') || userPerms.includes('settings.view'))) {
-    return true;
-  }
-
-  if (permission === 'dashboard.view') {
-    return true; // Dashboard is standard overview for any logged-in user unless explicitly removed
-  }
-
+  // No aliases or implied permissions: a permission is granted only if it is
+  // listed explicitly (or the user is an Admin / holds the '*' wildcard).
   return false;
 }
 

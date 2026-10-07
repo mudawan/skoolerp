@@ -111,19 +111,19 @@ export interface Student {
   // 2. Other Information
   dob: string; // Date of Birth
   gender?: 'Male' | 'Female' | ''; // Gender
-  bFormNo?: string; // Student CNIC / Birth Form ID
+  studentNationalId?: string; // Student ID / Birth Cert. No.
   familyId?: string; // Family
   address?: string; // Address
 
   // 3. Father’s/ Guardian’s Information
   fatherName: string; // Father Name
-  fatherCnic: string; // Father’s CNIC
+  fatherNationalId: string; // Father’s National ID
   fatherPhone: string; // Mobile No
   fatherOccupation?: string; // Optional occupation
 
   // 4. Mother’s Information
   motherName: string; // Mother Name
-  motherCnic?: string; // Mother’s CNIC
+  motherNationalId?: string; // Mother’s National ID
   motherPhone: string; // Mobile No
 
   // 5. Documents Upload
@@ -140,7 +140,7 @@ export interface Family {
   familyNo: string;
   headName: string;
   contactPhone: string;
-  fatherCnic?: string;
+  fatherNationalId?: string;
   address: string;
   notes?: string;
   memberStudentIds: string[];
@@ -269,6 +269,7 @@ export interface InstituteProfile {
   email: string;
   website: string;
   regNo: string;
+  currency?: string; // ISO code, e.g. USD / PKR. Display & print label only.
   sessionTimeoutMinutes?: number; // Inactivity auto-logout timeout in minutes (Default: 10)
   settings?: Record<string, any>;
 }
@@ -280,7 +281,7 @@ export interface BankAccount {
   accountNumber: string;
   branchCode: string;
   instructionsLtr?: string; // English / Left-to-Right reading instructions
-  instructionsRtl?: string; // Urdu / Right-to-Left reading instructions
+  instructionsRtl?: string; // Right-to-left reading instructions (Arabic, Urdu, Hebrew, ...)
   instructionsLine1: string;
   instructionsLine2: string;
   logoUrl?: string;
@@ -379,8 +380,6 @@ export type AuditActionType =
   | 'carry_forward'
   | 'month_closure'
   | 'student_discount'
-  | 'student_created'
-  | 'student_updated'
   | 'student_deletion'
   | 'operator_security'
   | 'system_cleanup'

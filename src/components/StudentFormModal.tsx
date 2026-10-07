@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentDocument, StudentStatus } from '../types';
-import { formatCurrency, calculateAge, normalizeDateToISO, normalizeCnic } from '../utils/feeMath';
+import { formatCurrency, calculateAge, normalizeDateToISO, normalizeNationalId, getCurrencyCode } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { StudentAvatar } from './StudentAvatar';
@@ -118,18 +118,18 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     // 2. Other Information
     dob: student?.dob ? (normalizeDateToISO(student.dob) || student.dob) : '',
     gender: ((student?.gender === 'Female') ? 'Female' : 'Male') as 'Male' | 'Female',
-    bFormNo: student?.bFormNo || '',
+    studentNationalId: student?.studentNationalId || '',
     familyId: student?.familyId || '',
     address: student?.address || '',
 
     // 3. Father’s/ Guardian’s Information
     fatherName: student?.fatherName || '',
-    fatherCnic: student?.fatherCnic || '',
+    fatherNationalId: student?.fatherNationalId || '',
     fatherPhone: student?.fatherPhone || '',
 
     // 4. Mother’s Information
     motherName: student?.motherName || '',
-    motherCnic: student?.motherCnic || '',
+    motherNationalId: student?.motherNationalId || '',
     motherPhone: student?.motherPhone || '',
 
     // 5. Documents Upload
@@ -199,29 +199,29 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     }
   }, true, 1);
 
-  const findMatchingFamily = (cnicInput: string) => {
-    const raw = cnicInput.trim();
+  const findMatchingFamily = (nationalIdInput: string) => {
+    const raw = nationalIdInput.trim();
     if (!raw || raw.length < 5) return null;
 
-    const normInput = normalizeCnic(raw);
+    const normInput = normalizeNationalId(raw);
 
-    // Strict direct match on Family's own fatherCnic
+    // Strict direct match on Family's own fatherNationalId
     const directFamily = families.find((f) => {
-      if (!f.fatherCnic) return false;
+      if (!f.fatherNationalId) return false;
       return (
-        f.fatherCnic.trim().toLowerCase() === raw.toLowerCase() ||
-        (normalizeCnic(f.fatherCnic).length >= 5 && normalizeCnic(f.fatherCnic) === normInput)
+        f.fatherNationalId.trim().toLowerCase() === raw.toLowerCase() ||
+        (normalizeNationalId(f.fatherNationalId).length >= 5 && normalizeNationalId(f.fatherNationalId) === normInput)
       );
     });
     return directFamily || null;
   };
 
-  const handleFatherCnicChange = (cnicValue: string) => {
-    const match = findMatchingFamily(cnicValue);
+  const handleFatherNationalIdChange = (nationalIdValue: string) => {
+    const match = findMatchingFamily(nationalIdValue);
     if (match) {
       setFormData((prev) => ({
         ...prev,
-        fatherCnic: cnicValue,
+        fatherNationalId: nationalIdValue,
         familyId: match.id,
         fatherName: prev.fatherName.trim() ? prev.fatherName : match.headName,
         fatherPhone: prev.fatherPhone.trim() ? prev.fatherPhone : (match.contactPhone || ''),
@@ -231,9 +231,9 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     } else {
       setFormData((prev) => {
         if (isAutoPopulatedFamily) {
-          return { ...prev, fatherCnic: cnicValue, familyId: '' };
+          return { ...prev, fatherNationalId: nationalIdValue, familyId: '' };
         }
-        return { ...prev, fatherCnic: cnicValue };
+        return { ...prev, fatherNationalId: nationalIdValue };
       });
       if (isAutoPopulatedFamily) {
         setIsAutoPopulatedFamily(false);
@@ -379,8 +379,8 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
       return;
     }
 
-    if (!formData.fatherCnic.trim()) {
-      setFormError('Father CNIC is required.');
+    if (!formData.fatherNationalId.trim()) {
+      setFormError('Father National ID is required.');
       return;
     }
 
@@ -403,16 +403,16 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
       dob: normalizeDateToISO(formData.dob) || formData.dob,
       gender: formData.gender,
-      bFormNo: formData.bFormNo.trim() || undefined,
+      studentNationalId: formData.studentNationalId.trim() || undefined,
       familyId: formData.familyId || undefined,
       address: formData.address.trim() || undefined,
 
       fatherName: formData.fatherName.trim(),
-      fatherCnic: formData.fatherCnic.trim(),
+      fatherNationalId: formData.fatherNationalId.trim(),
       fatherPhone: formData.fatherPhone.trim(),
 
       motherName: formData.motherName.trim(),
-      motherCnic: formData.motherCnic.trim() || undefined,
+      motherNationalId: formData.motherNationalId.trim() || undefined,
       motherPhone: formData.motherPhone.trim(),
 
       document1: formData.document1?.fileData || formData.document1?.name ? formData.document1 : undefined,
@@ -684,7 +684,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
               {/* Discount in Fee */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Discount in Fee (Rs.) *
+                  Discount in Fee ({getCurrencyCode()}) *
                 </label>
                 <input
                   type="number"
@@ -707,7 +707,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 </label>
                 <input
                   type="tel"
-                  placeholder="e.g. +92 3XX 1234567"
+                  placeholder="e.g. +1 555 010 1234"
                   value={formData.mobileNumber}
                   onChange={(e) => setFormData({ ...formData, mobileNumber: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -794,16 +794,16 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 </select>
               </div>
 
-              {/* Student CNIC / Birth Form ID */}
+              {/* Student ID / Birth Cert. No. */}
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Student CNIC / Birth Form ID
+                  Student ID / Birth Cert. No.
                 </label>
                 <input
                   type="text"
                   placeholder="e.g. 00000-1234567-1"
-                  value={formData.bFormNo}
-                  onChange={(e) => setFormData({ ...formData, bFormNo: e.target.value })}
+                  value={formData.studentNationalId}
+                  onChange={(e) => setFormData({ ...formData, studentNationalId: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
               </div>
@@ -832,7 +832,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 {isAutoPopulatedFamily && matchedFamilyInfo && formData.familyId === matchedFamilyInfo.id && (
                   <p className="text-[10px] text-teal-700 font-semibold flex items-center gap-1 mt-1">
                     <Sparkles className="w-3 h-3 text-teal-600 shrink-0" />
-                    Auto-set via Father CNIC
+                    Auto-set via Father National ID
                   </p>
                 )}
               </div>
@@ -877,18 +877,18 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 />
               </div>
 
-              {/* Father's CNIC */}
+              {/* Father's National ID */}
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Father’s CNIC *</label>
+                <label className="block font-bold text-slate-700 mb-1">Father’s National ID *</label>
                 <input
                   type="text"
                   required
                   placeholder="00000-1234567-1"
-                  value={formData.fatherCnic}
-                  onChange={(e) => handleFatherCnicChange(e.target.value)}
+                  value={formData.fatherNationalId}
+                  onChange={(e) => handleFatherNationalIdChange(e.target.value)}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">Auto-links family by CNIC if matched</p>
+                <p className="text-[10px] text-slate-400 mt-1">Auto-links family by National ID if matched</p>
               </div>
 
               {/* Mobile No */}
@@ -897,7 +897,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <input
                   type="tel"
                   required
-                  placeholder="+92 3XX 1234567"
+                  placeholder="+1 555 010 1234"
                   value={formData.fatherPhone}
                   onChange={(e) => setFormData({ ...formData, fatherPhone: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -931,14 +931,14 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 />
               </div>
 
-              {/* Mother's CNIC */}
+              {/* Mother's National ID */}
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Mother’s CNIC</label>
+                <label className="block font-bold text-slate-700 mb-1">Mother’s National ID</label>
                 <input
                   type="text"
                   placeholder="00000-1234567-1"
-                  value={formData.motherCnic}
-                  onChange={(e) => setFormData({ ...formData, motherCnic: e.target.value })}
+                  value={formData.motherNationalId}
+                  onChange={(e) => setFormData({ ...formData, motherNationalId: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
               </div>
@@ -948,7 +948,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">Mobile No</label>
                 <input
                   type="tel"
-                  placeholder="+92 3XX 1234567"
+                  placeholder="+1 555 010 1234"
                   value={formData.motherPhone}
                   onChange={(e) => setFormData({ ...formData, motherPhone: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -985,7 +985,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   </div>
                   <input
                     type="text"
-                    placeholder="e.g. Birth Certificate / B-Form"
+                    placeholder="e.g. Birth Certificate / Student ID"
                     value={formData.document1?.name || ''}
                     onChange={(e) => handleDocumentNameChange('document1', e.target.value)}
                     className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:ring-1 focus:ring-teal-500"
@@ -1049,7 +1049,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   type="file"
                   accept="application/pdf,image/*,.doc,.docx"
                   className="hidden"
-                  onChange={(e) => handleDocumentUpload('document1', 'Document 1 (B-Form / Birth Cert)', e)}
+                  onChange={(e) => handleDocumentUpload('document1', 'Document 1 (Birth Cert / Student ID)', e)}
                 />
               </div>
 
@@ -1151,7 +1151,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   </div>
                   <input
                     type="text"
-                    placeholder="e.g. CNIC Copy / Other"
+                    placeholder="e.g. National ID Copy / Other"
                     value={formData.document3?.name || ''}
                     onChange={(e) => handleDocumentNameChange('document3', e.target.value)}
                     className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium focus:ring-1 focus:ring-teal-500"
@@ -1215,7 +1215,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   type="file"
                   accept="application/pdf,image/*,.doc,.docx"
                   className="hidden"
-                  onChange={(e) => handleDocumentUpload('document3', 'Document 3 (CNIC / Other)', e)}
+                  onChange={(e) => handleDocumentUpload('document3', 'Document 3 (National ID / Other)', e)}
                 />
               </div>
             </div>

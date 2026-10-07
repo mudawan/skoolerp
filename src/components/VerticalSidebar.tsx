@@ -87,9 +87,8 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         : 'bg-[#131416] text-zinc-50 border-zinc-800'
       : 'bg-slate-900 text-slate-100 border-slate-800';
 
-  // See HeaderBar.tsx for why these are kept separate: the picker window
-  // alone doesn't mean data exists for those months, so it must not feed the
-  // "Vouchers / Records Exist" indicator dot.
+  // The picker window alone doesn't mean data exists for those months, so it
+  // must not feed the "Vouchers / Records Exist" indicator dot.
   const pickerWindowMonths = mergeWithDataMonths(
     getMonthPickerWindow(),
     vouchers.map((v) => v.month)

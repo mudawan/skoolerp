@@ -1,3 +1,4 @@
+import { formatCurrency } from '../utils/feeMath';
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { AccountHistoryCategory, Student, StudentAccountHistoryEntry, StudentStatus } from '../types';
@@ -452,7 +453,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
           <div className="bg-white/80 p-2 rounded-lg border border-slate-200/70">
             <span className="text-slate-400 block text-[10px] uppercase font-bold">Monthly Concession</span>
             <span className="font-bold text-amber-700">
-              {student.monthlyDiscount > 0 ? `Rs. ${student.monthlyDiscount.toLocaleString()}/mo` : 'None'}
+              {student.monthlyDiscount > 0 ? `${formatCurrency(student.monthlyDiscount)}/mo` : 'None'}
             </span>
           </div>
         </div>

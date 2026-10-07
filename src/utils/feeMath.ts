@@ -26,10 +26,63 @@ export function roundUpToMultiple(amount: number, multiple: number): number {
   return amount + (m - remainder);
 }
 
+// ---------------------------------------------------------------------------
+// Currency. The active currency is the institution's configured ISO code
+// (default USD). AppContext keeps it in sync via setActiveCurrency(); all
+// money display goes through formatCurrency() / getCurrencyCode().
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_CURRENCY = 'USD';
+
+export const CURRENCY_OPTIONS: { code: string; name: string; minorUnit: string }[] = [
+  { code: 'USD', name: 'US Dollar', minorUnit: 'Cents' },
+  { code: 'EUR', name: 'Euro', minorUnit: 'Cents' },
+  { code: 'GBP', name: 'British Pound', minorUnit: 'Pence' },
+  { code: 'AED', name: 'UAE Dirham', minorUnit: 'Fils' },
+  { code: 'SAR', name: 'Saudi Riyal', minorUnit: 'Halalas' },
+  { code: 'QAR', name: 'Qatari Riyal', minorUnit: 'Dirhams' },
+  { code: 'KWD', name: 'Kuwaiti Dinar', minorUnit: 'Fils' },
+  { code: 'BHD', name: 'Bahraini Dinar', minorUnit: 'Fils' },
+  { code: 'OMR', name: 'Omani Rial', minorUnit: 'Baisa' },
+  { code: 'INR', name: 'Indian Rupee', minorUnit: 'Paise' },
+  { code: 'PKR', name: 'Pakistani Rupee', minorUnit: 'Paisa' },
+  { code: 'BDT', name: 'Bangladeshi Taka', minorUnit: 'Poisha' },
+  { code: 'LKR', name: 'Sri Lankan Rupee', minorUnit: 'Cents' },
+  { code: 'NPR', name: 'Nepalese Rupee', minorUnit: 'Paisa' },
+  { code: 'MYR', name: 'Malaysian Ringgit', minorUnit: 'Sen' },
+  { code: 'SGD', name: 'Singapore Dollar', minorUnit: 'Cents' },
+  { code: 'IDR', name: 'Indonesian Rupiah', minorUnit: 'Sen' },
+  { code: 'PHP', name: 'Philippine Peso', minorUnit: 'Centavos' },
+  { code: 'CAD', name: 'Canadian Dollar', minorUnit: 'Cents' },
+  { code: 'AUD', name: 'Australian Dollar', minorUnit: 'Cents' },
+  { code: 'NZD', name: 'New Zealand Dollar', minorUnit: 'Cents' },
+  { code: 'ZAR', name: 'South African Rand', minorUnit: 'Cents' },
+  { code: 'NGN', name: 'Nigerian Naira', minorUnit: 'Kobo' },
+  { code: 'KES', name: 'Kenyan Shilling', minorUnit: 'Cents' },
+  { code: 'EGP', name: 'Egyptian Pound', minorUnit: 'Piastres' },
+  { code: 'TRY', name: 'Turkish Lira', minorUnit: 'Kurus' },
+];
+
+let activeCurrency = DEFAULT_CURRENCY;
+
+export function setActiveCurrency(code: string | undefined | null): void {
+  const c = String(code || '').trim().toUpperCase();
+  activeCurrency = c || DEFAULT_CURRENCY;
+}
+
+export function getCurrencyCode(): string {
+  return activeCurrency;
+}
+
+/** Whole-unit amount with thousands grouping, no currency code (e.g. "12,500"). */
+export function formatAmount(amount: number): string {
+  return Math.round(Math.abs(amount) || 0).toLocaleString('en-US');
+}
+
+/** Amount prefixed with the institution's currency code (e.g. "USD 12,500", "USD -300"). */
 export function formatCurrency(amount: number): string {
-  const isNegative = amount < 0;
-  const absVal = Math.round(Math.abs(amount)).toLocaleString('en-PK');
-  return isNegative ? `Rs. -${absVal}` : `Rs. ${absVal}`;
+  const absVal = formatAmount(amount);
+  return amount < 0 ? `${activeCurrency} -${absVal}` : `${activeCurrency} ${absVal}`;
 }
 
 
@@ -135,7 +188,7 @@ export function normalizeDateToISO(dateStr: string | number | undefined | null):
       month = p1;
       day = p2;
     } else {
-      // Both <= 12 (e.g. 05/08/2015 or 01/09/2026): Default to DD/MM/YYYY as standard in Pakistan & school records
+      // Both <= 12 (e.g. 05/08/2015 or 01/09/2026): Default to DD/MM/YYYY (the common school-records convention)
       day = p1;
       month = p2;
     }
@@ -284,11 +337,11 @@ export function formatStudentAge(dob: string | undefined | null, format: 'short'
 }
 
 /**
- * Normalizes a Pakistani CNIC / B-Form string by stripping non-alphanumeric characters.
+ * Normalizes a national ID / birth-certificate number by stripping non-alphanumeric characters.
  */
-export function normalizeCnic(cnic: string | undefined | null): string {
-  if (!cnic) return '';
-  return String(cnic).replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
+export function normalizeNationalId(id: string | undefined | null): string {
+  if (!id) return '';
+  return String(id).replace(/[^0-9a-zA-Z]/g, '').toLowerCase();
 }
 
 /**
@@ -307,7 +360,7 @@ export function getDaysInMonth(month: string): number {
  * Calculates transport fee for a student in a month based on assignment & stop fare.
  * Exact formula: (baseStopFare - discount) * (daysAvailed / daysInMonth) * tripFactor
  * User selectable transport rounding is applied to this line item before it becomes
- * part of the voucher particulars. A multiple of 1 means exact PKR (no rounding).
+ * part of the voucher particulars. A multiple of 1 means exact billing (no rounding).
  */
 export function calculateTransportFee(
   assignment: TransportAssignment | undefined,
@@ -982,11 +1035,13 @@ export function getRecentMonthsEndingAt(endMonthStr: string, count: number): str
 }
 
 /**
- * Converts a numeric amount into standard words format (e.g. 5,450 -> "Five Thousand Four Hundred Fifty Rupees Only")
+ * Converts a numeric amount into words using standard (short-scale) grouping,
+ * e.g. 5,450 -> "Five Thousand Four Hundred Fifty USD Only".
  */
 export function numberToWords(num: number): string {
-  if (num === 0) return 'Zero Rupees Only';
   if (isNaN(num)) return '';
+  const code = getCurrencyCode();
+  if (num === 0) return `Zero ${code} Only`;
 
   const units = [
     '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
@@ -994,6 +1049,7 @@ export function numberToWords(num: number): string {
     'Seventeen', 'Eighteen', 'Nineteen',
   ];
   const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const scales = ['', 'Thousand', 'Million', 'Billion', 'Trillion'];
 
   const convertLessThanOneThousand = (n: number): string => {
     if (n === 0) return '';
@@ -1002,35 +1058,23 @@ export function numberToWords(num: number): string {
     return units[Math.floor(n / 100)] + ' Hundred' + (n % 100 !== 0 ? ' ' + convertLessThanOneThousand(n % 100) : '');
   };
 
-  const convertPakistaniNumber = (n: number): string => {
+  const convertWhole = (n: number): string => {
     if (n === 0) return 'Zero';
-    let result = '';
-    const crore = Math.floor(n / 10000000);
-    n %= 10000000;
-    const lakh = Math.floor(n / 100000);
-    n %= 100000;
-    const thousand = Math.floor(n / 1000);
-    n %= 1000;
-    const remainder = n;
-
-    if (crore > 0) {
-      result += convertLessThanOneThousand(crore) + ' Crore ';
+    const parts: string[] = [];
+    let scaleIndex = 0;
+    while (n > 0 && scaleIndex < scales.length) {
+      const group = n % 1000;
+      if (group > 0) {
+        parts.unshift(convertLessThanOneThousand(group) + (scales[scaleIndex] ? ' ' + scales[scaleIndex] : ''));
+      }
+      n = Math.floor(n / 1000);
+      scaleIndex++;
     }
-    if (lakh > 0) {
-      result += convertLessThanOneThousand(lakh) + ' Lakh ';
-    }
-    if (thousand > 0) {
-      result += convertLessThanOneThousand(thousand) + ' Thousand ';
-    }
-    if (remainder > 0) {
-      result += convertLessThanOneThousand(remainder);
-    }
-    return result.trim();
+    return parts.join(' ').trim();
   };
 
   const whole = Math.floor(Math.abs(num));
-  const words = convertPakistaniNumber(whole);
-  return `${words} Rupees Only`;
+  return `${convertWhole(whole)} ${code} Only`;
 }
 
 
@@ -1064,7 +1108,20 @@ export interface RoundingPolicy {
 export function recalculateVoucherChain(
   allVouchers: FeeVoucher[],
   affectedStudentIds: string[],
-  policy: RoundingPolicy
+  policy: RoundingPolicy,
+  /**
+   * When given, vouchers of months BEFORE this month are left untouched (they
+   * still serve as the chain's starting context). Earlier, settled months must
+   * never be rewritten by a change that only affects later months — they may be
+   * locked. Either one month for every student, or a per-student map (students
+   * missing from the map are processed in full).
+   *
+   * When a start month applies, the walk also STOPS as soon as the next
+   * voucher's stored Previous Balance already equals what the chain would give
+   * it: nothing after that point can change, so cost follows the real impact of
+   * the change, not the age of the account.
+   */
+  fromMonth?: string | Record<string, string>
 ): FeeVoucher[] {
   const result = [...allVouchers];
 
@@ -1073,7 +1130,14 @@ export function recalculateVoucherChain(
       .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    studentVouchers.forEach((v, idx) => {
+    const from = typeof fromMonth === 'string' ? fromMonth : fromMonth ? fromMonth[studentId] : undefined;
+    let started = false;
+
+    for (let idx = 0; idx < studentVouchers.length; idx++) {
+      const v = studentVouchers[idx];
+      if (from && v.month < from) continue;
+      started = true;
+
       let newPrevBalance = 0;
       let carriedFine = 0;
 
@@ -1092,13 +1156,23 @@ export function recalculateVoucherChain(
         }
       }
 
-      const cleanParticulars = v.particulars.filter((p) => p.kind !== 'PreviousBalance');
-      if (newPrevBalance !== 0) {
-        cleanParticulars.push({
-          kind: 'PreviousBalance',
-          label: newPrevBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
-          amount: newPrevBalance,
-        });
+      // Keep the Previous Balance line where it already sits so an unchanged
+      // voucher is rewritten byte-for-byte identical (no spurious "changes").
+      const pbEntry = {
+        kind: 'PreviousBalance' as const,
+        label: newPrevBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
+        amount: newPrevBalance,
+      };
+      const existingPbIdx = v.particulars.findIndex((p) => p.kind === 'PreviousBalance');
+      let cleanParticulars = [...v.particulars];
+      if (newPrevBalance === 0) {
+        cleanParticulars = cleanParticulars.filter((p) => p.kind !== 'PreviousBalance');
+      } else if (existingPbIdx >= 0) {
+        cleanParticulars = cleanParticulars.filter((p, i) => p.kind !== 'PreviousBalance' || i === existingPbIdx);
+        const at = cleanParticulars.findIndex((p) => p.kind === 'PreviousBalance');
+        cleanParticulars[at] = pbEntry;
+      } else {
+        cleanParticulars.push(pbEntry);
       }
 
       if (carriedFine > 0) {
@@ -1152,10 +1226,105 @@ export function recalculateVoucherChain(
       const vIndex = result.findIndex((item) => item.id === v.id);
       if (vIndex !== -1) result[vIndex] = updatedVoucher;
       studentVouchers[idx] = updatedVoucher;
-    });
+
+      // The previous voucher's unpaid balance now lives inside this voucher's
+      // Previous Balance. Mark it Carried so it is never counted as a separate
+      // receivable (reports treat "not Carried and balance > 0" as open).
+      if (idx > 0) {
+        const prevV = studentVouchers[idx - 1];
+        if ((prevV.status === 'Issued' || prevV.status === 'Partial') && prevV.netDue - prevV.amountPaid > 0) {
+          const carriedPrev: FeeVoucher = { ...prevV, status: 'Carried', carryForwardMonth: v.month };
+          const pIndex = result.findIndex((item) => item.id === prevV.id);
+          if (pIndex !== -1) result[pIndex] = carriedPrev;
+          studentVouchers[idx - 1] = carriedPrev;
+        }
+      }
+
+      // Convergence: with a start month, stop once the next voucher already
+      // carries exactly the balance this voucher now hands over.
+      if (from && started) {
+        const next = studentVouchers[idx + 1];
+        if (!next) break;
+        // A carried late fine also flows into the next voucher; keep walking.
+        if (updatedVoucher.status === 'Carried') {
+          if (updatedVoucher.carriedLateFine && updatedVoucher.carriedLateFine > 0) continue;
+          if (Number(next.prevBalance || 0) === updatedVoucher.netDue - updatedVoucher.amountPaid) break;
+          continue;
+        }
+        let expectedNext = 0;
+        if (updatedVoucher.status === 'Issued' || updatedVoucher.status === 'Partial') {
+          expectedNext = updatedVoucher.netDue - updatedVoucher.amountPaid;
+        } else if (updatedVoucher.status === 'Paid') {
+          const excess = updatedVoucher.amountPaid - updatedVoucher.netDue;
+          if (excess > 0) expectedNext = -excess;
+        }
+        if (Number(next.prevBalance || 0) === expectedNext) break;
+      }
+    }
   });
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Change detection (shared by the client dry-run and the server lock check)
+// ---------------------------------------------------------------------------
+
+export function voucherValuesDiffer(a: FeeVoucher, b: FeeVoucher): boolean {
+  const n = (x: unknown) => Number(x ?? 0);
+  return (
+    a.voucherNo !== b.voucherNo ||
+    a.month !== b.month ||
+    a.studentId !== b.studentId ||
+    (a.dueDate || '') !== (b.dueDate || '') ||
+    n(a.grossTotal) !== n(b.grossTotal) ||
+    n(a.discountTotal) !== n(b.discountTotal) ||
+    n(a.prevBalance) !== n(b.prevBalance) ||
+    n(a.lateFeeRate) !== n(b.lateFeeRate) ||
+    n(a.netDue) !== n(b.netDue) ||
+    n(a.amountPaid) !== n(b.amountPaid) ||
+    a.status !== b.status ||
+    (a.carryForwardMonth || '') !== (b.carryForwardMonth || '') ||
+    n(a.carriedLateFine) !== n(b.carriedLateFine) ||
+    (a.notes || '') !== (b.notes || '') ||
+    JSON.stringify((a.particulars || []).map((p) => [p.kind, p.label, n(p.amount)])) !==
+      JSON.stringify((b.particulars || []).map((p) => [p.kind, p.label, n(p.amount)]))
+  );
+}
+
+/** Vouchers of `after` that are new or whose values differ from `before`. */
+export function getChangedVouchers(before: FeeVoucher[], after: FeeVoucher[]): FeeVoucher[] {
+  const prior = new Map(before.map((v) => [v.id, v]));
+  return after.filter((v) => {
+    const old = prior.get(v.id);
+    return !old || voucherValuesDiffer(old, v);
+  });
+}
+
+/**
+ * Locked months a change would modify: months of changed/new vouchers (both
+ * their old and new month) plus months of deleted vouchers. Sorted, unique.
+ */
+export function getLockedMonthsTouched(
+  before: FeeVoucher[],
+  after: FeeVoucher[],
+  lockedMonths: string[]
+): string[] {
+  if (lockedMonths.length === 0) return [];
+  const locked = new Set(lockedMonths);
+  const touched = new Set<string>();
+  const afterIds = new Set(after.map((v) => v.id));
+  const prior = new Map(before.map((v) => [v.id, v]));
+  for (const v of after) {
+    const old = prior.get(v.id);
+    if (!old) touched.add(v.month);
+    else if (voucherValuesDiffer(old, v)) {
+      touched.add(old.month);
+      touched.add(v.month);
+    }
+  }
+  for (const v of before) if (!afterIds.has(v.id)) touched.add(v.month);
+  return Array.from(touched).filter((m) => locked.has(m)).sort();
 }
 
 export interface CarryForwardOptions {
@@ -1317,7 +1486,97 @@ export function applyCarryForward(list: FeeVoucher[], opts: CarryForwardOptions)
     }
   }
 
-  updated = recalculateVoucherChain(updated, [voucher.studentId], policy);
+  updated = recalculateVoucherChain(updated, [voucher.studentId], policy, targetMonth);
 
   return { ok: true, list: updated, outstandingBalance, fineApplied, createdVoucherId };
+}
+
+// ---------------------------------------------------------------------------
+// Student arrears (open receivables)
+//
+// A voucher's balance is owed only while no later voucher has absorbed it.
+// "Absorbed" is recorded by status `Carried` (generation, manual carry-forward
+// and chain recalculation all set it). So a voucher is OPEN when it is not
+// Reversed, not Carried, and netDue - amountPaid > 0. A Carried voucher whose
+// destination voucher no longer exists (or is reversed) is treated as open
+// again so a debt can never silently disappear.
+// ---------------------------------------------------------------------------
+
+export interface StudentArrears {
+  openVouchers: FeeVoucher[];
+  outstanding: number;
+  oldestOpenMonth: string;
+  /** Months in the current unbroken arrears run (oldest-first payment allocation). */
+  arrearsMonths: string[];
+}
+
+export function getStudentArrears(allVouchers: FeeVoucher[], studentId: string): StudentArrears {
+  const sv = allVouchers
+    .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
+    .sort((a, b) => a.month.localeCompare(b.month));
+  return computeArrearsFromSorted(sv);
+}
+
+/** Arrears for every student in ONE pass over the vouchers (O(vouchers)). */
+export function getArrearsByStudent(allVouchers: FeeVoucher[]): Map<string, StudentArrears> {
+  const grouped = new Map<string, FeeVoucher[]>();
+  for (const v of allVouchers) {
+    if (v.status === 'Reversed') continue;
+    const list = grouped.get(v.studentId);
+    if (list) list.push(v);
+    else grouped.set(v.studentId, [v]);
+  }
+  const out = new Map<string, StudentArrears>();
+  grouped.forEach((list, studentId) => {
+    list.sort((a, b) => a.month.localeCompare(b.month));
+    out.set(studentId, computeArrearsFromSorted(list));
+  });
+  return out;
+}
+
+function computeArrearsFromSorted(sv: FeeVoucher[]): StudentArrears {
+  const hasDestination = (v: FeeVoucher) =>
+    sv.some((o) => o.id !== v.id && o.month > v.month && (!v.carryForwardMonth || o.month === v.carryForwardMonth));
+
+  const openVouchers = sv.filter((v) => {
+    if (v.netDue - v.amountPaid <= 0) return false;
+    if (v.status === 'Carried') return !hasDestination(v);
+    return true;
+  });
+
+  const outstanding = openVouchers.reduce((sum, v) => sum + (v.netDue - v.amountPaid), 0);
+
+  // Age of each open voucher's debt: walk back through the chain while the
+  // prior balance folded into the voucher was not fully cleared by its payments.
+  const months = new Set<string>();
+  for (const open of openVouchers) {
+    months.add(open.month);
+    let idx = sv.findIndex((v) => v.id === open.id);
+    let cur = open;
+    while (idx > 0 && cur.prevBalance > 0 && cur.amountPaid < cur.prevBalance) {
+      const prev = sv[idx - 1];
+      if (prev.status !== 'Carried' || prev.netDue - prev.amountPaid <= 0) break;
+      months.add(prev.month);
+      cur = prev;
+      idx -= 1;
+    }
+  }
+  const arrearsMonths = Array.from(months).sort();
+
+  return {
+    openVouchers,
+    outstanding,
+    oldestOpenMonth: arrearsMonths[0] || '',
+    arrearsMonths,
+  };
+}
+
+/** User-facing message for a change that would modify locked months. */
+export function formatLockedImpactMessage(months: string[], action: string): string {
+  const names = months.map((m) => formatMonthName(m)).join(', ');
+  const plural = months.length > 1;
+  return (
+    `This ${action} would change ${plural ? 'locked months' : 'a locked month'}: ${names}. ` +
+    `Locked months cannot be modified — an Admin must unlock ${plural ? 'them (newest first)' : 'it'} in the Month End Wizard, or the change should be reverted.`
+  );
 }

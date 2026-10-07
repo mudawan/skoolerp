@@ -14,7 +14,7 @@ import {
   PaymentReceiptData,
   VoucherCopyType,
 } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords } from './feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords, getCurrencyCode } from './feeMath';
 
 export interface PdfExportContext {
   institute: InstituteProfile;
@@ -108,8 +108,8 @@ export async function preloadImageForPdf(url?: string): Promise<string | null> {
 }
 
 /**
- * Render RTL text (such as Urdu or Arabic) to a high-DPI PNG data URL using native browser canvas text shaping.
- * This guarantees proper Nastaliq/Arabic ligature connections, right-to-left orientation, and zero glyph corruption in jsPDF.
+ * Render RTL text (such as Arabic, Urdu, Persian or Hebrew) to a high-DPI PNG data URL using native browser canvas text shaping.
+ * This guarantees proper cursive-script ligature connections, right-to-left orientation, and zero glyph corruption in jsPDF.
  */
 function renderRtlTextToImage(
   text: string,
@@ -131,7 +131,7 @@ function renderRtlTextToImage(
 
   const fontSizePx = (options?.fontSizePt || 6.8) * 1.333 * dpr;
   const fontFamily =
-    "'Noto Nastaliq Urdu', 'Noto Sans Arabic', 'Jameel Noori Nastaleeq', 'Urdu Typesetting', 'Segoe UI', Tahoma, sans-serif";
+    "'Noto Sans Arabic', 'Noto Sans Hebrew', 'Segoe UI', Tahoma, sans-serif";
   const fontStyle = `600 ${fontSizePx}px ${fontFamily}`;
   tempCtx.font = fontStyle;
   tempCtx.direction = 'rtl';
@@ -374,7 +374,7 @@ function renderVoucherToPdfPage(
     doc.text(`Issue Date: ${voucher.issueDate}`, colX + 5, topY + 49.2);
     doc.text(`Due Date: ${voucher.dueDate}`, colX + colWidth - 5, topY + 49.2, { align: 'right' });
 
-    // Particulars Table Header ("Particulars" on left, "Amount (Rs.)" on right)
+    // Particulars Table Header ("Particulars" on left, "Amount" on right)
     doc.setFillColor(241, 245, 249); // slate-100
     doc.setDrawColor(203, 213, 225);
     doc.rect(colX + 3, topY + 53, colWidth - 6, 5.5, 'FD');
@@ -383,7 +383,7 @@ function renderVoucherToPdfPage(
     doc.setFontSize(6.8);
     doc.setTextColor(51, 65, 85); // slate-700
     doc.text('Particulars', colX + 5, topY + 56.8);
-    doc.text('Amount (Rs.)', colX + colWidth - 5, topY + 56.8, { align: 'right' });
+    doc.text(`Amount (${getCurrencyCode()})`, colX + colWidth - 5, topY + 56.8, { align: 'right' });
 
     // Itemized Particulars Rows (all line items ordered strictly as defined in Settings module)
     const standardOrder: { kind: ParticularKind; defaultLabel: string }[] = [
@@ -504,7 +504,7 @@ function renderVoucherToPdfPage(
     doc.setTextColor(190, 18, 60); // rose-700
     doc.text(formatCurrency(payableAfterDueDate), colX + colWidth - 5, afterDueY + 4.2, { align: 'right' });
 
-    // Bank Details Box (with Left-to-Right English & Right-to-Left Urdu Instructions)
+    // Bank Details Box (with Left-to-Right English & Right-to-Left Instructions)
     const bankY = afterDueY + 7.8;
     const ltrInst = activeBank ? (activeBank.instructionsLtr || activeBank.instructionsLine1 || '').trim() : '';
     const rtlInst = activeBank ? (activeBank.instructionsRtl || activeBank.instructionsLine2 || '').trim() : '';
@@ -516,21 +516,21 @@ function renderVoucherToPdfPage(
     const ltrLines: string[] = ltrInst ? doc.splitTextToSize(ltrInst, innerBankWidth) : [];
     const ltrHeightMm = ltrLines.length * 3.2;
 
-    // Render Urdu (RTL) via high-DPI canvas to properly connect Arabic/Urdu ligatures and avoid corrupted glyphs
-    const renderedUrdu = rtlInst
+    // Render RTL text via high-DPI canvas to properly connect cursive-script ligatures and avoid corrupted glyphs
+    const renderedRtl = rtlInst
       ? renderRtlTextToImage(rtlInst, innerBankWidth, { fontSizePt: 6.8, textColor: '#334155' })
       : null;
-    const rtlHeightMm = renderedUrdu ? renderedUrdu.heightMm : 0;
+    const rtlHeightMm = renderedRtl ? renderedRtl.heightMm : 0;
 
     // Dynamic bank card box height
     let boxHeight = 11.5;
-    const hasInstructions = ltrLines.length > 0 || renderedUrdu !== null;
+    const hasInstructions = ltrLines.length > 0 || renderedRtl !== null;
     if (hasInstructions) {
       boxHeight += 1.5; // space for divider line
       if (ltrLines.length > 0) {
         boxHeight += ltrHeightMm + 1.0;
       }
-      if (renderedUrdu) {
+      if (renderedRtl) {
         boxHeight += rtlHeightMm + 1.2;
       }
     }
@@ -577,15 +577,15 @@ function renderVoucherToPdfPage(
           currentInstY += ltrHeightMm + 1.2;
         }
 
-        // 2. Right-to-Left Instructions (Urdu) - High DPI Canvas Rasterization with authentic Nastaliq shaping
-        if (renderedUrdu) {
+        // 2. Right-to-Left Instructions - High DPI Canvas Rasterization with native script shaping
+        if (renderedRtl) {
           doc.addImage(
-            renderedUrdu.dataUrl,
+            renderedRtl.dataUrl,
             'PNG',
             colX + 5,
             currentInstY - 1.2,
             innerBankWidth,
-            renderedUrdu.heightMm
+            renderedRtl.heightMm
           );
         }
       }
@@ -991,9 +991,9 @@ export function generateStudentFeeLedgerDoc(
     { title: 'VOUCHER #', width: 26, align: 'left' },
     { title: 'DATE', width: 22, align: 'left' },
     { title: 'PAYMENT MODE', width: 28, align: 'left' },
-    { title: 'TOTAL (RS)', width: 23, align: 'right' },
-    { title: 'DEPOSIT (RS)', width: 23, align: 'right' },
-    { title: 'BALANCE (RS)', width: 24, align: 'right' },
+    { title: `TOTAL (${getCurrencyCode()})`, width: 23, align: 'right' },
+    { title: `DEPOSIT (${getCurrencyCode()})`, width: 23, align: 'right' },
+    { title: `BALANCE (${getCurrencyCode()})`, width: 24, align: 'right' },
   ];
 
   const drawTableHeader = (curY: number) => {
@@ -2563,7 +2563,7 @@ function renderPaymentReceiptSlip(
   doc.setFontSize(isDualMode ? 5.5 : 7);
   doc.setTextColor(71, 85, 105); // slate-600
   doc.text('FEE HEAD / PARTICULAR DESCRIPTION', tableX + 3, curY + (isDualMode ? 2.8 : 3.5));
-  doc.text('AMOUNT (PKR)', tableX + tableW - 3, curY + (isDualMode ? 2.8 : 3.5), { align: 'right' });
+  doc.text(`AMOUNT (${getCurrencyCode()})`, tableX + tableW - 3, curY + (isDualMode ? 2.8 : 3.5), { align: 'right' });
 
   curY += isDualMode ? 4 : 5;
 
@@ -2793,7 +2793,7 @@ function renderThermalReceiptSlip(
   doc.setFontSize(6.5);
   doc.setTextColor(0, 0, 0);
   doc.text('PARTICULARS', leftX, curY);
-  doc.text('AMOUNT (PKR)', rightX, curY, { align: 'right' });
+  doc.text(`AMOUNT (${getCurrencyCode()})`, rightX, curY, { align: 'right' });
   curY += 2.5;
 
   doc.setLineDashPattern([], 0);

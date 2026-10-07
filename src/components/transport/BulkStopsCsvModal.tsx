@@ -1,6 +1,8 @@
 import React from 'react';
 import { TransportStop } from '../../types';
 import { formatCurrency } from '../../utils/feeMath';
+import { SortableTh } from '../SortableTh';
+import { useSortState, sortRows } from '../../hooks/useTableSort';
 import { Upload, X, Check, AlertCircle, AlertTriangle, FileSpreadsheet, MapPin } from 'lucide-react';
 
 export interface BulkStopPreviewRow {
@@ -56,6 +58,7 @@ export const BulkStopsCsvModal: React.FC<BulkStopsCsvModalProps> = ({
   onToggleSelectRow,
   onCommit,
 }) => {
+  const { sort: rowSort, toggleSort: toggleRowSort } = useSortState();
   if (!show) return null;
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -167,12 +170,21 @@ export const BulkStopsCsvModal: React.FC<BulkStopsCsvModalProps> = ({
                 ? Math.round(validRows.reduce((sum, r) => sum + r.monthlyFare, 0) / validRows.length)
                 : 0;
 
-              const filteredRows = rows.filter((r) => {
+              const filteredUnsorted = rows.filter((r) => {
                 if (previewFilter === 'valid') return r.isValid && !r.isDuplicateInCsv;
                 if (previewFilter === 'invalid') return !r.isValid || r.isDuplicateInCsv;
                 if (previewFilter === 'duplicates') return r.isDuplicateInCsv;
                 if (previewFilter === 'updates') return r.isValid && !r.isDuplicateInCsv && !!r.existingStop;
                 return true;
+              });
+              const filteredRows = sortRows<BulkStopPreviewRow>(filteredUnsorted, rowSort, {
+                selected: (r) => r.selected && r.isValid && !r.isDuplicateInCsv,
+                name: (r) => r.name,
+                area: (r) => r.area,
+                landmark: (r) => r.landmark,
+                fare: (r) => r.monthlyFare,
+                sortOrder: (r) => r.sortOrder,
+                status: (r) => r.errorMsg || (r.existingStop ? 'Updates Existing Stop' : 'New Bus Stop'),
               });
 
               return (
@@ -304,13 +316,13 @@ export const BulkStopsCsvModal: React.FC<BulkStopsCsvModalProps> = ({
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                         <tr>
-                          <th className="p-3 w-10 text-center">Import</th>
-                          <th className="p-3">Stop Name</th>
-                          <th className="p-3">Area / Sector</th>
-                          <th className="p-3">Landmark</th>
-                          <th className="p-3 text-right">Monthly Fare Rate</th>
-                          <th className="p-3 text-center">Sort Position</th>
-                          <th className="p-3">Status</th>
+                          <SortableTh label="Import" sortKey="selected" sort={rowSort} onSort={toggleRowSort} className="w-10 text-center" />
+                          <SortableTh label="Stop Name" sortKey="name" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Area / Sector" sortKey="area" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Landmark" sortKey="landmark" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Monthly Fare Rate" sortKey="fare" sort={rowSort} onSort={toggleRowSort} className="text-right" />
+                          <SortableTh label="Sort Position" sortKey="sortOrder" sort={rowSort} onSort={toggleRowSort} className="text-center" />
+                          <SortableTh label="Status" sortKey="status" sort={rowSort} onSort={toggleRowSort} />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">

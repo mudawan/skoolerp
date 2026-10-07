@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { DeleteInstitutionModal } from './settings/DeleteInstitutionModal';
@@ -76,7 +76,15 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
     hasPermission,
     cleanupDatabaseTables,
     showToast,
+    historyFrom,
+    ensureHistoryLoaded,
   } = useApp();
+
+  // Record counts must reflect everything in the database, not just the working set.
+  useEffect(() => {
+    if (historyFrom) void ensureHistoryLoaded('0000-01');
+  }, [historyFrom, ensureHistoryLoaded]);
+
 
   const [selectedTables, setSelectedTables] = useState<TableSelectionState>(INITIAL_SELECTION);
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);

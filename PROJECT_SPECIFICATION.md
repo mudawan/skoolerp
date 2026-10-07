@@ -197,7 +197,7 @@ The system enforces 12 granular permission domains across low, medium, and high-
 - **Preconditions:** Operator must hold `students:create` privilege; Class ID must exist.
 - **Main Success Scenario:**
   1. Operator inputs student full name, roll number, gender, date of birth, admission date, class assignment, and emergency contact details.
-  2. Operator enters national identification (B-Form / CNIC) and parent CNIC details.
+  2. Operator enters student ID / birth certificate number and parent national ID details.
   3. Operator specifies `firstBillingMonth` (format: `YYYY-MM`), establishing the earliest period this student may be billed.
   4. Operator specifies recurring `monthlyDiscount` (fixed amount in currency).
   5. System validates that `regNo` is globally unique and persists the student with `status = 'Active'`.
@@ -209,7 +209,7 @@ The system enforces 12 granular permission domains across low, medium, and high-
 
 #### [STU-002] Document Attachment Metadata
 - **Description:** Store verification metadata for student physical identification documents.
-- **Business Rules:** Supported document kinds are `BirthCertificate`, `FormB`, `FatherCNIC`, `MotherCNIC`, `TransferCertificate`, and `Other`. The system stores the document title, file URL/path, verification timestamp, and verifying officer ID.
+- **Business Rules:** Supported document kinds are `BirthCertificate`, `StudentID`, `FatherNationalID`, `MotherNationalID`, `TransferCertificate`, and `Other`. The system stores the document title, file URL/path, verification timestamp, and verifying officer ID.
 
 #### [STU-003] Household / Family Management
 - **Description:** Group related students (siblings) under a unified Family Household.
@@ -326,7 +326,7 @@ The system enforces 12 granular permission domains across low, medium, and high-
   - Bank Accounts Roster: Approved deposit bank titles, account numbers, and branch IBANs.
   - Bilingual Payment Instructions:
     - **English (LTR):** Standard deposit rules, late fee deadlines, and cheque clearance notices.
-    - **Urdu (RTL):** Bank teller and guardian instructions in standard Nasta'liq/Arabic script.
+    - **Right-to-left (RTL):** Optional bank teller and guardian instructions in any right-to-left script (Arabic, Urdu, Hebrew, ...).
   - Authorized Signatures: Blank counterfoil signature blocks for Cashier/Teller and Depositor.
 
 #### [VOU-005] Admission Voucher Engine
@@ -524,7 +524,7 @@ The system enforces 12 granular permission domains across low, medium, and high-
 | `iban` | VARCHAR(50) | NULL | International Bank Account Number |
 | `branch_code` | VARCHAR(50) | NULL | Branch transit code |
 | `english_instructions` | TEXT | NULL | Deposit terms in English (LTR) |
-| `urdu_instructions` | TEXT | NULL | Deposit terms in Urdu (RTL) |
+| `instructions_rtl` | TEXT | NULL | Deposit terms in a right-to-left script |
 | `is_active` | BOOLEAN | DEFAULT TRUE | Active payment channel flag |
 
 #### Entity: `school_classes`
@@ -565,9 +565,9 @@ The system enforces 12 granular permission domains across low, medium, and high-
 | `monthly_discount` | DECIMAL(12,2)| DEFAULT 0.00 | Recurring fixed fee concession |
 | `status` | VARCHAR(30) | NOT NULL | 'Active', 'Inactive', 'AutoDeactivated', 'Withdrawn' |
 | `photo_url` | TEXT | NULL | Avatar image URL |
-| `b_form_no` | VARCHAR(50) | NULL | National identity / birth record number |
-| `father_cnic` | VARCHAR(50) | NULL | Father national ID card number |
-| `mother_cnic` | VARCHAR(50) | NULL | Mother national ID card number |
+| `student_national_id` | VARCHAR(50) | NULL | National identity / birth record number |
+| `father_national_id` | VARCHAR(50) | NULL | Father national ID card number |
+| `mother_national_id` | VARCHAR(50) | NULL | Mother national ID card number |
 
 #### Entity: `fee_templates`
 | Field Name | Data Type | Constraints | Description |
@@ -727,7 +727,7 @@ The system enforces 12 granular permission domains across low, medium, and high-
 
 ### 9.3 Security & Regulatory Compliance
 - **Role Isolation:** Application API endpoints must validate user role tokens and verify specific permissions against the Role-Permission Matrix prior to executing service logic.
-- **Data Protection:** Passwords must be hashed using strong cryptographic one-way functions (e.g., Argon2id or bcrypt). National identification numbers (B-Form, CNIC) must be encrypted at rest.
+- **Data Protection:** Passwords must be hashed using strong cryptographic one-way functions (e.g., Argon2id or bcrypt). National identification numbers (student and parent national IDs) must be encrypted at rest.
 
 ### 9.4 High Availability & Disaster Recovery
 - **Single Source of Truth:** Relational database backups must be scheduled with automated point-in-time recovery (PITR) supporting recovery point objectives (RPO) $\le 1$ hour.

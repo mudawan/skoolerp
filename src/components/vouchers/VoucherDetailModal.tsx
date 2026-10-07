@@ -1,7 +1,7 @@
 import React from 'react';
 import { FeeVoucher, VoucherItem } from '../../types';
 import { formatCurrency, getAppliedFineAmount, getEffectiveMultiple } from '../../utils/feeMath';
-import { RotateCcw, Trash2, X } from 'lucide-react';
+import { RefreshCw, RotateCcw, Trash2, X } from 'lucide-react';
 
 interface VoucherDetailModalProps {
   voucher: FeeVoucher;
@@ -10,6 +10,8 @@ interface VoucherDetailModalProps {
   roundingMultiple: number;
   canUndoCarry: boolean;
   canDelete: boolean;
+  canReissue?: boolean;
+  onReissue?: (v: FeeVoucher) => void;
   onUndoCarry: (v: FeeVoucher) => void;
   onDelete: (v: FeeVoucher) => void;
   onClose: () => void;
@@ -22,10 +24,13 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
   roundingMultiple,
   canUndoCarry,
   canDelete,
+  canReissue = false,
+  onReissue,
   onUndoCarry,
   onDelete,
   onClose,
 }) => {
+  const [confirmReissue, setConfirmReissue] = React.useState(false);
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl max-w-md w-full p-4 sm:p-6 shadow-2xl space-y-3 sm:space-y-4 my-auto max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
@@ -96,6 +101,39 @@ export const VoucherDetailModal: React.FC<VoucherDetailModalProps> = ({
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Undo Carry Forward</span>
               </button>
+            )}
+            {canReissue && onReissue && voucher.status !== 'Carried' && voucher.status !== 'Reversed' && voucher.voucherType !== 'Admission' && (
+              confirmReissue ? (
+                <div className="flex items-center gap-1.5 px-2 py-1.5 bg-teal-50 border border-teal-200 rounded-xl text-[11px] text-teal-900">
+                  <span className="font-semibold">Rebuild from current fee settings? Manual edits are replaced; payments are kept.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmReissue(false);
+                      onReissue(voucher);
+                    }}
+                    className="px-2 py-1 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-lg cursor-pointer"
+                  >
+                    Reissue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReissue(false)}
+                    className="px-2 py-1 bg-white border border-teal-200 font-bold rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmReissue(true)}
+                  className="flex-1 sm:flex-initial px-3 py-2 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reissue</span>
+                </button>
+              )
             )}
             {canDelete && (
               <button

@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { AuditActionType, AuditLogEntry } from '../types';
-import { formatCurrency, formatMonthName } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getCurrencyCode } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
-import { ConfirmModal } from './ConfirmModal';
+import { RecordsPerPageSelector } from './RecordsPerPageSelector';
+import { apiFetchAuditLogs, apiFetchAuditSummary, AuditLogQuery, AuditSummary } from '../services/apiSync';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
   Activity,
@@ -16,6 +17,8 @@ import {
   Calendar,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Coins,
   Copy,
@@ -44,15 +47,28 @@ interface AuditTrailViewProps {
   initialFilter?: 'all' | 'fines' | 'bulk' | 'reversals' | 'security';
 }
 
+// Internal database ids (including those stored by older log entries) must
+// never be shown as a subject. Readable references (usernames, student IDs,
+// months, receipt numbers) are kept.
+const isInternalId = (v?: string | null): boolean => {
+  if (!v) return false;
+  return (
+    /^(usr|user|inst|op|bank|tpl|fee)_/i.test(v) ||
+    /_tpl_\d+$/i.test(v) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+  );
+};
+const readableTarget = (log: { targetId?: string | null; targetLabel?: string | null }) => ({
+  label: log.targetLabel && !isInternalId(log.targetLabel) ? log.targetLabel : '',
+  ref: log.targetId && !isInternalId(log.targetId) ? log.targetId : '',
+});
+
 export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 'all' }) => {
   const {
-    auditLogs,
-    users,
-    currentUser,
     hasPermission,
-    clearAuditLogs,
-    institute,
     themeConfig,
+    showToast,
+    auditRetentionMonths,
   } = useApp();
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
@@ -64,7 +80,6 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'fines' | 'bulk' | 'reversals' | 'security'>(initialFilter);
   const [selectedLogForDetails, setSelectedLogForDetails] = useState<AuditLogEntry | null>(null);
-  const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Sorting
@@ -87,115 +102,130 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Distinct Filter Options
-  const distinctOperators = useMemo(() => {
-    const map = new Map<string, { id: string; username: string; name: string }>();
-    auditLogs.forEach((log) => {
-      if (!map.has(log.operatorUsername)) {
-        map.set(log.operatorUsername, {
-          id: log.operatorId,
-          username: log.operatorUsername,
-          name: log.operatorName,
-        });
+  // --- Server-side data: one page of rows + a small summary, never the full table ---
+  type DateRange = '7d' | '30d' | '90d' | 'all';
+  const [dateRange, setDateRange] = useState<DateRange>('7d');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<AuditSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  const dateFrom = useMemo(() => {
+    if (dateRange === 'all') return undefined;
+    const days = dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90;
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - (days - 1));
+    return d.toISOString();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange, refreshKey]);
+
+  const QUICK_FILTER_TYPES: Record<string, string[]> = {
+    all: [],
+    fines: ['fine_modification'],
+    bulk: ['bulk_collection'],
+    reversals: ['collection_reversal', 'carry_forward'],
+    security: ['operator_security', 'system_cleanup', 'system_restore'],
+  };
+
+  const effectiveTypes = useMemo(() => {
+    const quick = QUICK_FILTER_TYPES[quickFilter] || [];
+    if (selectedActionType === 'all') return quick;
+    if (quick.length === 0) return [selectedActionType];
+    const both = quick.filter((t) => t === selectedActionType);
+    return both.length > 0 ? both : ['__none__'];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickFilter, selectedActionType]);
+
+  const baseQuery = useMemo<AuditLogQuery>(
+    () => ({
+      q: debouncedSearch || undefined,
+      actionType: effectiveTypes,
+      operator: selectedOperator !== 'all' ? selectedOperator : undefined,
+      module: selectedModule !== 'all' ? selectedModule : undefined,
+      month: selectedMonth !== 'all' ? selectedMonth : undefined,
+      sort: sortField,
+      dir: sortDirection,
+      dateFrom,
+    }),
+    [debouncedSearch, effectiveTypes, selectedOperator, selectedModule, selectedMonth, sortField, sortDirection, dateFrom]
+  );
+
+  // Any filter/sort/range/page-size change returns to page 1
+  useEffect(() => {
+    setPage(1);
+  }, [baseQuery, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setIsLoading(true);
+    apiFetchAuditLogs({ ...baseQuery, page: safePage, pageSize }, ctrl.signal).then((r) => {
+      if (ctrl.signal.aborted) return;
+      if (r) {
+        setLogs(r.logs);
+        setTotal(r.total);
+        setLoadError(false);
+      } else {
+        setLoadError(true);
       }
+      setIsLoading(false);
     });
-    return Array.from(map.values());
-  }, [auditLogs]);
+    return () => ctrl.abort();
+  }, [baseQuery, safePage, pageSize, refreshKey]);
 
-  const distinctMonths = useMemo(() => {
-    const set = new Set<string>();
-    auditLogs.forEach((log) => {
-      if (log.month) set.add(log.month);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    apiFetchAuditSummary({ dateFrom }, ctrl.signal).then((r) => {
+      if (!ctrl.signal.aborted && r) setSummary(r);
     });
-    return Array.from(set).sort().reverse();
-  }, [auditLogs]);
+    return () => ctrl.abort();
+  }, [dateFrom, refreshKey]);
 
-  // Filtered & Sorted Audit Logs
-  const filteredLogs = useMemo(() => {
-    return auditLogs.filter((log) => {
-      // Quick filter
-      if (quickFilter === 'fines' && log.actionType !== 'fine_modification') return false;
-      if (quickFilter === 'bulk' && log.actionType !== 'bulk_collection') return false;
-      if (quickFilter === 'reversals' && log.actionType !== 'collection_reversal' && log.actionType !== 'carry_forward') return false;
-      if (quickFilter === 'security' && log.actionType !== 'operator_security' && log.actionType !== 'system_cleanup' && log.actionType !== 'system_restore') return false;
+  const filteredLogs = logs; // current page only
+  const distinctOperators = summary?.operators || [];
+  const distinctMonths = summary?.months || [];
 
-      // Dropdown filters
-      if (selectedActionType !== 'all' && log.actionType !== selectedActionType) return false;
-      if (selectedOperator !== 'all' && log.operatorUsername !== selectedOperator && log.operatorId !== selectedOperator) return false;
-      if (selectedModule !== 'all' && log.module !== selectedModule) return false;
-      if (selectedMonth !== 'all' && log.month !== selectedMonth) return false;
-
-      // Search term
-      if (searchTerm.trim()) {
-        const query = searchTerm.toLowerCase();
-        const matchesQuery =
-          log.actionTitle.toLowerCase().includes(query) ||
-          log.description.toLowerCase().includes(query) ||
-          log.operatorName.toLowerCase().includes(query) ||
-          log.operatorUsername.toLowerCase().includes(query) ||
-          (log.targetId && log.targetId.toLowerCase().includes(query)) ||
-          (log.targetLabel && log.targetLabel.toLowerCase().includes(query)) ||
-          (log.month && log.month.toLowerCase().includes(query));
-
-        if (!matchesQuery) return false;
-      }
-
-      return true;
-    }).sort((a, b) => {
-      let comparison = 0;
-      if (sortField === 'timestamp') {
-        comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-      } else if (sortField === 'operator') {
-        comparison = a.operatorName.localeCompare(b.operatorName);
-      } else if (sortField === 'action') {
-        comparison = a.actionTitle.localeCompare(b.actionTitle);
-      } else if (sortField === 'target') {
-        comparison = (a.targetLabel || '').localeCompare(b.targetLabel || '');
-      } else if (sortField === 'amount') {
-        comparison = (a.amount || 0) - (b.amount || 0);
-      }
-      return sortDirection === 'asc' ? comparison : -comparison;
-    });
-  }, [auditLogs, quickFilter, selectedActionType, selectedOperator, selectedModule, selectedMonth, searchTerm, sortField, sortDirection]);
-
-  // Summary Metrics
+  // Summary Metrics (from server aggregates)
   const stats = useMemo(() => {
-    const fineModCount = auditLogs.filter((l) => l.actionType === 'fine_modification').length;
-    const fineModTotal = auditLogs
-      .filter((l) => l.actionType === 'fine_modification')
-      .reduce((sum, l) => sum + (l.amount || 0), 0);
-
-    const bulkCount = auditLogs.filter((l) => l.actionType === 'bulk_collection').length;
-    const bulkTotalAmount = auditLogs
-      .filter((l) => l.actionType === 'bulk_collection')
-      .reduce((sum, l) => sum + (l.amount || 0), 0);
-
-    const collectionCount = auditLogs.filter((l) => l.actionType === 'collection_payment').length;
-    const securityCount = auditLogs.filter((l) => l.actionType === 'operator_security').length;
-
+    const t = summary?.byType || {};
+    const c = (k: string) => t[k]?.count || 0;
+    const a = (k: string) => t[k]?.amount || 0;
     return {
-      total: auditLogs.length,
-      fineModCount,
-      fineModTotal,
-      bulkCount,
-      bulkTotalAmount,
-      collectionCount,
-      securityCount,
+      total: summary?.total || 0,
+      fineModCount: c('fine_modification'),
+      fineModTotal: a('fine_modification'),
+      bulkCount: c('bulk_collection'),
+      bulkTotalAmount: a('bulk_collection'),
+      collectionCount: c('collection_payment'),
+      securityCount: c('operator_security'),
+      reversalsCount: c('collection_reversal') + c('carry_forward'),
     };
-  }, [auditLogs]);
+  }, [summary]);
 
   // Metric cards configuration matching ReportsView style
   const auditMetrics = useMemo(() => {
-    const reversalsCount = auditLogs.filter(
-      (l) => l.actionType === 'collection_reversal' || l.actionType === 'carry_forward'
-    ).length;
+    const reversalsCount = stats.reversalsCount;
 
     return [
       {
         key: 'fines' as const,
         label: 'Manual Fine Mod.',
         value: `${stats.fineModCount}`,
-        hint: `Rs ${stats.fineModTotal.toLocaleString()} adjusted`,
+        hint: `${formatCurrency(stats.fineModTotal)} adjusted`,
         badge: `${stats.fineModCount} Events`,
         badgeClass: 'bg-amber-50 text-amber-700 border border-amber-200/80 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
         icon: Coins,
@@ -206,7 +236,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
         key: 'bulk' as const,
         label: 'Bulk Collections',
         value: `${stats.bulkCount}`,
-        hint: `Rs ${stats.bulkTotalAmount.toLocaleString()} imported`,
+        hint: `${formatCurrency(stats.bulkTotalAmount)} imported`,
         badge: `${stats.bulkCount} Batches`,
         badgeClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
         icon: FileSpreadsheet,
@@ -236,57 +266,58 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
         accent: 'text-purple-600 dark:text-purple-400',
       },
     ];
-  }, [auditLogs, stats]);
+  }, [stats]);
 
-  // Export to CSV
-  const handleExportCsv = () => {
-    if (!hasPermission('audit.export') && !hasPermission('audit.view')) return;
+  // Export to CSV: pulls the full filtered result from the server in chunks
+  const handleExportCsv = async () => {
+    if (!hasPermission('audit.export')) return;
+    if (isExporting || total === 0) return;
+    setIsExporting(true);
+    try {
+      const CHUNK = 1000;
+      const MAX_ROWS = 100000;
+      const all: AuditLogEntry[] = [];
+      for (let pg = 1; all.length < Math.min(total, MAX_ROWS); pg++) {
+        const r = await apiFetchAuditLogs({ ...baseQuery, page: pg, pageSize: CHUNK, export: true });
+        if (!r) throw new Error('Export failed while fetching data.');
+        if (r.logs.length === 0) break;
+        all.push(...r.logs);
+      }
 
-    const headers = [
-      'Log ID',
-      'Timestamp (ISO)',
-      'Timestamp (Formatted)',
-      'Action Type',
-      'Action Title',
-      'Operator Name',
-      'Operator Username',
-      'Operator Role',
-      'Module',
-      'Target ID',
-      'Target Label',
-      'Billing Month',
-      'Amount (PKR)',
-      'Previous Value',
-      'New Value',
-      'Description',
-    ];
-
-    const rows = filteredLogs.map((log) => [
-      log.id,
-      log.timestamp,
-      new Date(log.timestamp).toLocaleString(),
-      log.actionType,
-      log.actionTitle,
-      log.operatorName,
-      log.operatorUsername,
-      log.operatorRole,
-      log.module,
-      log.targetId || '',
-      log.targetLabel || '',
-      log.month || '',
-      log.amount !== undefined ? String(log.amount) : '',
-      log.previousValue !== undefined ? String(log.previousValue) : '',
-      log.newValue !== undefined ? String(log.newValue) : '',
-      log.description.replace(/"/g, '""'),
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map((r) => r.map((cell) => `"${cell}"`).join(',')),
-    ].join('\n');
-
-    const filename = `audit_trail_export_${new Date().toISOString().split('T')[0]}.csv`;
-    downloadCsv(csvContent, filename);
+      const headers = [
+        'Log ID', 'Timestamp (ISO)', 'Timestamp (Formatted)', 'Action Type', 'Action Title',
+        'Operator Name', 'Operator Username', 'Operator Role', 'Module', 'Target Reference', 'Target',
+        'Billing Month', `Amount (${getCurrencyCode()})`, 'Previous Value', 'New Value', 'Description',
+      ];
+      const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const rows = all.map((log) => [
+        log.id,
+        log.timestamp,
+        new Date(log.timestamp).toLocaleString(),
+        log.actionType,
+        log.actionTitle,
+        log.operatorName,
+        log.operatorUsername,
+        log.operatorRole,
+        log.module,
+        readableTarget(log).ref,
+        readableTarget(log).label,
+        log.month || '',
+        log.amount !== undefined ? String(log.amount) : '',
+        log.previousValue !== undefined ? String(log.previousValue) : '',
+        log.newValue !== undefined ? String(log.newValue) : '',
+        log.description || '',
+      ]);
+      const csvContent = [headers, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+      downloadCsv(`audit_trail_export_${new Date().toISOString().split('T')[0]}.csv`, '\uFEFF' + csvContent);
+      if (all.length < total) {
+        showToast(`Exported the first ${all.length} of ${total} entries. Narrow the date range to export the rest.`, 'warning');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Export failed.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // Helper badge color & icon for Action Types
@@ -408,38 +439,37 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
             <button
               id="btn-export-audit-csv"
               onClick={handleExportCsv}
-              disabled={filteredLogs.length === 0}
+              disabled={total === 0 || isExporting}
               className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
-              title={filteredLogs.length === 0 ? 'No audit logs to export' : 'Export filtered audit logs to CSV'}
+              title={total === 0 ? 'No audit logs to export' : 'Export all filtered audit logs to CSV'}
             >
               <Download className="w-4 h-4 text-slate-500" />
-              <span>Export CSV ({filteredLogs.length})</span>
+              <span>{isExporting ? 'Exporting…' : `Export CSV (${total})`}</span>
+            </button>
+          )}
+
+          {hasPermission('audit.export') && (
+            <button
+              id="btn-print-audit-report"
+              onClick={() => window.print()}
+              disabled={logs.length === 0}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
+              title={logs.length === 0 ? 'No audit logs to print' : 'Print the entries on this page'}
+            >
+              <Printer className="w-4 h-4 text-slate-500" />
+              <span>Print</span>
             </button>
           )}
 
           <button
-            id="btn-print-audit-report"
-            onClick={() => window.print()}
-            disabled={filteredLogs.length === 0}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-2xs"
-            title={filteredLogs.length === 0 ? 'No audit logs to print' : 'Print Audit Report'}
+            id="btn-refresh-audit"
+            onClick={() => setRefreshKey((k) => k + 1)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl text-slate-700 dark:text-slate-200 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition cursor-pointer shadow-2xs"
+            title="Reload from server"
           >
-            <Printer className="w-4 h-4 text-slate-500" />
-            <span>Print</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
           </button>
-
-          {currentUser.role === 'Admin' && (
-            <button
-              id="btn-clear-audit-logs"
-              onClick={() => setShowClearConfirmModal(true)}
-              disabled={auditLogs.length === 0}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl text-rose-700 dark:text-rose-400 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 transition disabled:opacity-40 cursor-pointer shadow-2xs"
-              title="Purge audit logs (Admin only)"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Purge</span>
-            </button>
-          )}
         </div>
       </div>
 
@@ -469,7 +499,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-200/70 dark:border-slate-700">
               <Activity className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-              <span>Total Activity Logs: <strong className="text-slate-800 dark:text-white font-semibold">{auditLogs.length}</strong></span>
+              <span>Total Activity Logs: <strong className="text-slate-800 dark:text-white font-semibold">{stats.total}</strong></span>
             </span>
             {quickFilter !== 'all' && (
               <button
@@ -587,7 +617,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            All Activity ({auditLogs.length})
+            All Activity ({stats.total})
           </button>
           <button
             onClick={() => setQuickFilter('fines')}
@@ -636,7 +666,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
         </div>
 
         {/* Detailed Controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 text-xs">
           {/* Search Box */}
           <div className="lg:col-span-2 relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -698,6 +728,21 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
             </select>
           </div>
 
+          {/* Date Range */}
+          <div>
+            <select
+              id="select-audit-range"
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as DateRange)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            >
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+              <option value="all">All time{auditRetentionMonths > 0 ? ` (kept ${auditRetentionMonths} mo)` : ''}</option>
+            </select>
+          </div>
+
           {/* Billing Month Filter */}
           <div>
             <select
@@ -721,7 +766,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
           <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-            Activity Log Entries ({filteredLogs.length} matching)
+            Activity Log Entries ({total} matching)
           </div>
           {(quickFilter !== 'all' || selectedActionType !== 'all' || selectedOperator !== 'all' || selectedMonth !== 'all' || searchTerm) && (
             <button
@@ -740,7 +785,11 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           )}
         </div>
 
-        {filteredLogs.length === 0 ? (
+        {isLoading && logs.length === 0 ? (
+          <div className="py-16 text-center text-xs text-slate-500">Loading activity log…</div>
+        ) : loadError ? (
+          <div className="py-16 text-center text-xs text-rose-600">Could not load the audit trail. Use Refresh to retry.</div>
+        ) : logs.length === 0 ? (
           <div className="py-16 text-center">
             <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3 text-slate-400">
               <History className="w-6 h-6" />
@@ -807,7 +856,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredLogs.map((log) => {
+                {logs.map((log) => {
                   const badge = getActionBadge(log.actionType);
                   const formattedDate = formatLogDate(log.timestamp);
 
@@ -865,24 +914,25 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
 
                       {/* Subject / Target */}
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {log.targetLabel ? (
-                          <div>
-                            <div className="font-medium text-slate-900 dark:text-white">
-                              {log.targetLabel}
-                            </div>
-                            {log.targetId && log.targetId !== log.targetLabel && (
-                              <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                                {log.targetId}
+                        {(() => {
+                          const t = readableTarget(log);
+                          if (t.label) {
+                            return (
+                              <div>
+                                <div className="font-medium text-slate-900 dark:text-white">{t.label}</div>
+                                {t.ref && t.ref !== t.label && (
+                                  <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">{t.ref}</div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        ) : log.targetId ? (
-                          <div className="font-mono text-slate-700 dark:text-slate-300 font-medium">
-                            {log.targetId}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">—</span>
-                        )}
+                            );
+                          }
+                          if (t.ref) {
+                            return (
+                              <div className="font-mono text-slate-700 dark:text-slate-300 font-medium">{t.ref}</div>
+                            );
+                          }
+                          return <span className="text-slate-400 italic">—</span>;
+                        })()}
                         {log.month && (
                           <span className="inline-block mt-0.5 text-[10px] font-medium text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 px-1.5 py-0.2 rounded border border-teal-200 dark:border-teal-800">
                             {formatMonthName(log.month)}
@@ -912,7 +962,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
                                 : 'text-emerald-600 dark:text-emerald-400'
                             }
                           >
-                            Rs {log.amount.toLocaleString()}
+                            {formatCurrency(log.amount)}
                           </div>
                         ) : log.newValue !== undefined ? (
                           <div className="text-slate-700 dark:text-slate-300 text-xs">
@@ -938,6 +988,41 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {total > 0 && (
+          <div className="p-3 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 print:hidden">
+            <RecordsPerPageSelector
+              value={pageSize}
+              onChange={(n) => setPageSize(n)}
+              totalRecords={total}
+              presetOptions={[25, 50, 100]}
+              idPrefix="audit-per-page"
+            />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-2 font-medium">
+                Page {safePage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1066,20 +1151,6 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           </div>
         </div>
       )}
-
-      {/* Purge / Clear Confirm Modal */}
-      <ConfirmModal
-        isOpen={showClearConfirmModal}
-        title="Purge System Audit Trail?"
-        message="Are you sure you want to permanently clear all audit activity logs? This action is irreversible and should only be performed for archival resets."
-        confirmText="Permanently Purge Logs"
-        confirmVariant="danger"
-        onConfirm={() => {
-          clearAuditLogs();
-          setShowClearConfirmModal(false);
-        }}
-        onCancel={() => setShowClearConfirmModal(false)}
-      />
     </div>
   );
 };

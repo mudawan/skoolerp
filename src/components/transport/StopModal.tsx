@@ -1,3 +1,4 @@
+import { getCurrencyCode } from '../../utils/feeMath';
 import React from 'react';
 import { TransportStop } from '../../types';
 import { X, MapPin, AlertCircle } from 'lucide-react';
@@ -88,7 +89,7 @@ export const StopModal: React.FC<StopModalProps> = ({
                 type="text"
                 value={stopData.area}
                 onChange={(e) => set('area', e.target.value)}
-                placeholder="e.g. Gulberg III"
+                placeholder="e.g. Riverside"
                 className={inputClass}
               />
             </div>
@@ -106,7 +107,7 @@ export const StopModal: React.FC<StopModalProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-bold text-slate-700 mb-1">Monthly Fare (Rs.) *</label>
+              <label className="block font-bold text-slate-700 mb-1">Monthly Fare ({getCurrencyCode()}) *</label>
               <input
                 type="number"
                 required

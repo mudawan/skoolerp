@@ -59,20 +59,7 @@ import {
   ROLE_PRESET_PERMISSIONS,
   getEffectiveRole,
 } from '../utils/permissions';
-import {
-  calculateStudentVoucherPreview,
-  formatMonthName,
-  getCurrentMonthString,
-  getDaysInMonth,
-  getEffectiveMultiple,
-  getNextMonthString,
-  getPreviousMonthString,
-  roundUpToMultiple,
-  recalculateVoucherChain,
-  VoucherPreviewCalculation,
-  normalizeDateToISO,
-  normalizeCnic,
-} from '../utils/feeMath';
+import { calculateStudentVoucherPreview, formatMonthName, getCurrentMonthString, getDaysInMonth, getEffectiveMultiple, getNextMonthString, getPreviousMonthString, roundUpToMultiple, recalculateVoucherChain, getChangedVouchers, getLockedMonthsTouched, formatLockedImpactMessage, VoucherPreviewCalculation, normalizeDateToISO, normalizeNationalId, formatCurrency, DEFAULT_CURRENCY, setActiveCurrency } from '../utils/feeMath';
 import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
 import {
   queueDatabaseSync,
@@ -97,6 +84,10 @@ import {
   apiSavePreferences,
   apiCarryForwardBatch,
   apiVoucherBatchUpdate,
+  apiFetchHistory,
+  apiFetchAllFinancialIds,
+  apiLockMonth,
+  apiUnlockMonth,
   syncSimpleEntityCollectionNow,
   subscribeSyncFailures,
   initializeSyncSnapshots,
@@ -104,9 +95,17 @@ import {
   checkMutationAllowed,
   subscribeDbStatus,
   apiUpdateInstituteSettings,
+  apiPostAuditEvent,
   setActionLockActive,
 } from '../services/apiSync';
 import { DatabaseActionLockModal } from '../components/DatabaseActionLockModal';
+
+export interface LockedMonthInfo {
+  notes: string;
+  lockedBy: string;
+  lockedByName: string;
+  lockedAt: string;
+}
 
 export interface ActionLockState {
   active: boolean;
@@ -266,7 +265,7 @@ interface AppContextType {
     month: string
   ) => void;
   deleteStudentTemplates: (studentId: string, month?: string) => void;
-  resetAllTemplates: (month?: string) => void;
+  resetAllTemplates: () => void;
   deleteTemplate: (id: string) => void;
 
   // Fee Vouchers & Generation
@@ -308,6 +307,7 @@ interface AppContextType {
     voucherId: string,
     updatedParticulars: VoucherItem[]
   ) => { success: boolean; voucher?: FeeVoucher; error?: string };
+  reissueVoucher: (voucherId: string) => { success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string };
   bulkCsvCollection: (
     rows: {
       regNo?: string;
@@ -398,15 +398,21 @@ interface AppContextType {
   // Month Closure Check Helper & Lock Management
   getMonthClosureStatus: (month: string) => MonthClosureStatus;
   lockedMonths: string[];
-  lockMonth: (month: string, notes?: string) => { success: boolean; error?: string };
-  unlockMonth: (month: string) => { success: boolean; error?: string };
+  /** Earliest billing month whose vouchers/collections/transactions are loaded ('' until first load). */
+  historyFrom: string;
+  /** Load closed history down to `fromMonth` (YYYY-MM; '0000-01' = everything). Resolves when merged. */
+  ensureHistoryLoaded: (fromMonth: string) => Promise<void>;
+  /** Load one student's full voucher/collection/transaction history. */
+  ensureStudentHistory: (studentId: string) => Promise<void>;
+  lockedMonthDetails: Record<string, LockedMonthInfo>;
+  lockMonth: (month: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
+  unlockMonth: (month: string, reason: string) => Promise<{ success: boolean; error?: string }>;
   isMonthLocked: (month: string) => boolean;
 
   // System Utility & Granular Cleanup
   cleanupDatabaseTables: (options: DataCleanupOptions) => Promise<CleanupResult>;
 
   // Audit Trail & Activity Logs
-  auditLogs: AuditLogEntry[];
   logAuditEvent: (
     entry: Omit<
       AuditLogEntry,
@@ -414,7 +420,8 @@ interface AppContextType {
     > &
       Partial<Pick<AuditLogEntry, 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole' | 'timestamp'>>
   ) => void;
-  clearAuditLogs: () => void;
+  auditRetentionMonths: number;
+  setAuditRetentionMonths: (months: number) => void;
 
   // Student Account History (Chronological Status & Transport Log)
   studentAccountHistory: StudentAccountHistoryEntry[];
@@ -444,54 +451,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 const STORAGE_KEY = 'skooler_app_data_v1';
-
-// Legacy global cache cleanup:
-// Earlier versions saved full student rosters, classes, and tenant records into
-// un-scoped localStorage keys ('skooler_app_data_v1_students', etc.). In a multi-tenant
-// database architecture, keeping these global keys causes cross-tenant contamination
-// (e.g. 110 old students appearing in a brand new institution with 0 students).
-// We purge all un-scoped entity cache keys so the server database remains authoritative.
-try {
-  const legacyGlobalKeys = [
-    `${STORAGE_KEY}_auth_session`,
-    `${STORAGE_KEY}_institution`,
-    `${STORAGE_KEY}_sidebar_collapsed`,
-    `${STORAGE_KEY}_theme_config`,
-    `${STORAGE_KEY}_users`,
-    `${STORAGE_KEY}_students`,
-    `${STORAGE_KEY}_classes`,
-    `${STORAGE_KEY}_families`,
-    `${STORAGE_KEY}_buses`,
-    `${STORAGE_KEY}_stops`,
-    `${STORAGE_KEY}_assignments`,
-    `${STORAGE_KEY}_templates`,
-    `${STORAGE_KEY}_vouchers`,
-    `${STORAGE_KEY}_collections`,
-    `${STORAGE_KEY}_transactions`,
-    `${STORAGE_KEY}_banks`,
-    `${STORAGE_KEY}_audit_logs`,
-    `${STORAGE_KEY}_student_account_history`,
-    `${STORAGE_KEY}_locked_months`,
-    `${STORAGE_KEY}_institute`,
-    `${STORAGE_KEY}_prior_month_rule`,
-    `${STORAGE_KEY}_skipped_month_rule`,
-    `${STORAGE_KEY}_voucher_deletion_resolution`,
-    `${STORAGE_KEY}_session_timeout_minutes`,
-    `${STORAGE_KEY}_default_late_fee_rate`,
-    `${STORAGE_KEY}_rounding_multiple`,
-    `${STORAGE_KEY}_rounding_enabled`,
-    `${STORAGE_KEY}_default_due_date_enabled`,
-    `${STORAGE_KEY}_default_due_day`,
-    `${STORAGE_KEY}_due_day_seed_v2`,
-    `${STORAGE_KEY}_voucher_copy_order`,
-    `${STORAGE_KEY}_voucher_default_copies`,
-  ];
-  for (const k of legacyGlobalKeys) {
-    localStorage.removeItem(k);
-  }
-} catch {
-  // ignore in SSR or restricted environments
-}
 
 // Friendly display names for the background sync-failure toast (see the
 // subscribeSyncFailures effect below), keyed by the same collection names
@@ -823,7 +782,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // CSV import), the state arrays it closes over remain stale until the next
   // render — later rows cannot see families or students created by earlier
   // rows, which caused one family to be created per student instead of
-  // grouping siblings under a shared father CNIC. These refs are updated
+  // grouping siblings under a shared father National ID. These refs are updated
   // synchronously by addStudent() and re-synced from state after each flush,
   // giving the loop an always-current view.
   const studentsRef = useRef<Student[]>(students);
@@ -861,7 +820,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => []);
 
+  // Working-set loading: the server sends the oldest-unlocked-month-onward set
+  // (plus each student's latest voucher and every open voucher). Older, locked
+  // history can never change, so it is fetched on demand and retained.
+  const [historyFrom, setHistoryFrom] = useState<string>('');
+  const historyFromRef = useRef<string>('');
+  const historyTenantRef = useRef<string>('');
+  const historyInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const studentHistoryLoadedRef = useRef<Set<string>>(new Set());
+
   const [institute, setInstitute] = useState<InstituteProfile>(() => INITIAL_INSTITUTE);
+  // Keep the shared money formatter on the institution's currency. Done during
+  // render (idempotent) so children format with the right code on first paint.
+  setActiveCurrency(institute.currency);
+
+  // Audit log retention (months; 0 = keep forever). Enforced by the server.
+  const auditRetentionMonths = (() => {
+    const raw = Number((institute as any)?.settings?.auditRetentionMonths);
+    return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 6;
+  })();
+
+  const setAuditRetentionMonths = useCallback((months: number) => {
+    const clean = Number.isFinite(months) && months >= 0 ? Math.min(120, Math.floor(months)) : 6;
+    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, auditRetentionMonths: clean } }));
+    apiUpdateInstituteSettings({ auditRetentionMonths: clean });
+  }, []);
+
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => []);
 
@@ -920,13 +904,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [themeConfig]);
 
   // Audit Trail & Activity Logs
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => []);
 
   const currentUserRef = useRef<User>(currentUser);
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
 
+  // Audit entries are stored and served by the server only. Most mutations are
+  // audited by their own endpoint; the few browser-side operations that have
+  // no such endpoint are forwarded here (operator identity is taken from the
+  // session on the server). Everything else is intentionally a no-op so the
+  // same action is not recorded twice.
   const logAuditEvent = useCallback(
     (
       entry: Omit<
@@ -935,18 +923,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       > &
         Partial<Pick<AuditLogEntry, 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole' | 'timestamp'>>
     ) => {
-      const activeUser = currentUserRef.current;
-      const newLog: AuditLogEntry = {
-        id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        timestamp: entry.timestamp || new Date().toISOString(),
-        operatorId: entry.operatorId || activeUser?.id || 'usr-system',
-        operatorUsername: entry.operatorUsername || activeUser?.username || 'system',
-        operatorName: entry.operatorName || activeUser?.name || 'System Operator',
-        operatorRole: entry.operatorRole || activeUser?.role || 'Admin',
+      const forwarded =
+        entry.actionType === 'fine_modification' ||
+        (entry.actionType === 'system_cleanup' && entry.module === 'System') ||
+        (entry.actionType === 'carry_forward' && entry.actionTitle === 'Carry Forward Operation Reverted');
+      if (!forwarded) return;
+      apiPostAuditEvent({
         actionType: entry.actionType,
         actionTitle: entry.actionTitle,
-        description: entry.description,
         module: entry.module,
+        description: entry.description,
         targetId: entry.targetId,
         targetLabel: entry.targetLabel,
         month: entry.month,
@@ -954,9 +940,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         previousValue: entry.previousValue,
         newValue: entry.newValue,
         metadata: entry.metadata,
-      };
-
-      setAuditLogs((prev) => [newLog, ...prev]);
+      });
     },
     []
   );
@@ -1039,7 +1023,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             date: `${asgn.month}-01`,
             category: 'transport',
             actionTitle: `Transport Added (${monthName})`,
-            description: `Transport assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${asgn.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Net fare: Rs. ${fare}.`,
+            description: `Transport assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${asgn.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Net fare: ${formatCurrency(fare)}.`,
             previousValue: 'No Transport',
             newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
             month: asgn.month,
@@ -1123,10 +1107,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const [lockedMonths, setLockedMonths] = useState<string[]>(() => []);
-
-  const clearAuditLogs = useCallback(() => {
-    setAuditLogs([]);
-  }, []);
+  const [lockedMonthDetails, setLockedMonthDetails] = useState<Record<string, LockedMonthInfo>>({});
 
   const isRemoteUpdateRef = useRef(false);
   const isHydratedRef = useRef(false);
@@ -1145,13 +1126,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(d.templates)) {
       setTemplates(d.templates.length > 0 ? d.templates : INITIAL_GLOBAL_TEMPLATES);
     }
-    if (Array.isArray(d.vouchers)) setVouchers(d.vouchers);
-    if (Array.isArray(d.collections)) setCollections(d.collections);
-    if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+    // Working-set payloads (windowStart present) keep the closed history that was
+    // already loaded on demand: months before the window are locked, so those
+    // rows cannot have changed. A different institution drops it.
+    const ws: string | undefined = typeof d.windowStart === 'string' ? d.windowStart : undefined;
+    if (d.institutionId && historyTenantRef.current !== d.institutionId) {
+      historyTenantRef.current = d.institutionId;
+      historyFromRef.current = '';
+      studentHistoryLoadedRef.current = new Set();
+      historyInFlightRef.current = new Map();
+      setHistoryFrom('');
+    }
+    if (ws !== undefined) {
+      const nextFrom = historyFromRef.current && historyFromRef.current < ws ? historyFromRef.current : ws;
+      historyFromRef.current = nextFrom;
+      setHistoryFrom(nextFrom);
+    }
+    const keepOlder = <T,>(prev: T[], next: T[], isOlder: (x: T) => boolean, idOf: (x: T) => string): T[] => {
+      if (ws === undefined) return next;
+      const have = new Set(next.map(idOf));
+      return [...next, ...prev.filter((x) => isOlder(x) && !have.has(idOf(x)))];
+    };
+    if (Array.isArray(d.vouchers)) setVouchers((prev) => keepOlder<FeeVoucher>(prev, d.vouchers, (v) => v.month < (ws as string), (v) => v.id));
+    if (Array.isArray(d.collections)) {
+      setCollections((prev) => keepOlder<FeeCollection>(prev, d.collections, (c) => String(c.date || '') < `${ws}-01`, (c) => c.id));
+    }
+    if (Array.isArray(d.transactions)) {
+      setTransactions((prev) => keepOlder<PaymentTransaction>(prev, d.transactions, (t) => String(t.month || '') < (ws as string), (t) => t.id));
+    }
     if (Array.isArray(d.bankAccounts)) setBankAccounts(d.bankAccounts);
-    if (Array.isArray(d.auditLogs)) setAuditLogs(d.auditLogs);
     if (Array.isArray(d.studentAccountHistory)) setStudentAccountHistory(d.studentAccountHistory);
     if (Array.isArray(d.lockedMonths)) setLockedMonths(d.lockedMonths);
+    if (Array.isArray(d.lockedMonthDetails)) {
+      const map: Record<string, LockedMonthInfo> = {};
+      for (const x of d.lockedMonthDetails) {
+        if (x?.month) map[x.month] = { notes: x.notes || '', lockedBy: x.lockedBy || '', lockedByName: x.lockedByName || '', lockedAt: x.lockedAt || '' };
+      }
+      setLockedMonthDetails(map);
+    }
     if (d.institute && d.institute.name) {
       setInstitute(d.institute);
       const s = d.institute.settings || {};
@@ -1183,6 +1195,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isRemoteUpdateRef.current = false;
     }, 150);
   }, []);
+
+  // --- On-demand closed history -------------------------------------------
+  const mergeHistory = useCallback(
+    (h: { vouchers: FeeVoucher[]; collections: FeeCollection[]; transactions: PaymentTransaction[] }) => {
+      isRemoteUpdateRef.current = true;
+      const add = <T,>(prev: T[], inc: T[], idOf: (x: T) => string): T[] => {
+        if (inc.length === 0) return prev;
+        const have = new Set(prev.map(idOf));
+        return [...prev, ...inc.filter((x) => !have.has(idOf(x)))];
+      };
+      setVouchers((prev) => add<FeeVoucher>(prev, h.vouchers, (v) => v.id));
+      setCollections((prev) => add<FeeCollection>(prev, h.collections, (c) => c.id));
+      setTransactions((prev) => add<PaymentTransaction>(prev, h.transactions, (t) => t.id));
+      setTimeout(() => {
+        isRemoteUpdateRef.current = false;
+      }, 150);
+    },
+    []
+  );
+
+  const ensureHistoryLoaded = useCallback(
+    async (fromMonth: string): Promise<void> => {
+      const cur = historyFromRef.current;
+      if (!cur || !fromMonth || fromMonth >= cur) return;
+      // Reuse any in-flight load that already reaches this far back.
+      for (const [k, p] of historyInFlightRef.current) {
+        if (k <= fromMonth) {
+          await p;
+          if (fromMonth >= historyFromRef.current) return;
+          break;
+        }
+      }
+      const job = (async () => {
+        const res = await apiFetchHistory({ monthFrom: fromMonth, monthBefore: historyFromRef.current });
+        if (!res.success) {
+          console.warn('[History] Failed to load closed history:', res.error);
+          return;
+        }
+        mergeHistory(res as any);
+        historyFromRef.current = fromMonth;
+        setHistoryFrom(fromMonth);
+      })();
+      historyInFlightRef.current.set(fromMonth, job);
+      try {
+        await job;
+      } finally {
+        historyInFlightRef.current.delete(fromMonth);
+      }
+    },
+    [mergeHistory]
+  );
+
+  const ensureStudentHistory = useCallback(
+    async (studentId: string): Promise<void> => {
+      const cur = historyFromRef.current;
+      if (!cur || !studentId || studentHistoryLoadedRef.current.has(studentId)) return;
+      const res = await apiFetchHistory({ studentId, monthBefore: cur });
+      if (!res.success) {
+        console.warn('[History] Failed to load student history:', res.error);
+        return;
+      }
+      mergeHistory(res as any);
+      studentHistoryLoadedRef.current.add(studentId);
+    },
+    [mergeHistory]
+  );
+
+  // Working on an older month than the loaded window: bring it (and the month
+  // before it, for Previous Balance context) in.
+  useEffect(() => {
+    if (!historyFrom || !activeMonth) return;
+    void ensureHistoryLoaded(getPreviousMonthString(activeMonth));
+  }, [activeMonth, historyFrom, ensureHistoryLoaded]);
 
   // Hydrate directly from authoritative PostgreSQL database on mount & subscribe to live SSE real-time sync
   useEffect(() => {
@@ -1229,9 +1314,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       transactions,
       institute,
       bankAccounts,
-      auditLogs,
       studentAccountHistory,
-      lockedMonths,
     });
   }, [
     users,
@@ -1247,21 +1330,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     transactions,
     institute,
     bankAccounts,
-    auditLogs,
     studentAccountHistory,
-    lockedMonths,
     isAuthenticated,
     currentInstitution?.id,
   ]);
-
-  useEffect(() => {
-    if (isAuthenticated && users.length > 0 && !users.some((u) => u.id === currentUser.id)) {
-      const fallback = users.find((u) => u.role === 'Admin') || users[0];
-      if (fallback) {
-        setCurrentUser(fallback);
-      }
-    }
-  }, [users, currentUser, isAuthenticated]);
 
   // Multi-Tenant Institutional Workspaces & Operator Auth
   const registerInstitution = async (params: {
@@ -1304,7 +1376,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         address: res.institution.address || '',
         phone: res.institution.phone || '',
         email: res.institution.email || '',
-        currency: res.institution.currency || 'PKR',
+        currency: res.institution.currency || DEFAULT_CURRENCY,
         bankName: '',
         bankAccountNo: '',
         bankIban: '',
@@ -1324,7 +1396,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);
-      setAuditLogs([]);
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setInvites([]);
@@ -1339,7 +1410,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         transportAssignments: [],
         templates: freshTemplates,
         bankAccounts: [],
-        lockedMonths: [],
       });
       isHydratedRef.current = true;
 
@@ -1383,7 +1453,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);
-      setAuditLogs([]);
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setInvites([]);
@@ -1426,7 +1495,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     assignedRole: UserRole;
     permissions?: string[];
   }): Promise<{ success: boolean; invite?: OperatorInvite; error?: string }> => {
-    const targetInstId = currentInstitution?.id || 'default';
+    const targetInstId = currentInstitution?.id;
+    if (!targetInstId) return { success: false, error: 'No active institution.' };
     try {
       const res = await apiCreateInvite(targetInstId, {
         fullName: params.fullName,
@@ -1543,7 +1613,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCollections([]);
         setTransactions([]);
         setBankAccounts([]);
-        setAuditLogs([]);
         setStudentAccountHistory([]);
         setLockedMonths([]);
         setInvites([]);
@@ -1597,7 +1666,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCollections([]);
         setTransactions([]);
         setBankAccounts([]);
-        setAuditLogs([]);
         setStudentAccountHistory([]);
         setLockedMonths([]);
         setInvites([]);
@@ -1661,7 +1729,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCollections([]);
     setTransactions([]);
     setBankAccounts([]);
-    setAuditLogs([]);
     setStudentAccountHistory([]);
     setLockedMonths([]);
     setInvites([]);
@@ -1870,7 +1937,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);
-      setAuditLogs([]);
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setUsers([]);
@@ -2046,21 +2112,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const regNo = studentData.regNo?.trim() || `REG-${(1000 + studentSeqRef.current).toString()}`;
     const studentNo = studentData.studentNo?.trim() || regNo;
 
-    // Auto family linking strictly by Father CNIC (reads via refs so a family created
+    // Auto family linking strictly by Father National ID (reads via refs so a family created
     // for an earlier row of the same bulk import or an existing family whose students were
     // deleted is matched and re-adopted instead of duplicated)
     let familyId = studentData.familyId;
-    if (!familyId && studentData.fatherCnic?.trim()) {
-      const rawCnic = studentData.fatherCnic.trim();
-      const normCnic = normalizeCnic(rawCnic);
+    if (!familyId && studentData.fatherNationalId?.trim()) {
+      const rawNationalId = studentData.fatherNationalId.trim();
+      const normNationalId = normalizeNationalId(rawNationalId);
 
       const existingFamily = familiesRef.current.find((f) => {
-        // Direct match on family's own stored fatherCnic
-        if (!f.fatherCnic?.trim()) return false;
-        const fNorm = normalizeCnic(f.fatherCnic);
+        // Direct match on family's own stored fatherNationalId
+        if (!f.fatherNationalId?.trim()) return false;
+        const fNorm = normalizeNationalId(f.fatherNationalId);
         return (
-          f.fatherCnic.trim().toLowerCase() === rawCnic.toLowerCase() ||
-          (normCnic.length >= 5 && fNorm === normCnic)
+          f.fatherNationalId.trim().toLowerCase() === rawNationalId.toLowerCase() ||
+          (normNationalId.length >= 5 && fNorm === normNationalId)
         );
       });
 
@@ -2083,7 +2149,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           );
         }
       } else {
-        // Create auto family strictly with fatherCnic
+        // Create auto family strictly with fatherNationalId
         const newFamId = generateUniqueId('fam');
         familySeqRef.current += 1;
         const newFamNo = `FAM${year}-${familySeqRef.current.toString().padStart(4, '0')}`;
@@ -2092,7 +2158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           familyNo: newFamNo,
           headName: studentData.fatherName,
           contactPhone: studentData.fatherPhone || '',
-          fatherCnic: rawCnic,
+          fatherNationalId: rawNationalId,
           address: '',
           memberStudentIds: [],
         };
@@ -2255,10 +2321,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addStudentAccountHistory({
         studentId: id,
         category: 'discount',
-        actionTitle: `Monthly Discount Updated: Rs. ${target.monthlyDiscount} → Rs. ${updates.monthlyDiscount}`,
-        description: `Monthly fee concession adjusted from Rs. ${target.monthlyDiscount} to Rs. ${updates.monthlyDiscount}.`,
-        previousValue: `Rs. ${target.monthlyDiscount}`,
-        newValue: `Rs. ${updates.monthlyDiscount}`,
+        actionTitle: `Monthly Discount Updated: ${formatCurrency(target.monthlyDiscount)} → ${formatCurrency(updates.monthlyDiscount)}`,
+        description: `Monthly fee concession adjusted from ${formatCurrency(target.monthlyDiscount)} to ${formatCurrency(updates.monthlyDiscount)}.`,
+        previousValue: formatCurrency(target.monthlyDiscount),
+        newValue: formatCurrency(updates.monthlyDiscount),
       });
     }
 
@@ -2342,7 +2408,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...familyData,
       id: generateUniqueId('fam'),
       familyNo,
-      fatherCnic: familyData.fatherCnic?.trim() || '',
+      fatherNationalId: familyData.fatherNationalId?.trim() || '',
     };
     setFamilies((prev) => [...prev, newFamily]);
     familiesRef.current = [...familiesRef.current, newFamily];
@@ -2354,8 +2420,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!perm.allowed) return { success: false, error: perm.error };
 
     const sanitized = { ...updates };
-    if (sanitized.fatherCnic !== undefined) {
-      sanitized.fatherCnic = sanitized.fatherCnic.trim();
+    if (sanitized.fatherNationalId !== undefined) {
+      sanitized.fatherNationalId = sanitized.fatherNationalId.trim();
     }
     setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...sanitized } : f)));
     familiesRef.current = familiesRef.current.map((f) => (f.id === id ? { ...f, ...sanitized } : f));
@@ -2671,7 +2737,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         actionTitle: isDeactivated ? `Transport Deactivated (${monthName})` : `Transport Updated (${monthName})`,
         description: isDeactivated
           ? `Transport route deactivated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}.`
-          : `Transport route updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}). Monthly fare: Rs. ${fare}.`,
+          : `Transport route updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}). Monthly fare: ${formatCurrency(fare)}.`,
         previousValue: existing ? `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})` : undefined,
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
@@ -2694,7 +2760,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
         actionTitle: `Transport Updated (${monthName})`,
-        description: `Transport assignment updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}. Monthly fare: Rs. ${fare}.`,
+        description: `Transport assignment updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'}. Monthly fare: ${formatCurrency(fare)}.`,
         previousValue: `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})`,
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
@@ -2708,7 +2774,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
         actionTitle: `Transport Added (${monthName})`,
-        description: `Transport route assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Monthly fare: Rs. ${fare}.`,
+        description: `Transport route assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${assignment.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Monthly fare: ${formatCurrency(fare)}.`,
         previousValue: 'No Transport',
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
@@ -2951,7 +3017,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (isAll) {
         // Reset all-months global templates to defaults, keeping specific-month global & overrides
         const preserved = prev.filter((t) => (t.studentId || t.classId) || (t.month && t.month !== 'all'));
-        return [...INITIAL_GLOBAL_TEMPLATES, ...preserved];
+        return [...createDefaultGlobalTemplates(currentInstitution?.id || ''), ...preserved];
       } else {
         // Delete the global override for this specific month
         return prev.filter((t) => !(!t.studentId && !t.classId && t.month === month));
@@ -3171,16 +3237,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const resetAllTemplates = (month?: string) => {
+  // Full reset: global defaults back to system defaults and EVERY override removed
+  // (month-specific global templates, class overrides and student overrides, all months).
+  const resetAllTemplates = () => {
     const perm = ensureMutationAllowed('Reset fee templates');
     if (!perm.allowed) return;
 
-    setTemplates((prev) => {
-      if (!month || month === 'all') {
-        return [...INITIAL_GLOBAL_TEMPLATES];
-      }
-      return prev.filter((t) => t.month !== month);
-    });
+    setTemplates(createDefaultGlobalTemplates(currentInstitution?.id || ''));
   };
 
   const deleteTemplate = (id: string) => {
@@ -3226,61 +3289,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return lockedMonths.includes(month);
   };
 
-  const lockMonth = (month: string, notes?: string): { success: boolean; error?: string } => {
+  const refreshLockState = async () => {
+    const fresh = await fetchServerState();
+    if (fresh?.success && fresh.data) {
+      isRemoteUpdateRef.current = true;
+      setLockedMonths(fresh.data.lockedMonths || []);
+      const map: Record<string, LockedMonthInfo> = {};
+      for (const x of fresh.data.lockedMonthDetails || []) {
+        if (x?.month) map[x.month] = { notes: x.notes || '', lockedBy: x.lockedBy || '', lockedByName: x.lockedByName || '', lockedAt: x.lockedAt || '' };
+      }
+      setLockedMonthDetails(map);
+    }
+  };
+
+  const lockMonth = async (month: string, notes?: string): Promise<{ success: boolean; error?: string }> => {
     const perm = ensureMutationAllowed('Lock fee books');
     if (!perm.allowed) return { success: false, error: perm.error };
-
     if (!month) return { success: false, error: 'Month parameter is required' };
-    if (!hasPermission('settings.manage') && currentUser.role !== 'Admin' && !hasPermission('fees.generate')) {
+    if (!hasPermission('defaulters.manage')) {
       return { success: false, error: 'Unauthorized: insufficient permissions to lock fee books.' };
     }
-
-    if (!lockedMonths.includes(month)) {
-      setLockedMonths((prev) => [...prev, month]);
+    const res = await apiLockMonth(month, (notes || '').trim());
+    if (!res.success) {
+      showToast(res.error || 'Failed to lock fee books.', 'error');
+      return res;
     }
-
-    logAuditEvent({
-      actionType: 'month_closure',
-      actionTitle: `Fee Books Locked for ${formatMonthName(month)}`,
-      description: notes || `Fee books for ${formatMonthName(month)} (${month}) were reconciled and locked.`,
-      module: 'Settings',
-      month,
-      metadata: {
-        month,
-        lockedAt: new Date().toISOString(),
-        lockedBy: currentUser.username,
-        notes: notes || '',
-      },
-    });
-
+    await refreshLockState();
     showToast(`Fee books for ${formatMonthName(month)} (${month}) locked successfully.`, 'success');
     return { success: true };
   };
 
-  const unlockMonth = (month: string): { success: boolean; error?: string } => {
+  const unlockMonth = async (month: string, reason: string): Promise<{ success: boolean; error?: string }> => {
     const perm = ensureMutationAllowed('Unlock fee books');
     if (!perm.allowed) return { success: false, error: perm.error };
-
     if (!month) return { success: false, error: 'Month parameter is required' };
-    if (!hasPermission('settings.manage') && currentUser.role !== 'Admin') {
+    if (currentUser.role !== 'Admin') {
       return { success: false, error: 'Unauthorized: only Administrators can unlock historical fee books.' };
     }
-
-    setLockedMonths((prev) => prev.filter((m) => m !== month));
-
-    logAuditEvent({
-      actionType: 'month_closure',
-      actionTitle: `Fee Books Unlocked for ${formatMonthName(month)}`,
-      description: `Administrator unlocked historical fee books for ${formatMonthName(month)} (${month}).`,
-      module: 'Settings',
-      month,
-      metadata: {
-        month,
-        unlockedAt: new Date().toISOString(),
-        unlockedBy: currentUser.username,
-      },
-    });
-
+    if (!reason.trim()) return { success: false, error: 'A reason is required to unlock fee books.' };
+    const res = await apiUnlockMonth(month, reason.trim());
+    if (!res.success) {
+      showToast(res.error || 'Failed to unlock fee books.', 'error');
+      return res;
+    }
+    await refreshLockState();
     showToast(`Fee books for ${formatMonthName(month)} unlocked.`, 'info');
     return { success: true };
   };
@@ -3639,93 +3691,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     };
 
-    if (priorMonthRule === 'recalculate' && newVouchers.length > 0) {
-      const affectedStudentIds = new Set(newVouchers.map((v) => v.studentId));
-
-      setVouchers((prevVouchers) => {
-        let allVouchers = applyCarryMarks([...prevVouchers, ...newVouchers]);
-
-        affectedStudentIds.forEach((studentId) => {
-          // Sort all non-reversed vouchers for this student chronologically
-          const studentVouchers = allVouchers
-            .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
-            .sort((a, b) => a.month.localeCompare(b.month));
-
-          studentVouchers.forEach((v, idx) => {
-            if (idx === 0) return; // First voucher has no prior voucher in sequence
-
-            const prevVoucher = studentVouchers[idx - 1];
-            let newPrevBalance = 0;
-            if (
-              prevVoucher.status === 'Carried' ||
-              prevVoucher.status === 'Issued' ||
-              prevVoucher.status === 'Partial'
-            ) {
-              newPrevBalance = prevVoucher.netDue - prevVoucher.amountPaid;
-            } else if (prevVoucher.status === 'Paid') {
-              const excess = prevVoucher.amountPaid - prevVoucher.netDue;
-              if (excess > 0) newPrevBalance = -excess;
-            }
-
-            const cleanParticulars = v.particulars.filter((p) => p.kind !== 'PreviousBalance');
-            if (newPrevBalance !== 0) {
-              cleanParticulars.push({
-                kind: 'PreviousBalance',
-                label: newPrevBalance >= 0 ? 'Previous Balance Arrears' : 'Advance Payment Credit',
-                amount: newPrevBalance,
-              });
-            }
-
-            const grossTotal = cleanParticulars
-              .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-              .reduce((sum, p) => sum + p.amount, 0);
-
-            const discountTotal = cleanParticulars
-              .filter((p) => p.kind === 'Discount')
-              .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-
-            const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
-            const netDue = roundUpToMultiple(
-              cleanParticulars.reduce((sum, p) => sum + p.amount, 0),
-              mult
-            );
-
-            let status = v.status;
-            if (v.status === 'Carried') {
-              status = 'Carried';
-            } else if (v.amountPaid >= netDue && netDue > 0) {
-              status = 'Paid';
-            } else if (netDue <= 0) {
-              status = 'Paid';
-            } else if (v.amountPaid > 0) {
-              status = 'Partial';
-            } else {
-              status = 'Issued';
-            }
-
-            const updatedVoucher: FeeVoucher = {
-              ...v,
-              particulars: cleanParticulars,
-              grossTotal,
-              discountTotal,
-              prevBalance: newPrevBalance,
-              roundingMultiple: mult,
-              netDue,
-              status,
-            };
-
-            const vIndex = allVouchers.findIndex((item) => item.id === v.id);
-            if (vIndex !== -1) {
-              allVouchers[vIndex] = updatedVoucher;
-            }
-          });
+    // The full result of this generation: new vouchers, Carried marks on the
+    // vouchers they absorb and, under the 'recalculate' rule, the re-derived
+    // vouchers of each affected student from the first new month onward.
+    const buildAfterGeneration = (prevList: FeeVoucher[]): FeeVoucher[] => {
+      let list = applyCarryMarks([...prevList, ...newVouchers]);
+      if (priorMonthRule === 'recalculate' && newVouchers.length > 0) {
+        const fromMonths: Record<string, string> = {};
+        newVouchers.forEach((nv) => {
+          if (!fromMonths[nv.studentId] || nv.month < fromMonths[nv.studentId]) fromMonths[nv.studentId] = nv.month;
         });
+        list = recalculateVouchersSequence(list, Object.keys(fromMonths), fromMonths);
+      }
+      return list;
+    };
 
-        return allVouchers;
-      });
-    } else {
-      setVouchers((prev) => applyCarryMarks([...prev, ...newVouchers]));
+    // Dry run: a locked month must never be changed by generation (a new
+    // voucher in it, a Carried mark on one of its vouchers, or a recalculated
+    // balance). Refuse up front with the months named.
+    const dryAfterGeneration = buildAfterGeneration(vouchers);
+    {
+      const lockedHit = getLockedMonthsTouched(vouchers, dryAfterGeneration, lockedMonths);
+      if (lockedHit.length > 0) {
+        return { success: false, generatedCount: 0, error: formatLockedImpactMessage(lockedHit, 'voucher generation') };
+      }
     }
+    const dryById = new Map(dryAfterGeneration.map((v) => [v.id, v]));
+    const finalNewVouchers = newVouchers.map((nv) => dryById.get(nv.id) || nv);
+    const newIdSet = new Set(newVouchers.map((nv) => nv.id));
+    // Existing vouchers the recalculation re-derived (not new, not marked Carried by the server call).
+    const downstreamUpserts = getChangedVouchers(vouchers, dryAfterGeneration).filter(
+      (v) => !newIdSet.has(v.id) && !priorVouchersToCarry.has(v.id)
+    );
+
+    setVouchers((prev) => buildAfterGeneration(prev));
 
     if (newVouchers.length > 0) {
       // Phase 3: Transactional server-side API call
@@ -3733,9 +3732,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         id,
         targetMonth,
       }));
-      apiGenerateVouchers(newVouchers, carriedPriorList)
+      apiGenerateVouchers(finalNewVouchers, carriedPriorList)
         .then((res) => {
-          if (res?.success) applyServerVoucherNumbers(res.vouchers);
+          if (res?.success) {
+            applyServerVoucherNumbers(res.vouchers);
+            if (downstreamUpserts.length > 0) {
+              apiVoucherBatchUpdate({ voucherUpserts: downstreamUpserts }).then((r2) => {
+                if (!r2.success) reportFinancialSyncFailure('Voucher recalculation', new Error(r2.error || 'Failed to save recalculated vouchers'));
+              }).catch((err) => reportFinancialSyncFailure('Voucher recalculation', err));
+            }
+          }
           else if (res && !res.success) {
             reportFinancialSyncFailure('Voucher generation', new Error(res.error || 'Server rejected voucher generation'));
           }
@@ -3767,6 +3773,126 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, generatedCount: newVouchers.length };
   };
 
+  // Replace (re-issue) a voucher in place: rebuild its particulars from the
+  // current fee templates / transport / discounts, keep its id, number, dates and
+  // recorded payments, and re-derive its status. Later vouchers are recalculated
+  // once, starting at this month and stopping as soon as balances stop changing.
+  // Refused up front if any locked month would change.
+  const reissueVoucher = (
+    voucherId: string
+  ): { success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string } => {
+    const perm = ensureMutationAllowed('Voucher reissue');
+    if (!perm.allowed) return { success: false, error: perm.error };
+    if (!hasPermission('fees.generate')) {
+      return { success: false, error: 'Unauthorized: insufficient permissions to reissue vouchers.' };
+    }
+
+    const voucher = vouchers.find((v) => v.id === voucherId);
+    if (!voucher) return { success: false, error: 'Voucher not found' };
+    if (isMonthLocked(voucher.month)) {
+      return { success: false, error: `Fee books for ${formatMonthName(voucher.month)} are locked. Ask an Admin to unlock the month first.` };
+    }
+    if (voucher.status === 'Reversed') return { success: false, error: 'This voucher is reversed and cannot be reissued.' };
+    if (voucher.status === 'Carried') {
+      return { success: false, error: 'This voucher was carried forward. Undo the carry forward before reissuing it.' };
+    }
+    if (voucher.voucherType === 'Admission') {
+      return { success: false, error: 'Admission vouchers use entered amounts and cannot be rebuilt from templates. Edit its items instead.' };
+    }
+    if (transactions.some((t) => t.voucherId === voucher.id && Number(t.fineAdded) > 0)) {
+      return { success: false, error: 'A payment on this voucher added a late fine. Reverse that collection before reissuing the voucher.' };
+    }
+
+    const student = students.find((s) => s.id === voucher.studentId);
+    if (!student) return { success: false, error: 'Student not found.' };
+    const cls = classes.find((c) => c.id === student.classId);
+
+    const others = vouchers.filter((v) => v.id !== voucherId);
+    const preview = calculateStudentVoucherPreview(
+      student,
+      cls,
+      voucher.month,
+      templates,
+      transportAssignments,
+      stops,
+      others,
+      'recalculate',
+      'allow',
+      roundingEnabled ? roundingMultiple : 1,
+      transportRoundingMultiple
+    );
+    if (preview.isBeforeFirstBillingMonth) {
+      return { success: false, error: preview.firstBillingMonthBlockReason || 'This month is before the student\'s first billing month.' };
+    }
+
+    const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, voucher.roundingMultiple);
+    const netDue = preview.netDue;
+    const status: FeeVoucher['status'] =
+      voucher.amountPaid >= netDue && netDue > 0 ? 'Paid' : voucher.amountPaid > 0 ? 'Partial' : netDue <= 0 ? 'Paid' : 'Issued';
+
+    const rebuilt: FeeVoucher = {
+      ...voucher,
+      particulars: preview.particulars,
+      grossTotal: preview.grossTotal,
+      discountTotal: preview.discountTotal,
+      prevBalance: preview.prevBalance,
+      roundingMultiple: mult,
+      netDue,
+      status,
+    };
+
+    // One recalculation from this month on (stops when balances stop changing).
+    const afterList = recalculateVouchersSequence(
+      vouchers.map((v) => (v.id === voucherId ? rebuilt : v)),
+      [voucher.studentId],
+      { [voucher.studentId]: voucher.month }
+    );
+
+    const lockedHit = getLockedMonthsTouched(vouchers, afterList, lockedMonths);
+    if (lockedHit.length > 0) {
+      return { success: false, error: formatLockedImpactMessage(lockedHit, 'reissue') };
+    }
+
+    const changed = getChangedVouchers(vouchers, afterList);
+    if (changed.length === 0) {
+      return { success: true, voucher, changedCount: 0 };
+    }
+
+    setVouchers((prev) => {
+      const byId = new Map(changed.map((v) => [v.id, v]));
+      return prev.map((v) => byId.get(v.id) || v);
+    });
+
+    apiVoucherBatchUpdate({ voucherUpserts: changed })
+      .then((res) => {
+        if (!res.success) reportFinancialSyncFailure('Voucher reissue', new Error(res.error || 'Failed to save reissued voucher'));
+      })
+      .catch((err) => reportFinancialSyncFailure('Voucher reissue', err));
+
+    const final = afterList.find((v) => v.id === voucherId) || rebuilt;
+    logAuditEvent({
+      actionType: 'voucher_edit',
+      actionTitle: 'Voucher Reissued',
+      description: `Voucher ${voucher.voucherNo} for ${student.name} (${voucher.month}) was rebuilt from current fee settings: Net Due ${formatCurrency(voucher.netDue)} → ${formatCurrency(final.netDue)}${changed.length > 1 ? `; ${changed.length - 1} later voucher(s) recalculated` : ''}.`,
+      module: 'Vouchers',
+      targetId: voucher.voucherNo,
+      targetLabel: `${student.name} (${student.regNo})`,
+      month: voucher.month,
+      amount: final.netDue,
+      previousValue: voucher.netDue,
+      newValue: final.netDue,
+      metadata: {
+        voucherId: voucher.id,
+        studentId: voucher.studentId,
+        oldNetDue: voucher.netDue,
+        newNetDue: final.netDue,
+        recalculatedVouchers: changed.length - 1,
+      },
+    });
+
+    return { success: true, voucher: final, changedCount: changed.length };
+  };
+
   // Update Voucher Particulars & Recalculate Totals
   const updateVoucherParticulars = (
     voucherId: string,
@@ -3777,6 +3903,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
+    if (isMonthLocked(voucher.month)) {
+      return { success: false, error: `Fee books for ${formatMonthName(voucher.month)} are locked. Ask an Admin to unlock the month first.` };
+    }
     if (voucher.status === 'Reversed') {
       return { success: false, error: 'This voucher is reversed and cannot be modified.' };
     }
@@ -3847,7 +3976,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logAuditEvent({
         actionType: 'fine_modification',
         actionTitle: fineDiff > 0 ? 'Manual Late Fine Added/Increased' : 'Manual Fine Reduced/Waived',
-        description: `Manual fine adjustment of ${fineDiff > 0 ? '+' : ''}Rs ${fineDiff.toLocaleString()} (from Rs ${oldFine.toLocaleString()} to Rs ${newFine.toLocaleString()}) on voucher ${voucher.voucherNo} for ${student?.name || 'Unknown'}.`,
+        description: `Manual fine adjustment of ${fineDiff > 0 ? '+' : ''}${formatCurrency(fineDiff)} (from ${formatCurrency(oldFine)} to ${formatCurrency(newFine)}) on voucher ${voucher.voucherNo} for ${student?.name || 'Unknown'}.`,
         module: 'Vouchers',
         targetId: voucher.voucherNo,
         targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
@@ -3869,7 +3998,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logAuditEvent({
         actionType: 'voucher_edit',
         actionTitle: 'Voucher Particulars Updated',
-        description: `Fee particulars revised for voucher ${voucher.voucherNo} (${cleanParticulars.length} items, Net Due: Rs ${netDue.toLocaleString()}) for ${student?.name || 'Unknown'}.`,
+        description: `Fee particulars revised for voucher ${voucher.voucherNo} (${cleanParticulars.length} items, Net Due: ${formatCurrency(netDue)}) for ${student?.name || 'Unknown'}.`,
         module: 'Vouchers',
         targetId: voucher.voucherNo,
         targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
@@ -3903,6 +4032,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const voucher = vouchers.find((v) => v.id === voucherId);
     if (!voucher) return { success: false, error: 'Voucher not found' };
+    if (isMonthLocked(voucher.month)) {
+      return { success: false, error: `Fee books for ${formatMonthName(voucher.month)} are locked. Payments cannot be recorded until an Admin unlocks the month.` };
+    }
     if (voucher.status === 'Reversed') {
       return { success: false, error: 'This voucher has been reversed and cannot accept payments.' };
     }
@@ -4051,7 +4183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logAuditEvent({
         actionType: 'fine_modification',
         actionTitle: fineDiff > 0 ? 'Late Fine Added at Collection' : 'Fine Waived/Reduced at Collection',
-        description: `Fine adjusted by ${fineDiff > 0 ? '+' : ''}Rs ${fineDiff.toLocaleString()} (from Rs ${originalFine.toLocaleString()} to Rs ${newFine.toLocaleString()}) during payment collection for voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}).`,
+        description: `Fine adjusted by ${fineDiff > 0 ? '+' : ''}${formatCurrency(fineDiff)} (from ${formatCurrency(originalFine)} to ${formatCurrency(newFine)}) during payment collection for voucher ${voucher.voucherNo} (${student?.name || 'Unknown'}).`,
         module: 'Collections',
         targetId: voucher.voucherNo,
         targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
@@ -4073,7 +4205,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAuditEvent({
       actionType: 'collection_payment',
       actionTitle: 'Fee Payment Received',
-      description: `Collected fee payment of Rs ${amount.toLocaleString()} via ${paymentMode} for student ${student?.name || 'Unknown'} (Voucher ${voucher.voucherNo}, Txn #${txnNo}).`,
+      description: `Collected fee payment of ${formatCurrency(amount)} via ${paymentMode} for student ${student?.name || 'Unknown'} (Voucher ${voucher.voucherNo}, Txn #${txnNo}).`,
       module: 'Collections',
       targetId: txnNo,
       targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
@@ -4380,10 +4512,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logAuditEvent({
         actionType: 'bulk_collection',
         actionTitle: 'Bulk CSV Fee Collection Batch Imported',
-        description: `Imported bulk fee payments for ${successCount} vouchers totaling Rs ${batchTotal.toLocaleString()} for billing month ${month}.`,
+        description: `Imported bulk fee payments for ${successCount} vouchers totaling ${formatCurrency(batchTotal)} for billing month ${month}.`,
         module: 'Collections',
         targetId: collectionNo,
-        targetLabel: `${successCount} payments • Rs ${batchTotal.toLocaleString()}`,
+        targetLabel: `${successCount} payments • ${formatCurrency(batchTotal)}`,
         month,
         amount: batchTotal,
         metadata: {
@@ -4403,7 +4535,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logAuditEvent({
           actionType: 'fine_modification',
           actionTitle: 'Bulk Collection Late Fines Applied',
-          description: `Applied Rs ${totalFineAdded.toLocaleString()} in manual/custom late fines across ${fineTxns.length} records during CSV bulk collection import.`,
+          description: `Applied ${formatCurrency(totalFineAdded)} in manual/custom late fines across ${fineTxns.length} records during CSV bulk collection import.`,
           module: 'Collections',
           targetId: collectionNo,
           targetLabel: `${fineTxns.length} fine modifications`,
@@ -4437,6 +4569,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const perm = ensureMutationAllowed('Bulk carry forward defaulters');
     if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error || 'Blocked'] };
     if (!voucherIds || voucherIds.length === 0) return { success: true, successCount: 0, errors: [] };
+    {
+      const lockedSrc = vouchers.find((v) => voucherIds.includes(v.id) && isMonthLocked(v.month));
+      if (lockedSrc || isMonthLocked(targetMonth)) {
+        const m = lockedSrc ? lockedSrc.month : targetMonth;
+        const err = `Fee books for ${formatMonthName(m)} are locked. Carry forward is blocked until an Admin unlocks the month.`;
+        return { success: false, successCount: 0, errors: [err] };
+      }
+    }
 
     startActionLock(
       'Carrying Forward Defaulter Balances',
@@ -4521,6 +4661,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!voucher) {
       return { success: false, error: 'Voucher not found.' };
     }
+    {
+      const [cy, cm] = voucher.month.split('-').map(Number);
+      const nextMonth = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, '0')}`;
+      const lockedM = isMonthLocked(voucher.month) ? voucher.month : isMonthLocked(nextMonth) ? nextMonth : '';
+      if (lockedM) {
+        return { success: false, error: `Fee books for ${formatMonthName(lockedM)} are locked. Undoing a carry forward is blocked until an Admin unlocks the month.` };
+      }
+    }
     if (voucher.status !== 'Carried') {
       return { success: false, error: `Voucher ${voucher.voucherNo} is not in 'Carried' status and cannot be undone.` };
     }
@@ -4557,7 +4705,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     });
 
-    updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId]);
+    updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId], voucher.month);
 
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
@@ -4594,9 +4742,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // server's atomic carry-forward uses exactly the same rules.
   const recalculateVouchersSequence = (
     allVouchers: FeeVoucher[],
-    affectedStudentIds: string[]
+    affectedStudentIds: string[],
+    fromMonth?: string | Record<string, string>
   ): FeeVoucher[] =>
-    recalculateVoucherChain(allVouchers, affectedStudentIds, { roundingEnabled, roundingMultiple });
+    recalculateVoucherChain(allVouchers, affectedStudentIds, { roundingEnabled, roundingMultiple }, fromMonth);
 
   const getDownstreamVouchersInfo = (ids: string[]) => {
     const selected = vouchers.filter((v) => ids.includes(v.id));
@@ -4651,6 +4800,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const effectiveMode = mode || voucherDeletionResolution;
     const target = vouchers.find((v) => v.id === id);
     if (!target) return { success: false, error: 'Voucher not found' };
+    if (isMonthLocked(target.month)) {
+      return { success: false, error: `Fee books for ${formatMonthName(target.month)} are locked. Vouchers cannot be deleted until an Admin unlocks the month.` };
+    }
 
     if (effectiveMode === 'manual') {
       const downstreamInfo = getDownstreamVouchersInfo([id]);
@@ -4671,6 +4823,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (v) => v.studentId === target.studentId && v.month > target.month && v.status !== 'Reversed'
       );
       idsToDelete = [id, ...futureVouchers.map((v) => v.id)];
+    }
+
+    // Dry run: work out exactly which vouchers this deletion (and the auto-heal
+    // recalculation) would change, and refuse up front if any is in a locked
+    // month. Recalculation starts at each student's earliest deleted month and
+    // stops as soon as balances stop changing.
+    const healFromMonths: Record<string, string> = {};
+    vouchers.forEach((v) => {
+      if (idsToDelete.includes(v.id) && (!healFromMonths[v.studentId] || v.month < healFromMonths[v.studentId])) {
+        healFromMonths[v.studentId] = v.month;
+      }
+    });
+    const baselineRemaining = vouchers.filter((v) => !idsToDelete.includes(v.id));
+    const dryRemaining =
+      effectiveMode === 'auto-heal'
+        ? recalculateVouchersSequence(baselineRemaining, affectedStudentIds, healFromMonths)
+        : baselineRemaining;
+    const lockedHit = getLockedMonthsTouched(vouchers, dryRemaining, lockedMonths);
+    if (lockedHit.length > 0) {
+      return { success: false, error: formatLockedImpactMessage(lockedHit, 'deletion') };
     }
 
     const voucherTxns = transactions.filter((t) => idsToDelete.includes(t.voucherId));
@@ -4732,10 +4904,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     let recalculatedRemaining: FeeVoucher[] = [];
+    let baselineForUpsert: FeeVoucher[] = [];
     setVouchers((prev) => {
       let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
+      baselineForUpsert = remaining;
       if (effectiveMode === 'auto-heal') {
-        remaining = recalculateVouchersSequence(remaining, affectedStudentIds);
+        remaining = recalculateVouchersSequence(remaining, affectedStudentIds, healFromMonths);
       }
       recalculatedRemaining = remaining;
       return remaining;
@@ -4748,7 +4922,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // persisted atomically; see apiVoucherBatchUpdate's server-side comment.
     apiVoucherBatchUpdate({
       voucherUpserts:
-        effectiveMode === 'auto-heal' ? recalculatedRemaining.filter((v) => affectedStudentIds.includes(v.studentId)) : [],
+        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, recalculatedRemaining) : [],
       deleteVoucherIds: idsToDelete,
       deleteTransactionIds: voucherTxnIds,
       collectionUpdates: collectionUpdatesForApi,
@@ -4761,7 +4935,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAuditEvent({
       actionType: 'voucher_deletion',
       actionTitle: 'Fee Voucher Deleted',
-      description: `Permanently deleted voucher ${target.voucherNo} for ${student?.name || 'Unknown'} (Billing Month: ${target.month}, Net Due: Rs ${target.netDue.toLocaleString()}). Resolution mode: ${effectiveMode}.`,
+      description: `Permanently deleted voucher ${target.voucherNo} for ${student?.name || 'Unknown'} (Billing Month: ${target.month}, Net Due: ${formatCurrency(target.netDue)}). Resolution mode: ${effectiveMode}.`,
       module: 'Vouchers',
       targetId: target.voucherNo,
       targetLabel: student ? `${student.name} (${student.regNo})` : target.voucherNo,
@@ -4819,6 +4993,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         });
       });
+    }
+
+    // Dry run: work out exactly which vouchers this deletion (and the auto-heal
+    // recalculation) would change, and refuse up front if any is in a locked
+    // month. Recalculation starts at each student's earliest deleted month and
+    // stops as soon as balances stop changing.
+    const healFromMonths: Record<string, string> = {};
+    vouchers.forEach((v) => {
+      if (idsToDelete.includes(v.id) && (!healFromMonths[v.studentId] || v.month < healFromMonths[v.studentId])) {
+        healFromMonths[v.studentId] = v.month;
+      }
+    });
+    const baselineRemaining = vouchers.filter((v) => !idsToDelete.includes(v.id));
+    const dryRemaining =
+      effectiveMode === 'auto-heal'
+        ? recalculateVouchersSequence(baselineRemaining, affectedStudentIds, healFromMonths)
+        : baselineRemaining;
+    const lockedHit = getLockedMonthsTouched(vouchers, dryRemaining, lockedMonths);
+    if (lockedHit.length > 0) {
+      return { success: false, deletedCount: 0, error: formatLockedImpactMessage(lockedHit, 'deletion') };
     }
 
     const voucherTxns = transactions.filter((t) => idsToDelete.includes(t.voucherId));
@@ -4881,10 +5075,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     let recalculatedRemaining: FeeVoucher[] = [];
+    let baselineForUpsert: FeeVoucher[] = [];
     setVouchers((prev) => {
       let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
+      baselineForUpsert = remaining;
       if (effectiveMode === 'auto-heal') {
-        remaining = recalculateVouchersSequence(remaining, affectedStudentIds);
+        remaining = recalculateVouchersSequence(remaining, affectedStudentIds, healFromMonths);
       }
       recalculatedRemaining = remaining;
       return remaining;
@@ -4892,7 +5088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     apiVoucherBatchUpdate({
       voucherUpserts:
-        effectiveMode === 'auto-heal' ? recalculatedRemaining.filter((v) => affectedStudentIds.includes(v.studentId)) : [],
+        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, recalculatedRemaining) : [],
       deleteVoucherIds: idsToDelete,
       deleteTransactionIds: voucherTxnIds,
       collectionUpdates: collectionUpdatesForApi,
@@ -4927,6 +5123,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const colTxns = transactions.filter(
       (t) => t.collectionId === id || (colToDelete && t.collectionId === colToDelete.collectionNo)
     );
+    {
+      const lockedV = colTxns
+        .map((t) => vouchers.find((v) => v.id === t.voucherId))
+        .find((v) => v && isMonthLocked(v.month));
+      if (lockedV) {
+        showToast(`Fee books for ${formatMonthName(lockedV.month)} are locked. Collections cannot be reversed until an Admin unlocks the month.`, 'error');
+        return;
+      }
+    }
     if (colTxns.length === 0) {
       setCollections((prev) => prev.filter((c) => c.id !== id));
       apiVoucherBatchUpdate({ deleteCollectionIds: [id] }).then((res) => {
@@ -4954,16 +5159,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    setCollections((prev) => prev.filter((c) => c.id !== id));
-    setTransactions((prev) =>
-      prev.filter(
-        (t) => t.collectionId !== id && (!colToDelete || t.collectionId !== colToDelete.collectionNo)
-      )
-    );
-
-    // Recalculate vouchers with payment deduction and fine reversal
-    let recalculatedVouchers: FeeVoucher[] = [];
-    setVouchers((prev) => {
+    // Recalculate vouchers with payment deduction and fine reversal. Kept as a
+    // pure function so it can be dry-run against the current snapshot (to refuse
+    // up front when a locked month would change) and then applied for real.
+    const reverseCollectionOn = (prev: FeeVoucher[]): FeeVoucher[] => {
       let updatedVouchers = prev.map((v) => {
         const deduct = deductions.get(v.id) || 0;
         const fineToRevert = fineReversals.get(v.id) || 0;
@@ -5026,13 +5225,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       });
 
-      // Recalculate downstream student voucher sequence if previous balance / arrears are affected
+      // Recalculate downstream student voucher sequence if previous balance / arrears are affected.
+      // Each student's walk starts at their earliest reversed voucher's month
+      // and stops once balances stop changing.
       if (affectedStudentIds.size > 0) {
-        updatedVouchers = recalculateVouchersSequence(updatedVouchers, Array.from(affectedStudentIds));
+        const reverseFrom: Record<string, string> = {};
+        prev.forEach((pv) => {
+          if (deductions.has(pv.id) || fineReversals.has(pv.id)) {
+            if (!reverseFrom[pv.studentId] || pv.month < reverseFrom[pv.studentId]) reverseFrom[pv.studentId] = pv.month;
+          }
+        });
+        updatedVouchers = recalculateVouchersSequence(updatedVouchers, Array.from(affectedStudentIds), reverseFrom);
       }
 
-      recalculatedVouchers = updatedVouchers;
       return updatedVouchers;
+    };
+
+    {
+      const dry = reverseCollectionOn(vouchers);
+      const lockedHit = getLockedMonthsTouched(vouchers, dry, lockedMonths);
+      if (lockedHit.length > 0) {
+        showToast(formatLockedImpactMessage(lockedHit, 'collection reversal'), 'error', 9000);
+        return;
+      }
+    }
+
+    setCollections((prev) => prev.filter((c) => c.id !== id));
+    setTransactions((prev) =>
+      prev.filter(
+        (t) => t.collectionId !== id && (!colToDelete || t.collectionId !== colToDelete.collectionNo)
+      )
+    );
+
+    let recalculatedVouchers: FeeVoucher[] = [];
+    let preReversalVouchers: FeeVoucher[] = [];
+    setVouchers((prev) => {
+      preReversalVouchers = prev;
+      recalculatedVouchers = reverseCollectionOn(prev);
+      return recalculatedVouchers;
     });
 
     // Persist: delete the collection + its transactions, and upsert every
@@ -5042,7 +5272,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // full chain is simplest and safe given per-student voucher counts are
     // naturally small).
     apiVoucherBatchUpdate({
-      voucherUpserts: recalculatedVouchers.filter((v) => affectedStudentIds.has(v.studentId)),
+      voucherUpserts: getChangedVouchers(preReversalVouchers, recalculatedVouchers),
       deleteTransactionIds: colTxns.map((t) => t.id),
       deleteCollectionIds: [id],
     }).then((res) => {
@@ -5060,10 +5290,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAuditEvent({
       actionType: 'collection_reversal',
       actionTitle: 'Fee Collection Record Deleted & Reversed',
-      description: `Reversed collection ${colToDelete?.collectionNo || id} totaling Rs ${totalReverted.toLocaleString()} (${colTxns.length} transactions deducted from student vouchers).`,
+      description: `Reversed collection ${colToDelete?.collectionNo || id} totaling ${formatCurrency(totalReverted)} (${colTxns.length} transactions deducted from student vouchers).`,
       module: 'Collections',
       targetId: colToDelete?.collectionNo || id,
-      targetLabel: `${colTxns.length} txns • Rs ${totalReverted.toLocaleString()}`,
+      targetLabel: `${colTxns.length} txns • ${formatCurrency(totalReverted)}`,
       amount: totalReverted,
       metadata: {
         collectionId: id,
@@ -5079,7 +5309,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logAuditEvent({
         actionType: 'fine_modification',
         actionTitle: 'Collection Late Fines Reverted',
-        description: `Reverted Rs ${totalFinesReverted.toLocaleString()} in late fines across ${fineReversals.size} vouchers upon deleting collection ${colToDelete?.collectionNo || id}.`,
+        description: `Reverted ${formatCurrency(totalFinesReverted)} in late fines across ${fineReversals.size} vouchers upon deleting collection ${colToDelete?.collectionNo || id}.`,
         module: 'Collections',
         targetId: colToDelete?.collectionNo || id,
         targetLabel: `${fineReversals.size} voucher fine reversals`,
@@ -5197,7 +5427,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options.vouchers) {
       recordsClearedCount += vouchers.length;
       setVouchers([]);
-      setLockedMonths([]);
       clearedTables.push(`Fee Vouchers (${vouchers.length} records)`);
     }
 
@@ -5364,14 +5593,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // persistence call too, or the data would only disappear locally and
     // reappear on the next refresh.
     if (options.vouchers || options.collections) {
+      // The browser only holds the working set, so list every record on the
+      // server before purging — otherwise closed history would survive.
+      const allIds = await apiFetchAllFinancialIds();
+      if (!allIds.success) {
+        persistenceFailures.push(`Fee Vouchers / Collections & Transactions (${allIds.error || 'could not list all records'})`);
+      }
+      const uniq = (a: string[], b: string[]) => Array.from(new Set([...a, ...b]));
       syncJobs.push(
         apiVoucherBatchUpdate({
-          deleteVoucherIds: options.vouchers ? vouchers.map((v) => v.id) : [],
-          deleteTransactionIds: options.collections ? transactions.map((t) => t.id) : [],
-          deleteCollectionIds: options.collections ? collections.map((c) => c.id) : [],
+          deleteVoucherIds: options.vouchers ? uniq(vouchers.map((v) => v.id), allIds.voucherIds) : [],
+          deleteTransactionIds: options.collections ? uniq(transactions.map((t) => t.id), allIds.transactionIds) : [],
+          deleteCollectionIds: options.collections ? uniq(collections.map((c) => c.id), allIds.collectionIds) : [],
+        }).then((r) => {
+          if (!r.success) throw new Error(r.error || 'Cleanup rejected by server.');
         }).catch((err) => {
           reportFinancialSyncFailure('Data cleanup', err);
-          persistenceFailures.push('Fee Vouchers / Collections & Transactions');
+          persistenceFailures.push(`Fee Vouchers / Collections & Transactions (${err?.message || 'failed'})`);
         })
       );
     }
@@ -5540,6 +5778,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         generateAdmissionVoucher,
         collectVoucherPayment,
         updateVoucherParticulars,
+        reissueVoucher,
         bulkCsvCollection,
         bulkCarryForwardDefaulters,
         undoCarryForwardVoucher,
@@ -5591,13 +5830,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setDefaultBankAccount,
         getMonthClosureStatus,
         lockedMonths,
+        lockedMonthDetails,
         lockMonth,
         unlockMonth,
+        historyFrom,
+        ensureHistoryLoaded,
+        ensureStudentHistory,
         isMonthLocked,
         cleanupDatabaseTables,
-        auditLogs,
         logAuditEvent,
-        clearAuditLogs,
+        auditRetentionMonths,
+        setAuditRetentionMonths,
         studentAccountHistory,
         addStudentAccountHistory,
         getStudentAccountHistory,

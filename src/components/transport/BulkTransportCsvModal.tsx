@@ -1,6 +1,8 @@
 import React from 'react';
 import { SchoolClass, Student, TransportAssignment, TransportBus, TransportStop } from '../../types';
 import { formatCurrency, formatMonthName } from '../../utils/feeMath';
+import { SortableTh } from '../SortableTh';
+import { useSortState, sortRows } from '../../hooks/useTableSort';
 import { Upload, X, Check, AlertCircle, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 
 export interface BulkTransportPreviewRow {
@@ -64,6 +66,7 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
   onToggleSelectRow,
   onCommit,
 }) => {
+  const { sort: rowSort, toggleSort: toggleRowSort } = useSortState();
   if (!show) return null;
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -173,12 +176,23 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
               const totalIssues = duplicateCount + invalidCount;
               const totalEstRevenue = validRows.filter((r) => r.selected).reduce((sum, r) => sum + r.effectiveFare, 0);
 
-              const filteredRows = rows.filter((r) => {
+              const filteredUnsorted = rows.filter((r) => {
                 if (previewFilter === 'valid') return r.isValid && !r.isDuplicateInCsv;
                 if (previewFilter === 'invalid') return !r.isValid || r.isDuplicateInCsv;
                 if (previewFilter === 'duplicates') return r.isDuplicateInCsv;
                 if (previewFilter === 'updates') return r.isValid && !r.isDuplicateInCsv && !!r.existingAsgn;
                 return true;
+              });
+              const filteredRows = sortRows<BulkTransportPreviewRow>(filteredUnsorted, rowSort, {
+                selected: (r) => r.selected && r.isValid && !r.isDuplicateInCsv,
+                student: (r) => r.student?.name || r.regNo,
+                class: (r) => r.studentClass?.name,
+                busStop: (r) => `${r.bus?.busNumber || r.busInput} ${r.stop?.name || r.stopInput}`,
+                trip: (r) => r.tripType,
+                days: (r) => r.daysCharged,
+                discount: (r) => r.discount,
+                fare: (r) => (r.isValid && !r.isDuplicateInCsv ? r.effectiveFare : null),
+                status: (r) => r.errorMsg || (r.existingAsgn ? 'Updates Existing' : 'New Assignment'),
               });
 
               return (
@@ -310,15 +324,15 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                         <tr>
-                          <th className="p-3 w-10 text-center">Import</th>
-                          <th className="p-3">Student (Reg #)</th>
-                          <th className="p-3">Class</th>
-                          <th className="p-3">Bus & Stop</th>
-                          <th className="p-3 text-center">Trip</th>
-                          <th className="p-3 text-center">Days</th>
-                          <th className="p-3 text-right">Discount</th>
-                          <th className="p-3 text-right">Net Fare</th>
-                          <th className="p-3">Status</th>
+                          <SortableTh label="Import" sortKey="selected" sort={rowSort} onSort={toggleRowSort} className="w-10 text-center" />
+                          <SortableTh label="Student (Reg #)" sortKey="student" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Class" sortKey="class" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Bus & Stop" sortKey="busStop" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Trip" sortKey="trip" sort={rowSort} onSort={toggleRowSort} className="text-center" />
+                          <SortableTh label="Days" sortKey="days" sort={rowSort} onSort={toggleRowSort} className="text-center" />
+                          <SortableTh label="Discount" sortKey="discount" sort={rowSort} onSort={toggleRowSort} className="text-right" />
+                          <SortableTh label="Net Fare" sortKey="fare" sort={rowSort} onSort={toggleRowSort} className="text-right" />
+                          <SortableTh label="Status" sortKey="status" sort={rowSort} onSort={toggleRowSort} />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">

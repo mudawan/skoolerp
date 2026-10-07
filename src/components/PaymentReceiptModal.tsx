@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { PaymentReceiptData, ParticularKind, VoucherItem } from '../types';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatMonthName, numberToWords } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, numberToWords, getCurrencyCode, formatAmount } from '../utils/feeMath';
 import { exportPaymentReceiptPdf, printPaymentReceiptPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -220,7 +220,7 @@ Date: ${txn?.date}
 Student: ${student?.name} (Reg: ${student?.regNo})
 Class: ${schoolClass?.name || 'General'}
 Voucher #: ${voucher?.voucherNo} (${formatMonthName(voucher?.month || '')})
-Amount Paid: Rs. ${txn?.amount?.toLocaleString('en-PK')}
+Amount Paid: ${formatCurrency(txn?.amount || 0)}
 Payment Mode: ${paymentModeText(txn?.paymentMode)}${txn?.referenceNo ? ` [Ref: ${txn.referenceNo}]` : ''}
 Status: ${isFullyPaid ? 'FULLY PAID' : `PARTIAL (Remaining: ${formatCurrency(remaining || 0)})`}
 Amount in Words: ${numberToWords(txn?.amount || 0)}
@@ -333,11 +333,11 @@ Thank you for your payment!`;
 
         {/* Fee Breakdown Table */}
         <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 text-xs">
-          <table className="w-full text-left">
+          <table data-no-resize className="w-full text-left">
             <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px] tracking-wider border-b border-slate-200">
               <tr>
                 <th className="py-1.5 px-3">Fee Head / Description</th>
-                <th className="py-1.5 px-3 text-right">Amount (PKR)</th>
+                <th className="py-1.5 px-3 text-right">Amount ({getCurrencyCode()})</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -484,7 +484,7 @@ Thank you for your payment!`;
           {allParticularsToRender.map((p, idx) => (
             <div key={idx} className="flex justify-between text-[11px]">
               <span className="truncate pr-2">{p.label}</span>
-              <span>{p.amount.toLocaleString('en-PK')}</span>
+              <span>{formatAmount(p.amount)}</span>
             </div>
           ))}
           <div className="flex justify-between font-bold border-t border-slate-300 pt-1 mt-1">
@@ -495,7 +495,7 @@ Thank you for your payment!`;
 
         <div className="border-b border-dashed border-slate-400 pb-2 mb-2 text-center bg-slate-100 p-2 rounded">
           <span className="text-[10px] font-bold block">PAID AMOUNT</span>
-          <span className="text-base font-black font-mono block">Rs. {txn?.amount.toLocaleString('en-PK')}</span>
+          <span className="text-base font-black font-mono block">{formatCurrency(txn?.amount || 0)}</span>
           <span className="text-[9px] block text-slate-600 mt-0.5">{numberToWords(txn?.amount || 0)}</span>
           <div className="mt-1 text-[10px] font-bold">
             {isFullyPaid ? '*** FULLY PAID ***' : `Remaining: ${formatCurrency(remaining)}`}

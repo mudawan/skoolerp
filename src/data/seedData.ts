@@ -32,6 +32,7 @@ export const INITIAL_INSTITUTE: InstituteProfile = {
   email: '',
   website: '',
   regNo: '',
+  currency: 'USD',
   sessionTimeoutMinutes: 10,
 };
 

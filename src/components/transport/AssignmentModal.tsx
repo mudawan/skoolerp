@@ -1,6 +1,6 @@
 import React from 'react';
 import { SchoolClass, Student, TransportAssignment, TransportBus, TransportStop } from '../../types';
-import { formatCurrency, getDaysInMonth } from '../../utils/feeMath';
+import { formatCurrency, getDaysInMonth, getCurrencyCode } from '../../utils/feeMath';
 import { StudentAvatar } from '../StudentAvatar';
 import { Bus, X, Search, Check, ChevronsUpDown, CalendarDays } from 'lucide-react';
 
@@ -477,7 +477,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block font-bold text-slate-700 mb-1">Discount (Rs.)</label>
+                      <label className="block font-bold text-slate-700 mb-1">Discount ({getCurrencyCode()})</label>
                       <input
                         type="number"
                         min="0"
@@ -506,7 +506,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                       <div className="flex justify-between">
                         <span>Discount:</span>
                         <span className={`font-semibold ${discount > 0 ? 'text-rose-600' : 'text-slate-800'}`}>
-                          {discount > 0 ? formatCurrency(-discount) : 'Rs. 0'}
+                          {discount > 0 ? formatCurrency(-discount) : formatCurrency(0)}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -528,7 +528,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                       <span className="text-base font-extrabold text-teal-700">{formatCurrency(calculatedFare)}</span>
                     </div>
                     <div className="text-[9.5px] text-slate-400 font-mono text-center truncate">
-                      ({baseFare} − {discount}) × ({daysAvailed}/{totalDaysInMonth}) × {tripFactor} = Rs. {Math.round(calculatedFare).toLocaleString()}
+                      ({baseFare} − {discount}) × ({daysAvailed}/{totalDaysInMonth}) × {tripFactor} = {formatCurrency(Math.round(calculatedFare))}
                     </div>
                   </div>
                 </div>

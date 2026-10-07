@@ -65,6 +65,7 @@ export interface DatabaseState {
   auditLogs?: any[];
   studentAccountHistory?: any[];
   lockedMonths?: string[];
+  lockedMonthDetails?: { month: string; notes?: string; lockedBy?: string; lockedByName?: string; lockedAt?: string }[];
   systemConfig?: any;
   institution?: DbInstitution;
 }
@@ -238,7 +239,7 @@ export const FAMILY_ENTITY_CONFIG: SimpleEntityConfig = {
     { column: 'family_no', field: 'familyNo', type: 'string' },
     { column: 'head_name', field: 'headName', type: 'string' },
     { column: 'contact_phone', field: 'contactPhone', type: 'string' },
-    { column: 'father_cnic', field: 'fatherCnic', type: 'string' },
+    { column: 'father_national_id', field: 'fatherNationalId', type: 'string' },
     { column: 'address', field: 'address', type: 'string' },
     { column: 'notes', field: 'notes', type: 'string' },
   ],
@@ -312,6 +313,14 @@ export const BANK_ACCOUNT_ENTITY_CONFIG: SimpleEntityConfig = {
     { column: 'is_default', field: 'isDefault', type: 'boolean' },
   ],
 };
+
+/** Every tenant-scoped query must name its institution; there is no implicit default tenant. */
+function requireTenantId(institutionId: string | undefined | null): string {
+  if (!institutionId) {
+    throw new Error('Institution id is required for this operation.');
+  }
+  return institutionId;
+}
 
 class DatabaseService {
   private engine: DbEngineType = 'postgres';
@@ -406,7 +415,7 @@ class DatabaseService {
     };
   }
 
-  public getRevisionInfo(institutionId = 'default'): { revision: number; lastModified: string } {
+  public getRevisionInfo(institutionId: string): { revision: number; lastModified: string } {
     const info = this.revisions.get(institutionId) || {
       revision: this.globalRevision,
       lastModified: new Date().toISOString(),
@@ -414,7 +423,7 @@ class DatabaseService {
     return info;
   }
 
-  public incrementRevision(institutionId = 'default') {
+  public incrementRevision(institutionId: string) {
     this.globalRevision += 1;
     const current = this.revisions.get(institutionId) || { revision: 1, lastModified: new Date().toISOString() };
     const updated = {
@@ -538,7 +547,7 @@ class DatabaseService {
           phone VARCHAR(64),
           email VARCHAR(128),
           website VARCHAR(255),
-          currency VARCHAR(16) DEFAULT 'PKR',
+          currency VARCHAR(16) DEFAULT 'USD',
           logo_url TEXT,
           status VARCHAR(32) DEFAULT 'active',
           settings JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -555,14 +564,13 @@ class DatabaseService {
           full_name VARCHAR(128) NOT NULL,
           role VARCHAR(32) NOT NULL,
           permissions JSONB DEFAULT '[]'::jsonb,
+          preferences JSONB DEFAULT '{}'::jsonb,
           status VARCHAR(32) DEFAULT 'active',
           created_by VARCHAR(64),
           last_login_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
-
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}'::jsonb;
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_institution_username ON users (institution_id, LOWER(username));
 
@@ -615,13 +623,12 @@ class DatabaseService {
           family_no VARCHAR(64),
           head_name VARCHAR(255) NOT NULL,
           contact_phone VARCHAR(64),
-          father_cnic VARCHAR(64),
+          father_national_id VARCHAR(64),
           address TEXT,
           notes TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
-        ALTER TABLE families ADD COLUMN IF NOT EXISTS father_cnic VARCHAR(64);
 
         CREATE TABLE IF NOT EXISTS students (
           id VARCHAR(64) PRIMARY KEY,
@@ -638,15 +645,15 @@ class DatabaseService {
           photo_url TEXT,
           dob VARCHAR(32),
           gender VARCHAR(16),
-          b_form_no VARCHAR(64),
+          student_national_id VARCHAR(64),
           family_id VARCHAR(64),
           address TEXT,
           father_name VARCHAR(255),
-          father_cnic VARCHAR(64),
+          father_national_id VARCHAR(64),
           father_phone VARCHAR(64),
           father_occupation VARCHAR(255),
           mother_name VARCHAR(255),
-          mother_cnic VARCHAR(64),
+          mother_national_id VARCHAR(64),
           mother_phone VARCHAR(64),
           documents JSONB NOT NULL DEFAULT '{}'::jsonb,
           status VARCHAR(32) NOT NULL DEFAULT 'Active',
@@ -710,7 +717,6 @@ class DatabaseService {
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
-        ALTER TABLE fee_templates ALTER COLUMN id TYPE VARCHAR(128);
 
         CREATE TABLE IF NOT EXISTS vouchers (
           id VARCHAR(64) PRIMARY KEY,
@@ -836,6 +842,9 @@ class DatabaseService {
           institution_id VARCHAR(64) NOT NULL,
           month VARCHAR(16) NOT NULL,
           locked_at TIMESTAMPTZ DEFAULT NOW(),
+          locked_by VARCHAR(128),
+          locked_by_name VARCHAR(255),
+          notes TEXT,
           PRIMARY KEY (institution_id, month)
         );
 
@@ -848,13 +857,30 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_classes_institution ON classes(institution_id);
         CREATE INDEX IF NOT EXISTS idx_families_institution ON families(institution_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution ON students(institution_id);
+        -- One-time column renames (national-ID terminology). No-ops on fresh databases.
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'father_cnic') THEN
+            ALTER TABLE students RENAME COLUMN father_cnic TO father_national_id;
+          END IF;
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'mother_cnic') THEN
+            ALTER TABLE students RENAME COLUMN mother_cnic TO mother_national_id;
+          END IF;
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'b_form_no') THEN
+            ALTER TABLE students RENAME COLUMN b_form_no TO student_national_id;
+          END IF;
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'families' AND column_name = 'father_cnic') THEN
+            ALTER TABLE families RENAME COLUMN father_cnic TO father_national_id;
+          END IF;
+        END $$;
+
         CREATE INDEX IF NOT EXISTS idx_students_institution_class ON students(institution_id, class_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_family ON students(institution_id, family_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_status ON students(institution_id, status);
         CREATE INDEX IF NOT EXISTS idx_students_search_trgm ON students USING GIN (
           (coalesce(name,'') || ' ' || coalesce(reg_no,'') || ' ' || coalesce(father_name,'') || ' ' ||
            coalesce(father_phone,'') || ' ' || coalesce(mother_phone,'') || ' ' || coalesce(mobile_number,'') || ' ' ||
-           coalesce(b_form_no,'') || ' ' || coalesce(father_cnic,'')) gin_trgm_ops
+           coalesce(student_national_id,'') || ' ' || coalesce(father_national_id,'')) gin_trgm_ops
         );
         CREATE INDEX IF NOT EXISTS idx_buses_institution ON buses(institution_id);
         CREATE INDEX IF NOT EXISTS idx_stops_institution ON stops(institution_id);
@@ -872,6 +898,7 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_transactions_institution_date ON transactions(institution_id, date);
         CREATE INDEX IF NOT EXISTS idx_bank_accounts_institution ON bank_accounts(institution_id);
         CREATE INDEX IF NOT EXISTS idx_audit_logs_institution_time ON audit_logs(institution_id, timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_institution_type_time ON audit_logs(institution_id, action_type, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
       `);
     } finally {
@@ -920,7 +947,7 @@ class DatabaseService {
       address: institutionData.address?.trim() || '',
       phone: institutionData.phone?.trim() || '',
       email: institutionData.email?.trim() || '',
-      currency: institutionData.currency || 'PKR',
+      currency: institutionData.currency || 'USD',
       logo_url: institutionData.logoUrl || '',
       status: 'active',
       created_at: now,
@@ -1244,7 +1271,7 @@ class DatabaseService {
 
   public async deleteUser(institutionId: string, id: string): Promise<boolean> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM users WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
       return (res.rowCount || 0) > 0;
@@ -1479,7 +1506,7 @@ class DatabaseService {
   ): Promise<{ start: number; end: number; count: number }> {
     const safeCount = Math.max(1, count);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
     const cleanPrefix = (prefix || 'FE').trim().toUpperCase();
     const cleanYear = (year || new Date().getFullYear().toString()).trim();
@@ -1581,9 +1608,97 @@ class DatabaseService {
     };
   }
 
+  /**
+   * A locked month is read-only: no voucher in it may be created, changed or
+   * deleted, and no payment may be recorded against or removed from it. All
+   * voucher/collection writes go through runVoucherTransaction, so this is the
+   * single enforcement point. Vouchers sent back unchanged are ignored.
+   */
+  private async assertNoLockedMonthsTouched(
+    client: any,
+    tenantId: string,
+    existing: Map<string, VoucherRecord>,
+    writes: VoucherTxWrites
+  ): Promise<void> {
+    const touched = new Set<string>();
+
+    const num = (x: any) => Number(x ?? 0);
+    const changed = (a: VoucherRecord, b: any): boolean =>
+      a.voucherNo !== b.voucherNo ||
+      a.month !== b.month ||
+      a.studentId !== b.studentId ||
+      (a.dueDate || '') !== (b.dueDate || '') ||
+      num(a.grossTotal) !== num(b.grossTotal) ||
+      num(a.discountTotal) !== num(b.discountTotal) ||
+      num(a.prevBalance) !== num(b.prevBalance) ||
+      num(a.lateFeeRate) !== num(b.lateFeeRate) ||
+      num(a.netDue) !== num(b.netDue) ||
+      num(a.amountPaid) !== num(b.amountPaid) ||
+      a.status !== b.status ||
+      (a.carryForwardMonth || '') !== (b.carryForwardMonth || '') ||
+      num(a.carriedLateFine) !== num(b.carriedLateFine) ||
+      (a.notes || '') !== (b.notes || '') ||
+      JSON.stringify((a.particulars || []).map((p: any) => [p.kind, p.label, num(p.amount)])) !==
+        JSON.stringify((b.particulars || []).map((p: any) => [p.kind, p.label, num(p.amount)]));
+
+    for (const [id, v] of Object.entries(writes.voucherUpserts || {})) {
+      const prev = existing.get(id);
+      if (!prev) {
+        touched.add((v as any).month);
+      } else if (changed(prev, v)) {
+        touched.add(prev.month);
+        touched.add((v as any).month);
+      }
+    }
+    for (const id of writes.deleteVoucherIds || []) {
+      const prev = existing.get(id);
+      if (prev) touched.add(prev.month);
+    }
+    for (const t of writes.newTransactions || []) {
+      if (t.month) touched.add(t.month);
+      const prev = existing.get(t.voucherId);
+      if (prev) touched.add(prev.month);
+    }
+    if ((writes.deleteTransactionIds || []).length > 0) {
+      const r = await client.query(`SELECT DISTINCT month FROM transactions WHERE institution_id = $1 AND id = ANY($2)`, [
+        tenantId,
+        writes.deleteTransactionIds,
+      ]);
+      for (const row of r.rows) if (row.month) touched.add(row.month);
+    }
+    if ((writes.deleteCollectionIds || []).length > 0) {
+      const r = await client.query(
+        `SELECT DISTINCT month FROM transactions WHERE institution_id = $1 AND collection_id = ANY($2)`,
+        [tenantId, writes.deleteCollectionIds]
+      );
+      for (const row of r.rows) if (row.month) touched.add(row.month);
+    }
+
+    touched.delete(undefined as any);
+    if (touched.size === 0) return;
+    const lockedRes = await client.query(
+      `SELECT month FROM locked_months WHERE institution_id = $1 AND month = ANY($2) ORDER BY month FOR SHARE`,
+      [tenantId, Array.from(touched)]
+    );
+    if (lockedRes.rows.length > 0) {
+      const months = lockedRes.rows.map((r: any) => r.month).join(', ');
+      const err: any = new Error(
+        `This change would modify ${lockedRes.rows.length > 1 ? 'locked months' : 'a locked month'} (${months}). Vouchers and collections in a locked month cannot be changed — an Administrator must unlock ${lockedRes.rows.length > 1 ? 'them (newest first)' : 'it'} in the Month End Wizard, or the change should be reverted.`
+      );
+      err.httpStatus = 423;
+      throw err;
+    }
+  }
+
   public async runVoucherTransaction<T>(
     institutionId: string,
-    lockScope: { voucherIds: string[] } | { allVouchers: true },
+    lockScope:
+      | { voucherIds: string[] }
+      | { allVouchers: true }
+      // Generation: every voucher of the given months (duplicate check) plus any listed ids.
+      | { months: string[]; voucherIds?: string[] }
+      // Carry-forward: the listed vouchers plus those students' vouchers from the earliest listed voucher's month on.
+      | { voucherIds: string[]; includeStudentTail: true },
     mutator: (
       lockedVouchers: Map<string, VoucherRecord>,
       helpers: {
@@ -1593,7 +1708,7 @@ class DatabaseService {
     ) => Promise<{ writes: VoucherTxWrites; result: T }>
   ): Promise<T> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
 
     if (this.engine === 'postgres' && this.pgPool) {
@@ -1605,6 +1720,35 @@ class DatabaseService {
         if ('allVouchers' in lockScope) {
           const res = await client.query(`SELECT * FROM vouchers WHERE institution_id = $1 FOR UPDATE`, [tenantId]);
           voucherRows = res.rows;
+        } else if ('months' in lockScope) {
+          // Serialize concurrent generations of the same month, then lock only
+          // that month's rows (plus any explicitly listed vouchers). Locked
+          // months can never change, so they never need to be read or locked.
+          const months = Array.from(new Set(lockScope.months)).sort();
+          for (const m of months) {
+            await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`${tenantId}:voucher-month:${m}`]);
+          }
+          const res = await client.query(
+            `SELECT * FROM vouchers WHERE institution_id = $1 AND (month = ANY($2) OR id = ANY($3)) ORDER BY id FOR UPDATE`,
+            [tenantId, months, lockScope.voucherIds || []]
+          );
+          voucherRows = res.rows;
+        } else if ('includeStudentTail' in lockScope) {
+          const src = await client.query(
+            `SELECT id, student_id, month FROM vouchers WHERE institution_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`,
+            [tenantId, lockScope.voucherIds]
+          );
+          const studentIds = Array.from(new Set(src.rows.map((r: any) => r.student_id)));
+          const minMonth = src.rows.reduce((m: string, r: any) => (m && m < r.month ? m : r.month), '');
+          if (src.rows.length === 0) {
+            voucherRows = [];
+          } else {
+            const res = await client.query(
+              `SELECT * FROM vouchers WHERE institution_id = $1 AND student_id = ANY($2) AND month >= $3 ORDER BY id FOR UPDATE`,
+              [tenantId, studentIds, minMonth]
+            );
+            voucherRows = res.rows;
+          }
         } else if (lockScope.voucherIds.length > 0) {
           const res = await client.query(`SELECT * FROM vouchers WHERE institution_id = $1 AND id = ANY($2) FOR UPDATE`, [
             tenantId,
@@ -1663,6 +1807,8 @@ class DatabaseService {
         };
 
         const { writes, result } = await mutator(locked, helpers);
+
+        await this.assertNoLockedMonthsTouched(client, tenantId, locked, writes);
 
         for (const [id, v] of Object.entries(writes.voucherUpserts || {})) {
           await client.query(
@@ -1782,7 +1928,7 @@ class DatabaseService {
   public async listSimpleEntities(cfg: SimpleEntityConfig, institutionId: string, orderByColumn?: string): Promise<any[]> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const cols = ['id', ...cfg.fields.map((f) => f.column)].join(', ');
     const orderClause = orderByColumn ? ` ORDER BY ${orderByColumn}` : '';
 
@@ -1798,7 +1944,7 @@ class DatabaseService {
   public async getSimpleEntityById(cfg: SimpleEntityConfig, institutionId: string, id: string): Promise<any | null> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const cols = ['id', ...cfg.fields.map((f) => f.column)].join(', ');
 
     if (this.engine === 'postgres' && this.pgPool) {
@@ -1814,7 +1960,7 @@ class DatabaseService {
   public async createSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, obj: any): Promise<any> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     let id: string = obj.id || `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
 
@@ -1850,7 +1996,7 @@ class DatabaseService {
   public async updateSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, id: string, updates: any): Promise<any | null> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
     const fieldsToUpdate = cfg.fields.filter((f) => Object.prototype.hasOwnProperty.call(updates, f.field));
 
@@ -1878,7 +2024,7 @@ class DatabaseService {
   public async deleteSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, id: string): Promise<boolean> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
 
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
@@ -1905,15 +2051,15 @@ class DatabaseService {
       photoUrl: row.photo_url || undefined,
       dob: row.dob || '',
       gender: row.gender || 'Male',
-      bFormNo: row.b_form_no || undefined,
+      studentNationalId: row.student_national_id || undefined,
       familyId: row.family_id || undefined,
       address: row.address || undefined,
       fatherName: row.father_name || '',
-      fatherCnic: row.father_cnic || '',
+      fatherNationalId: row.father_national_id || '',
       fatherPhone: row.father_phone || '',
       fatherOccupation: row.father_occupation || undefined,
       motherName: row.mother_name || '',
-      motherCnic: row.mother_cnic || undefined,
+      motherNationalId: row.mother_national_id || undefined,
       motherPhone: row.mother_phone || '',
       ...(typeof row.documents === 'string' ? JSON.parse(row.documents || '{}') : row.documents || {}),
       status: row.status,
@@ -1929,15 +2075,15 @@ class DatabaseService {
     'father_phone',
     'mother_phone',
     'mobile_number',
-    'b_form_no',
-    'father_cnic',
+    'student_national_id',
+    'father_national_id',
   ];
 
   /**
    * Server-side search/list for students, replacing the old pattern of
    * shipping every student to the browser and filtering client-side.
    * `q` matches the same set of fields the old client-side search covered
-   * (name, reg/student no, guardian name, phone numbers, CNIC/B-form).
+   * (name, reg/student no, guardian name, phone numbers, national ID/student ID).
    */
   public async searchStudents(
     institutionId: string,
@@ -1952,7 +2098,7 @@ class DatabaseService {
     }
   ): Promise<{ students: any[]; total: number }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
     const page = isPaged ? Math.max(1, opts.page || 1) : 1;
     const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
@@ -2010,7 +2156,7 @@ class DatabaseService {
    */
   public async getActiveStudentCountsByClass(institutionId: string): Promise<Map<string, number>> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
 
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(
@@ -2031,24 +2177,24 @@ class DatabaseService {
   }
 
   /**
-   * Checks whether an individual student's B-Form number is already used by
-   * another student in this institution. Father CNIC is shared across siblings
+   * Checks whether an individual student's national ID number is already used by
+   * another student in this institution. Father National ID is shared across siblings
    * and is not unique per student.
    */
   public async findDuplicateStudent(
     institutionId: string,
-    fields: { bFormNo?: string; fatherCnic?: string },
+    fields: { studentNationalId?: string; fatherNationalId?: string },
     excludeId?: string
-  ): Promise<{ field: 'bFormNo'; existingStudentName: string } | null> {
+  ): Promise<{ field: 'studentNationalId'; existingStudentName: string } | null> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
 
-    const bFormValue = fields.bFormNo?.trim();
-    if (!bFormValue) return null;
+    const studentIdValue = fields.studentNationalId?.trim();
+    if (!studentIdValue) return null;
 
     if (this.engine === 'postgres' && this.pgPool) {
-      const params: any[] = [tenantId, bFormValue];
-      let clause = `institution_id = $1 AND b_form_no = $2`;
+      const params: any[] = [tenantId, studentIdValue];
+      let clause = `institution_id = $1 AND student_national_id = $2`;
       if (excludeId) {
         params.push(excludeId);
         clause += ` AND id != $3`;
@@ -2056,7 +2202,7 @@ class DatabaseService {
       const res = await this.pgPool.query(`SELECT reg_no, name FROM students WHERE ${clause} LIMIT 1`, params);
       if (res.rows.length > 0) {
         const studentLabel = [res.rows[0].reg_no, res.rows[0].name].filter(Boolean).join(' ');
-        return { field: 'bFormNo', existingStudentName: studentLabel };
+        return { field: 'studentNationalId', existingStudentName: studentLabel };
       }
     }
     return null;
@@ -2064,7 +2210,7 @@ class DatabaseService {
 
   public async createStudent(institutionId: string, obj: any): Promise<any> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const id: string = obj.id || `student_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const now = new Date().toISOString();
     const documents = JSON.stringify({
@@ -2088,15 +2234,15 @@ class DatabaseService {
       'photo_url',
       'dob',
       'gender',
-      'b_form_no',
+      'student_national_id',
       'family_id',
       'address',
       'father_name',
-      'father_cnic',
+      'father_national_id',
       'father_phone',
       'father_occupation',
       'mother_name',
-      'mother_cnic',
+      'mother_national_id',
       'mother_phone',
       'documents',
       'status',
@@ -2119,15 +2265,15 @@ class DatabaseService {
       obj.photoUrl || null,
       obj.dob || null,
       obj.gender || 'Male',
-      obj.bFormNo || null,
+      obj.studentNationalId || null,
       obj.familyId || null,
       obj.address || null,
       obj.fatherName || '',
-      obj.fatherCnic || '',
+      obj.fatherNationalId || '',
       obj.fatherPhone || '',
       obj.fatherOccupation || null,
       obj.motherName || '',
-      obj.motherCnic || null,
+      obj.motherNationalId || null,
       obj.motherPhone || '',
       documents,
       obj.status || 'Active',
@@ -2148,7 +2294,7 @@ class DatabaseService {
 
   public async updateStudent(institutionId: string, id: string, updates: any): Promise<any | null> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
 
     const fieldMap: Record<string, { column: string; type: 'string' | 'number' }> = {
@@ -2164,15 +2310,15 @@ class DatabaseService {
       photoUrl: { column: 'photo_url', type: 'string' },
       dob: { column: 'dob', type: 'string' },
       gender: { column: 'gender', type: 'string' },
-      bFormNo: { column: 'b_form_no', type: 'string' },
+      studentNationalId: { column: 'student_national_id', type: 'string' },
       familyId: { column: 'family_id', type: 'string' },
       address: { column: 'address', type: 'string' },
       fatherName: { column: 'father_name', type: 'string' },
-      fatherCnic: { column: 'father_cnic', type: 'string' },
+      fatherNationalId: { column: 'father_national_id', type: 'string' },
       fatherPhone: { column: 'father_phone', type: 'string' },
       fatherOccupation: { column: 'father_occupation', type: 'string' },
       motherName: { column: 'mother_name', type: 'string' },
-      motherCnic: { column: 'mother_cnic', type: 'string' },
+      motherNationalId: { column: 'mother_national_id', type: 'string' },
       motherPhone: { column: 'mother_phone', type: 'string' },
       status: { column: 'status', type: 'string' },
       createdDate: { column: 'created_date', type: 'string' },
@@ -2221,7 +2367,7 @@ class DatabaseService {
 
   public async deleteStudent(institutionId: string, id: string): Promise<boolean> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`DELETE FROM students WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
       return (res.rowCount || 0) > 0;
@@ -2247,7 +2393,7 @@ class DatabaseService {
     id: string
   ): Promise<{ deleted: boolean; blockedByVouchers: boolean }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
 
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(
@@ -2276,12 +2422,80 @@ class DatabaseService {
 
   // --- Vouchers (read side; writes go through runVoucherTransaction) ---
 
+  /**
+   * Start of the "working set" of billing history. Locked months can never
+   * change, so everything older than the oldest unlocked month is closed history
+   * that the client loads on demand. The window starts one voucher-month before
+   * the oldest unlocked month (so the last closed month is available as context).
+   * When nothing is unlocked the window starts past every month, leaving only the
+   * always-included vouchers (see workingSetVoucherIdsSql).
+   */
+  public async getWorkingWindowStart(institutionId: string): Promise<string> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (this.engine === 'postgres' && this.pgPool) {
+      const [lockedRes, monthRes] = await Promise.all([
+        this.pgPool.query(`SELECT month FROM locked_months WHERE institution_id = $1`, [tenantId]),
+        this.pgPool.query(`SELECT DISTINCT month FROM vouchers WHERE institution_id = $1 ORDER BY month`, [tenantId]),
+      ]);
+      const locked = new Set<string>(lockedRes.rows.map((r: any) => r.month));
+      const months: string[] = monthRes.rows.map((r: any) => r.month);
+      const idx = months.findIndex((m) => !locked.has(m));
+      if (idx === -1) return '9999-12';
+      return idx > 0 ? months[idx - 1] : months[idx];
+    }
+    return '0000-01';
+  }
+
+  /**
+   * SQL (usable inside `IN (...)`) selecting the vouchers the client always
+   * holds: everything from the window start on, every student's latest voucher
+   * (needed for Previous Balance / skipped-month checks), every voucher with an
+   * open balance whatever its age, any voucher that received a payment dated
+   * inside the window, and the carried-forward chain behind each open voucher
+   * (so the age of a debt stays accurate).
+   */
+  private workingSetVoucherIdsSql(instP: string, wsP: string): string {
+    return `
+      WITH RECURSIVE seed_open AS (
+        SELECT v.id, v.student_id, v.month FROM vouchers v
+        WHERE v.institution_id = ${instP} AND v.status IN ('Issued', 'Partial') AND v.net_due - v.amount_paid > 0
+      ), chain AS (
+        SELECT id, student_id, month FROM seed_open
+        UNION
+        SELECT p.id, p.student_id, p.month FROM vouchers p
+        JOIN chain c ON p.institution_id = ${instP} AND p.student_id = c.student_id
+          AND p.status = 'Carried' AND p.carry_forward_month = c.month AND p.net_due - p.amount_paid > 0
+      )
+      SELECT id FROM chain
+      UNION SELECT v.id FROM vouchers v WHERE v.institution_id = ${instP} AND v.month >= ${wsP}
+      UNION SELECT t.voucher_id FROM transactions t WHERE t.institution_id = ${instP} AND t.date >= ${wsP} || '-01'
+      UNION SELECT id FROM (
+        SELECT DISTINCT ON (student_id) id FROM vouchers
+        WHERE institution_id = ${instP} AND status <> 'Reversed'
+        ORDER BY student_id, month DESC
+      ) latest`;
+  }
+
   public async listVouchers(
     institutionId: string,
-    opts: { studentId?: string; classId?: string; month?: string; status?: string; page?: number; pageSize?: number }
-  ): Promise<{ vouchers: any[]; total: number }> {
+    opts: {
+      studentId?: string;
+      classId?: string;
+      month?: string;
+      status?: string;
+      page?: number;
+      pageSize?: number;
+      /** Only the working set (see getWorkingWindowStart). */
+      window?: boolean;
+      /** Closed-history paging by billing month: monthFrom <= month < monthBefore. */
+      monthFrom?: string;
+      monthBefore?: string;
+    }
+  ): Promise<{ vouchers: any[]; total: number; windowStart?: string }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
+    const windowStart = opts.window ? await this.getWorkingWindowStart(institutionId) : undefined;
     const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
     const page = isPaged ? Math.max(1, opts.page || 1) : 1;
     const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
@@ -2306,6 +2520,19 @@ class DatabaseService {
       if (opts.status) {
         conditions.push(`v.status = ${placeholder(p++)}`);
         params.push(opts.status);
+      }
+      if (opts.monthFrom) {
+        conditions.push(`v.month >= ${placeholder(p++)}`);
+        params.push(opts.monthFrom);
+      }
+      if (opts.monthBefore) {
+        conditions.push(`v.month < ${placeholder(p++)}`);
+        params.push(opts.monthBefore);
+      }
+      if (windowStart !== undefined) {
+        const wsIdx = p++;
+        conditions.push(`v.id IN (${this.workingSetVoucherIdsSql(placeholder(1), placeholder(wsIdx))})`);
+        params.push(windowStart);
       }
       return { where: conditions.join(' AND '), params, nextIndex: p };
     };
@@ -2344,7 +2571,7 @@ class DatabaseService {
         studentName: r.student_name || undefined,
         studentRegNo: r.student_reg_no || undefined,
       }));
-      return { vouchers, total };
+      return { vouchers, total, windowStart };
     }
 
     return { vouchers: [], total: 0 };
@@ -2354,10 +2581,20 @@ class DatabaseService {
 
   public async listCollections(
     institutionId: string,
-    opts: { dateFrom?: string; dateTo?: string; page?: number; pageSize?: number }
+    opts: {
+      dateFrom?: string;
+      dateTo?: string;
+      page?: number;
+      pageSize?: number;
+      studentId?: string;
+      window?: boolean;
+      monthFrom?: string;
+      monthBefore?: string;
+    }
   ): Promise<{ collections: any[]; total: number }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
+    const windowStart = opts.window ? await this.getWorkingWindowStart(institutionId) : undefined;
     const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
     const page = isPaged ? Math.max(1, opts.page || 1) : 1;
     const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
@@ -2374,6 +2611,32 @@ class DatabaseService {
       if (opts.dateTo) {
         conditions.push(`date <= $${p++}`);
         params.push(opts.dateTo);
+      }
+      if (opts.studentId) {
+        conditions.push(
+          `id IN (SELECT t.collection_id FROM transactions t WHERE t.institution_id = $1 AND t.student_id = $${p++})`
+        );
+        params.push(opts.studentId);
+      }
+      if (opts.monthFrom || opts.monthBefore) {
+        const parts: string[] = ['t.institution_id = $1'];
+        if (opts.monthFrom) {
+          parts.push(`t.month >= $${p++}`);
+          params.push(opts.monthFrom);
+        }
+        if (opts.monthBefore) {
+          parts.push(`t.month < $${p++}`);
+          params.push(opts.monthBefore);
+        }
+        conditions.push(`id IN (SELECT t.collection_id FROM transactions t WHERE ${parts.join(' AND ')})`);
+      }
+      if (windowStart !== undefined) {
+        const wsIdx = p++;
+        conditions.push(
+          `(id IN (SELECT t.collection_id FROM transactions t WHERE t.institution_id = $1 AND t.voucher_id IN (${this.workingSetVoucherIdsSql('$1', `$${wsIdx}`)}))` +
+            ` OR date >= $${wsIdx} || '-01')`
+        );
+        params.push(windowStart);
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM collections WHERE ${where}`, params);
@@ -2421,10 +2684,22 @@ class DatabaseService {
 
   public async listTransactions(
     institutionId: string,
-    opts: { studentId?: string; voucherId?: string; collectionId?: string; dateFrom?: string; dateTo?: string; page?: number; pageSize?: number }
+    opts: {
+      studentId?: string;
+      voucherId?: string;
+      collectionId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      page?: number;
+      pageSize?: number;
+      window?: boolean;
+      monthFrom?: string;
+      monthBefore?: string;
+    }
   ): Promise<{ transactions: any[]; total: number }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
+    const windowStart = opts.window ? await this.getWorkingWindowStart(institutionId) : undefined;
     const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
     const page = isPaged ? Math.max(1, opts.page || 1) : 1;
     const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
@@ -2453,6 +2728,19 @@ class DatabaseService {
       if (opts.dateTo) {
         conditions.push(`t.date <= $${p++}`);
         params.push(opts.dateTo);
+      }
+      if (opts.monthFrom) {
+        conditions.push(`t.month >= $${p++}`);
+        params.push(opts.monthFrom);
+      }
+      if (opts.monthBefore) {
+        conditions.push(`t.month < $${p++}`);
+        params.push(opts.monthBefore);
+      }
+      if (windowStart !== undefined) {
+        const wsIdx = p++;
+        conditions.push(`t.voucher_id IN (${this.workingSetVoucherIdsSql('$1', `$${wsIdx}`)})`);
+        params.push(windowStart);
       }
       const where = conditions.join(' AND ');
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM transactions t WHERE ${where}`, params);
@@ -2495,49 +2783,194 @@ class DatabaseService {
     };
   }
 
+  /** Action types that retention purges never delete (small volume, high forensic value). */
+  public static readonly AUDIT_RETENTION_EXEMPT_TYPES = ['operator_security', 'system_restore', 'system_cleanup'];
+
+  private buildAuditWhere(
+    tenantId: string,
+    opts: {
+      module?: string;
+      actionType?: string | string[];
+      operator?: string;
+      month?: string;
+      q?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    }
+  ): { where: string; params: any[]; next: number } {
+    const conditions = ['institution_id = $1'];
+    const params: any[] = [tenantId];
+    let p = 2;
+    if (opts.module) {
+      conditions.push(`module = $${p++}`);
+      params.push(opts.module);
+    }
+    const types = Array.isArray(opts.actionType) ? opts.actionType : opts.actionType ? [opts.actionType] : [];
+    if (types.length === 1) {
+      conditions.push(`action_type = $${p++}`);
+      params.push(types[0]);
+    } else if (types.length > 1) {
+      conditions.push(`action_type = ANY($${p++}::text[])`);
+      params.push(types);
+    }
+    if (opts.operator) {
+      conditions.push(`(operator_username = $${p} OR operator_id = $${p})`);
+      params.push(opts.operator);
+      p++;
+    }
+    if (opts.month) {
+      conditions.push(`month = $${p++}`);
+      params.push(opts.month);
+    }
+    if (opts.dateFrom) {
+      conditions.push(`timestamp >= $${p++}`);
+      params.push(opts.dateFrom);
+    }
+    if (opts.dateTo) {
+      conditions.push(`timestamp <= $${p++}`);
+      params.push(opts.dateTo);
+    }
+    const q = (opts.q || '').trim();
+    if (q) {
+      const like = `%${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`;
+      conditions.push(
+        `(action_title ILIKE $${p} OR description ILIKE $${p} OR operator_name ILIKE $${p} OR operator_username ILIKE $${p} OR target_id ILIKE $${p} OR target_label ILIKE $${p} OR month ILIKE $${p})`
+      );
+      params.push(like);
+      p++;
+    }
+    return { where: conditions.join(' AND '), params, next: p };
+  }
+
   public async listAuditLogs(
     institutionId: string,
-    opts: { module?: string; actionType?: string; dateFrom?: string; dateTo?: string; page?: number; pageSize?: number }
+    opts: {
+      module?: string;
+      actionType?: string | string[];
+      operator?: string;
+      month?: string;
+      q?: string;
+      sort?: string;
+      dir?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      page?: number;
+      pageSize?: number;
+    }
   ): Promise<{ logs: any[]; total: number }> {
     await this.init();
-    const tenantId = institutionId || 'default';
-    const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
-    const page = isPaged ? Math.max(1, opts.page || 1) : 1;
-    const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
-    const offset = isPaged ? (page - 1) * pageSize : 0;
+    const tenantId = requireTenantId(institutionId);
+    const pageSize = Math.min(1000, Math.max(1, opts.pageSize || 50));
+    const page = Math.max(1, opts.page || 1);
+    const offset = (page - 1) * pageSize;
 
     if (this.engine === 'postgres' && this.pgPool) {
-      const conditions = ['institution_id = $1'];
-      const params: any[] = [tenantId];
-      let p = 2;
-      if (opts.module) {
-        conditions.push(`module = $${p++}`);
-        params.push(opts.module);
-      }
-      if (opts.actionType) {
-        conditions.push(`action_type = $${p++}`);
-        params.push(opts.actionType);
-      }
-      if (opts.dateFrom) {
-        conditions.push(`timestamp >= $${p++}`);
-        params.push(opts.dateFrom);
-      }
-      if (opts.dateTo) {
-        conditions.push(`timestamp <= $${p++}`);
-        params.push(opts.dateTo);
-      }
-      const where = conditions.join(' AND ');
+      const { where, params, next } = this.buildAuditWhere(tenantId, opts);
+      const sortCols: Record<string, string> = {
+        timestamp: 'timestamp',
+        operator: 'operator_name',
+        action: 'action_title',
+        target: 'target_label',
+        amount: 'amount',
+      };
+      const col = sortCols[opts.sort || 'timestamp'] || 'timestamp';
+      const dir = opts.dir === 'asc' ? 'ASC' : 'DESC';
       const countRes = await this.pgPool.query(`SELECT COUNT(*) AS total FROM audit_logs WHERE ${where}`, params);
-      let query = `SELECT * FROM audit_logs WHERE ${where} ORDER BY timestamp DESC`;
-      const dataParams = [...params];
-      if (isPaged) {
-        query += ` LIMIT $${p++} OFFSET $${p++}`;
-        dataParams.push(pageSize, offset);
-      }
-      const res = await this.pgPool.query(query, dataParams);
+      const res = await this.pgPool.query(
+        `SELECT * FROM audit_logs WHERE ${where} ORDER BY ${col} ${dir} NULLS LAST, id ${dir} LIMIT $${next} OFFSET $${next + 1}`,
+        [...params, pageSize, offset]
+      );
       return { logs: res.rows.map((r) => this.auditLogRowToRecord(r)), total: Number(countRes.rows[0].total) || 0 };
     }
     return { logs: [], total: 0 };
+  }
+
+  /** Aggregates for the Audit Trail cards and filter dropdowns (one round trip, no row transfer). */
+  public async getAuditLogSummary(
+    institutionId: string,
+    opts: { dateFrom?: string; dateTo?: string }
+  ): Promise<{
+    total: number;
+    byType: Record<string, { count: number; amount: number }>;
+    operators: { id: string; username: string; name: string }[];
+    months: string[];
+    modules: string[];
+  }> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    const empty = { total: 0, byType: {}, operators: [], months: [], modules: [] };
+    if (!(this.engine === 'postgres' && this.pgPool)) return empty;
+    const { where, params } = this.buildAuditWhere(tenantId, { dateFrom: opts.dateFrom, dateTo: opts.dateTo });
+    const [types, ops, months, modules] = await Promise.all([
+      this.pgPool.query(
+        `SELECT action_type, COUNT(*) AS c, COALESCE(SUM(amount),0) AS a FROM audit_logs WHERE ${where} GROUP BY action_type`,
+        params
+      ),
+      this.pgPool.query(
+        `SELECT operator_username, MIN(operator_id) AS operator_id, MIN(operator_name) AS operator_name FROM audit_logs WHERE ${where} AND operator_username IS NOT NULL GROUP BY operator_username ORDER BY operator_username`,
+        params
+      ),
+      this.pgPool.query(
+        `SELECT DISTINCT month FROM audit_logs WHERE ${where} AND month IS NOT NULL ORDER BY month DESC`,
+        params
+      ),
+      this.pgPool.query(
+        `SELECT DISTINCT module FROM audit_logs WHERE ${where} AND module IS NOT NULL ORDER BY module`,
+        params
+      ),
+    ]);
+    const byType: Record<string, { count: number; amount: number }> = {};
+    let total = 0;
+    for (const r of types.rows) {
+      const count = Number(r.c) || 0;
+      byType[r.action_type] = { count, amount: Number(r.a) || 0 };
+      total += count;
+    }
+    return {
+      total,
+      byType,
+      operators: ops.rows.map((r) => ({ id: r.operator_id, username: r.operator_username, name: r.operator_name })),
+      months: months.rows.map((r) => r.month),
+      modules: modules.rows.map((r) => r.module),
+    };
+  }
+
+  /**
+   * Deletes audit rows older than `before` (ISO string). Security / restore /
+   * cleanup entries are exempt. With dryRun only the count is returned.
+   */
+  public async purgeAuditLogs(institutionId: string, before: string, dryRun = false): Promise<number> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) return 0;
+    const exempt = DatabaseService.AUDIT_RETENTION_EXEMPT_TYPES;
+    const where = `institution_id = $1 AND timestamp < $2 AND action_type <> ALL($3::text[])`;
+    if (dryRun) {
+      const r = await this.pgPool.query(`SELECT COUNT(*) AS c FROM audit_logs WHERE ${where}`, [tenantId, before, exempt]);
+      return Number(r.rows[0].c) || 0;
+    }
+    const r = await this.pgPool.query(`DELETE FROM audit_logs WHERE ${where}`, [tenantId, before, exempt]);
+    return r.rowCount || 0;
+  }
+
+  /** Applies each institution's retention setting (months; 0 = keep forever, default 6). */
+  public async runAuditRetention(): Promise<{ institutionId: string; deleted: number; cutoff: string; months: number }[]> {
+    await this.init();
+    if (!(this.engine === 'postgres' && this.pgPool)) return [];
+    const res = await this.pgPool.query('SELECT id, settings FROM institutions');
+    const out: { institutionId: string; deleted: number; cutoff: string; months: number }[] = [];
+    for (const row of res.rows) {
+      const settings = typeof row.settings === 'string' ? JSON.parse(row.settings || '{}') : row.settings || {};
+      const raw = Number(settings.auditRetentionMonths);
+      const months = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 6;
+      if (months === 0) continue;
+      const cutoffDate = new Date();
+      cutoffDate.setMonth(cutoffDate.getMonth() - months);
+      const cutoff = cutoffDate.toISOString();
+      const deleted = await this.purgeAuditLogs(row.id, cutoff);
+      if (deleted > 0) out.push({ institutionId: row.id, deleted, cutoff, months });
+    }
+    return out;
   }
 
   /**
@@ -2547,7 +2980,7 @@ class DatabaseService {
    */
   public async appendAuditLog(institutionId: string, entry: Record<string, any>): Promise<any> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const id = entry.id || `audit_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const timestamp = entry.timestamp || new Date().toISOString();
 
@@ -2624,7 +3057,7 @@ class DatabaseService {
     opts: { studentId?: string; page?: number; pageSize?: number }
   ): Promise<{ entries: any[]; total: number }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const isPaged = typeof opts.pageSize === 'number' && opts.pageSize > 0;
     const page = isPaged ? Math.max(1, opts.page || 1) : 1;
     const pageSize = isPaged ? Math.max(1, opts.pageSize!) : 0;
@@ -2654,7 +3087,7 @@ class DatabaseService {
 
   public async appendStudentAccountHistory(institutionId: string, entry: Record<string, any>): Promise<any> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const id = entry.id || `hist_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
     const timestamp = entry.timestamp || new Date().toISOString();
 
@@ -2702,7 +3135,7 @@ class DatabaseService {
 
   public async listLockedMonths(institutionId: string): Promise<string[]> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`SELECT month FROM locked_months WHERE institution_id = $1 ORDER BY month`, [tenantId]);
       return res.rows.map((r) => r.month);
@@ -2710,24 +3143,99 @@ class DatabaseService {
     return [];
   }
 
-  public async lockMonth(institutionId: string, month: string): Promise<void> {
+  public async listLockedMonthDetails(
+    institutionId: string
+  ): Promise<{ month: string; notes: string; lockedBy: string; lockedByName: string; lockedAt: string }[]> {
     await this.init();
-    const tenantId = institutionId || 'default';
-    const now = new Date().toISOString();
+    const tenantId = requireTenantId(institutionId);
     if (this.engine === 'postgres' && this.pgPool) {
-      await this.pgPool.query(
-        `INSERT INTO locked_months (institution_id, month, locked_at) VALUES ($1,$2,$3) ON CONFLICT (institution_id, month) DO NOTHING`,
-        [tenantId, month, now]
+      const res = await this.pgPool.query(
+        `SELECT month, notes, locked_by, locked_by_name, locked_at FROM locked_months WHERE institution_id = $1 ORDER BY month`,
+        [tenantId]
       );
+      return res.rows.map((r) => ({
+        month: r.month,
+        notes: r.notes || '',
+        lockedBy: r.locked_by || '',
+        lockedByName: r.locked_by_name || '',
+        lockedAt: r.locked_at ? new Date(r.locked_at).toISOString() : '',
+      }));
     }
+    return [];
   }
 
-  public async unlockMonth(institutionId: string, month: string): Promise<void> {
+  /** Returns false if the month was already locked. */
+  public async lockMonth(
+    institutionId: string,
+    month: string,
+    info: {
+      notes?: string;
+      lockedBy?: string;
+      lockedByName?: string;
+      lockedAt?: string;
+      /** Backup restore re-applies locks as they were; skip the settlement check. */
+      skipSettlementCheck?: boolean;
+    } = {}
+  ): Promise<{ created: boolean; openCount?: number; openSample?: string[] }> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
+    const lockedAt = info.lockedAt || new Date().toISOString();
     if (this.engine === 'postgres' && this.pgPool) {
-      await this.pgPool.query(`DELETE FROM locked_months WHERE institution_id = $1 AND month = $2`, [tenantId, month]);
+      const client = await this.pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        if (!info.skipSettlementCheck) {
+          // A month can only be sealed once nothing in it is still owed: every
+          // voucher must be Paid, zero-due or Carried (its balance already moved
+          // to a later voucher). Row-locking the month's vouchers first means a
+          // payment recorded at this very moment either lands before the check
+          // or waits and then meets the lock.
+          const open = await client.query(
+            `SELECT voucher_no, net_due, amount_paid FROM vouchers
+             WHERE institution_id = $1 AND month = $2
+               AND status IN ('Issued', 'Partial') AND net_due - amount_paid > 0
+             ORDER BY voucher_no FOR UPDATE`,
+            [tenantId, month]
+          );
+          if (open.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return {
+              created: false,
+              openCount: open.rows.length,
+              openSample: open.rows.slice(0, 5).map((r: any) => r.voucher_no),
+            };
+          }
+        }
+        const r = await client.query(
+          `INSERT INTO locked_months (institution_id, month, locked_at, locked_by, locked_by_name, notes)
+           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (institution_id, month) DO NOTHING`,
+          [tenantId, month, lockedAt, info.lockedBy || null, info.lockedByName || null, info.notes || null]
+        );
+        await client.query('COMMIT');
+        return { created: (r.rowCount || 0) > 0 };
+      } catch (err) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          /* ignore */
+        }
+        throw err;
+      } finally {
+        client.release();
+      }
     }
+    return { created: false };
+  }
+
+  /** Returns false if the month was not locked. */
+  public async unlockMonth(institutionId: string, month: string): Promise<boolean> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (this.engine === 'postgres' && this.pgPool) {
+      const r = await this.pgPool.query(`DELETE FROM locked_months WHERE institution_id = $1 AND month = $2`, [tenantId, month]);
+      return (r.rowCount || 0) > 0;
+    }
+    return false;
   }
 
   // --- Institute profile & tenant-wide settings ---
@@ -2756,7 +3264,7 @@ class DatabaseService {
     }
   ): Promise<DbInstitution | null> {
     await this.init();
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
 
     const fieldMap: Record<string, string> = {
@@ -2813,7 +3321,7 @@ class DatabaseService {
   // --- Backup export / restore ---
 
   public async exportInstitutionBackup(institutionId: string): Promise<Record<string, any>> {
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     const institution = await this.getInstitutionById(tenantId);
     const [classes, families, buses, stops, transportAssignments, feeTemplates, bankAccounts] = await Promise.all([
       this.listSimpleEntities(CLASS_ENTITY_CONFIG, tenantId),
@@ -2828,9 +3336,15 @@ class DatabaseService {
     const { vouchers } = await this.listVouchers(tenantId, {});
     const { collections } = await this.listCollections(tenantId, {});
     const { transactions } = await this.listTransactions(tenantId, {});
-    const { logs: auditLogs } = await this.listAuditLogs(tenantId, {});
+    const auditLogs: any[] = [];
+    for (let pg = 1; ; pg++) {
+      const { logs, total } = await this.listAuditLogs(tenantId, { page: pg, pageSize: 1000, sort: 'timestamp', dir: 'asc' });
+      auditLogs.push(...logs);
+      if (logs.length === 0 || auditLogs.length >= total) break;
+    }
     const { entries: studentAccountHistory } = await this.listStudentAccountHistory(tenantId, {});
     const lockedMonths = await this.listLockedMonths(tenantId);
+    const lockedMonthDetails = await this.listLockedMonthDetails(tenantId);
 
     return {
       exportedAt: new Date().toISOString(),
@@ -2849,6 +3363,7 @@ class DatabaseService {
       auditLogs,
       studentAccountHistory,
       lockedMonths,
+      lockedMonthDetails,
     };
   }
 
@@ -2864,7 +3379,7 @@ class DatabaseService {
    * fails silently.
    */
   public async restoreInstitutionBackup(institutionId: string, backup: any): Promise<{ success: boolean; error?: string }> {
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     await this.init();
 
     try {
@@ -2956,8 +3471,19 @@ class DatabaseService {
       for (const entry of backup.studentAccountHistory || []) {
         await this.appendStudentAccountHistory(tenantId, entry);
       }
+      const restoredDetails = new Map<string, any>();
+      for (const d of backup.lockedMonthDetails || []) {
+        if (d?.month) restoredDetails.set(d.month, d);
+      }
       for (const month of backup.lockedMonths || []) {
-        await this.lockMonth(tenantId, month);
+        const d = restoredDetails.get(month);
+        await this.lockMonth(
+          tenantId,
+          month,
+          d
+            ? { notes: d.notes, lockedBy: d.lockedBy, lockedByName: d.lockedByName, lockedAt: d.lockedAt || undefined, skipSettlementCheck: true }
+            : { skipSettlementCheck: true }
+        );
       }
 
       this.incrementRevision(tenantId);
@@ -2974,7 +3500,7 @@ class DatabaseService {
    * This is irreversible and executed atomically.
    */
   public async deleteInstitution(institutionId: string): Promise<{ success: boolean; error?: string }> {
-    const tenantId = institutionId || 'default';
+    const tenantId = requireTenantId(institutionId);
     await this.init();
 
     try {

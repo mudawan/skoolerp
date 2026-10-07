@@ -1,12 +1,7 @@
 import React from 'react';
 import type { PaymentMode } from '../../utils/paymentMode';
 import { FeeVoucher, Student, VoucherItem } from '../../types';
-import {
-  formatCurrency,
-  formatMonthName,
-  getEffectiveMultiple,
-  roundUpToMultiple,
-} from '../../utils/feeMath';
+import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple, getCurrencyCode } from '../../utils/feeMath';
 import { useApp } from '../../context/AppContext';
 import { VoucherParticularsEditor } from '../VoucherParticularsEditor';
 import { DatePicker } from '../DatePicker';
@@ -235,7 +230,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                       <label className="block font-bold text-slate-700 text-[11px]">
-                        Collection Amount (Rs.) *
+                        Collection Amount ({getCurrencyCode()}) *
                       </label>
                       {dynamicRemaining > 0 ? (
                         <button
@@ -257,7 +252,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                     </div>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">
-                        Rs.
+                        {getCurrencyCode()}
                       </span>
                       <input
                         type="number"
@@ -269,7 +264,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                         onChange={(e) =>
                           setAmount(e.target.value === '' ? '' : Number(e.target.value))
                         }
-                        className="w-full h-[38px] pl-9 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                        className="w-full h-[38px] pl-12 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                         placeholder="Enter Amount"
                       />
                     </div>
@@ -390,7 +385,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                   >
                     <Receipt className="w-3.5 h-3.5" />
-                    <span>Confirm & Post ({amount ? formatCurrency(Number(amount)) : 'Rs. 0'})</span>
+                    <span>Confirm & Post ({amount ? formatCurrency(Number(amount)) : formatCurrency(0)})</span>
                   </button>
                 </div>
               </form>

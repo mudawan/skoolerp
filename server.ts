@@ -20,7 +20,7 @@ import {
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE, isPaymentMode } from './src/utils/paymentMode';
-import { applyCarryForward } from './src/utils/feeMath';
+import { applyCarryForward, CURRENCY_OPTIONS } from './src/utils/feeMath';
 import type { FeeVoucher } from './src/types';
 
 const PORT = 3000;
@@ -217,14 +217,6 @@ async function startServer() {
         }
       }
 
-      // Fallback institutionId from headers or query if not authenticated
-      if (!req.institutionId) {
-        req.institutionId =
-          (req.headers['x-institution-id'] as string) ||
-          (req.query.institutionId as string) ||
-          'default';
-      }
-
       next();
     } catch (err) {
       console.error('[Auth Middleware] Session resolution error:', err);
@@ -285,11 +277,7 @@ async function startServer() {
         (req.body?.institutionId as string) ||
         (req.query?.institutionId as string);
 
-      if (
-        requestedTenant &&
-        requestedTenant !== 'default' &&
-        requestedTenant !== req.user.institution_id
-      ) {
+      if (requestedTenant && requestedTenant !== req.user.institution_id) {
         return res.status(403).json({
           success: false,
           error: 'Access denied: Tenant cross-boundary request forbidden.',
@@ -342,7 +330,7 @@ async function startServer() {
     }
   ): Promise<void> {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       await dbService.appendAuditLog(institutionId, {
         operatorId: req.user?.id,
         operatorUsername: req.user?.username,
@@ -354,6 +342,27 @@ async function startServer() {
       console.error('[Audit] Failed to record audit log entry:', err);
     }
   }
+
+  // Setup edits are audited only for tables that change what students owe or
+  // where payments go; classes, families, transport rosters etc. are not.
+  const AUDITED_SIMPLE_ENTITY_TABLES = new Set(['fee_templates', 'bank_accounts']);
+
+  // Human-readable naming for audited simple entities. Raw database ids are
+  // never used as the visible subject; they go into metadata.recordId, which
+  // is only returned to Admins.
+  const AUDIT_ENTITY_NOUN: Record<string, string> = { fee_templates: 'Fee Template', bank_accounts: 'Bank Account' };
+  const auditEntityLabel = (table: string, rec: any): string => {
+    if (!rec) return '';
+    if (table === 'bank_accounts') {
+      return [rec.bankName, rec.accountTitle].filter(Boolean).join(' – ') || '';
+    }
+    if (table === 'fee_templates') {
+      const scope = rec.studentId ? 'student override' : rec.classId ? 'class override' : 'global';
+      const month = rec.month && rec.month !== 'all' ? rec.month : 'all months';
+      return rec.label ? `${rec.label} (${scope}, ${month})` : '';
+    }
+    return rec.name || rec.label || '';
+  };
 
   /**
    * Registers standard GET (list)/POST (create)/PUT :id (update)/DELETE :id
@@ -375,7 +384,7 @@ async function startServer() {
 
     app.get(path, requireAuth(viewPermission), async (req: AuthenticatedRequest, res) => {
       try {
-        const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+        const institutionId = req.institutionId as string;
         const items = await dbService.listSimpleEntities(config, institutionId, opts.orderBy);
         res.json({ success: true, items });
       } catch (err: any) {
@@ -386,17 +395,19 @@ async function startServer() {
 
     app.post(path, requireAuth(managePermission), async (req: AuthenticatedRequest, res) => {
       try {
-        const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+        const institutionId = req.institutionId as string;
         const created = await dbService.createSimpleEntity(config, institutionId, req.body || {});
         dbService.incrementRevision(institutionId);
-        await recordAudit(req, {
-          actionType: 'settings_change',
-          actionTitle: `${config.table} record created`,
-          module: 'Settings',
-          description: `Created a ${config.table} record${created?.name ? ` ('${created.name}')` : ''}.`,
-          targetId: created?.id,
-          targetLabel: created?.name || created?.label,
-        });
+        if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
+          await recordAudit(req, {
+            actionType: 'settings_change',
+            actionTitle: `${AUDIT_ENTITY_NOUN[config.table] || config.table} created`,
+            module: 'Settings',
+            description: `Created ${(AUDIT_ENTITY_NOUN[config.table] || config.table).toLowerCase()}${auditEntityLabel(config.table, created) ? ` '${auditEntityLabel(config.table, created)}'` : ''}.`,
+            targetLabel: auditEntityLabel(config.table, created) || undefined,
+            metadata: { recordId: created?.id },
+          });
+        }
         res.json({ success: true, item: created });
       } catch (err: any) {
         console.error(`[API] Failed to create ${path}:`, err);
@@ -406,19 +417,20 @@ async function startServer() {
 
     app.put(`${path}/:id`, requireAuth(managePermission), async (req: AuthenticatedRequest, res) => {
       try {
-        const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+        const institutionId = req.institutionId as string;
         const updated = await dbService.updateSimpleEntity(config, institutionId, req.params.id, req.body || {});
         if (!updated) return res.status(404).json({ success: false, error: 'Not found.' });
         dbService.incrementRevision(institutionId);
-        await recordAudit(req, {
-          actionType: 'settings_change',
-          actionTitle: `${config.table} record updated`,
-          module: 'Settings',
-          description: `Updated a ${config.table} record${updated?.name ? ` ('${updated.name}')` : ''}.`,
-          targetId: updated?.id,
-          targetLabel: updated?.name || updated?.label,
-          metadata: { changedFields: Object.keys(req.body || {}) },
-        });
+        if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
+          await recordAudit(req, {
+            actionType: 'settings_change',
+            actionTitle: `${AUDIT_ENTITY_NOUN[config.table] || config.table} updated`,
+            module: 'Settings',
+            description: `Updated ${(AUDIT_ENTITY_NOUN[config.table] || config.table).toLowerCase()}${auditEntityLabel(config.table, updated) ? ` '${auditEntityLabel(config.table, updated)}'` : ''}.`,
+            targetLabel: auditEntityLabel(config.table, updated) || undefined,
+            metadata: { recordId: updated?.id, changedFields: Object.keys(req.body || {}) },
+          });
+        }
         res.json({ success: true, item: updated });
       } catch (err: any) {
         console.error(`[API] Failed to update ${path}/${req.params.id}:`, err);
@@ -428,17 +440,24 @@ async function startServer() {
 
     app.delete(`${path}/:id`, requireAuth(deletePermission), async (req: AuthenticatedRequest, res) => {
       try {
-        const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+        const institutionId = req.institutionId as string;
+        // Read the record first so the audit entry can name what was deleted.
+        const before = AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)
+          ? await dbService.getSimpleEntityById(config, institutionId, req.params.id)
+          : null;
         const deleted = await dbService.deleteSimpleEntity(config, institutionId, req.params.id);
         if (!deleted) return res.status(404).json({ success: false, error: 'Not found.' });
         dbService.incrementRevision(institutionId);
-        await recordAudit(req, {
-          actionType: 'settings_change',
-          actionTitle: `${config.table} record deleted`,
-          module: 'Settings',
-          description: `Deleted a ${config.table} record (id: ${req.params.id}).`,
-          targetId: req.params.id,
-        });
+        if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
+          await recordAudit(req, {
+            actionType: 'settings_change',
+            actionTitle: `${AUDIT_ENTITY_NOUN[config.table] || config.table} deleted`,
+            module: 'Settings',
+            description: `Deleted ${(AUDIT_ENTITY_NOUN[config.table] || config.table).toLowerCase()}${auditEntityLabel(config.table, before) ? ` '${auditEntityLabel(config.table, before)}'` : ''}.`,
+            targetLabel: auditEntityLabel(config.table, before) || undefined,
+            metadata: { recordId: req.params.id },
+          });
+        }
         res.json({ success: true });
       } catch (err: any) {
         console.error(`[API] Failed to delete ${path}/${req.params.id}:`, err);
@@ -557,7 +576,9 @@ async function startServer() {
           address: address?.trim(),
           phone: phone?.trim(),
           email: email?.trim() || adminEmail?.trim(),
-          currency: currency?.trim() || 'PKR',
+          currency: CURRENCY_OPTIONS.some((c) => c.code === String(currency || '').trim().toUpperCase())
+            ? String(currency).trim().toUpperCase()
+            : 'USD',
         },
         {
           fullName: adminName?.trim() || adminUsername.trim(),
@@ -982,22 +1003,6 @@ async function startServer() {
   // handed out to anyone who can call this endpoint. (Verified: no current
   // client code path calls this for a "browse schools" UI, so omitting the
   // code here is not a functional regression.)
-  app.get('/api/institutions', async (req, res) => {
-    try {
-      const list = await dbService.listInstitutions();
-      const sanitized = list.map((inst) => ({
-        id: inst.id,
-        name: inst.name,
-        currency: inst.currency,
-        address: inst.address,
-        logoUrl: inst.logo_url,
-      }));
-      res.json({ success: true, institutions: sanitized });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: 'Failed to list institutions.' });
-    }
-  });
-
   // 6. Operator Invites Management
   function toClientUser(u: DbUser) {
     return {
@@ -1016,7 +1021,7 @@ async function startServer() {
   // List users for this institution (Users & Permissions panel)
   app.get('/api/users', requireAuth('users.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const dbUsers = await dbService.listUsers(institutionId);
       res.json({ success: true, users: dbUsers.map(toClientUser) });
     } catch (err: any) {
@@ -1030,7 +1035,7 @@ async function startServer() {
   // this panel.
   app.post('/api/users', requireAuth('users.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const { username, name, email, password, role, permissions } = req.body || {};
       if (!username || !username.trim()) {
         return res.status(400).json({ success: false, error: 'Username is required.' });
@@ -1063,9 +1068,9 @@ async function startServer() {
         actionTitle: 'Operator Account Created',
         module: 'Security',
         description: `Created operator account '${result.user.username}' with role '${result.user.role}'.`,
-        targetId: result.user.id,
+        targetId: result.user.username,
         targetLabel: result.user.full_name,
-        metadata: { role: result.user.role, permissions: result.user.permissions },
+        metadata: { recordId: result.user.id, role: result.user.role, permissions: result.user.permissions },
       });
       dbService.incrementRevision(institutionId);
 
@@ -1083,7 +1088,7 @@ async function startServer() {
   // client state and silently never reached the server at all.
   app.put('/api/users/:id', requireAuth('users.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const target = await dbService.getUserById(req.params.id);
       if (!target || target.institution_id !== institutionId) {
         return res.status(404).json({ success: false, error: 'User not found.' });
@@ -1134,9 +1139,9 @@ async function startServer() {
             : 'Operator Account Updated',
         module: 'Security',
         description: `Updated operator account '${target.username}'.`,
-        targetId: target.id,
+        targetId: target.username,
         targetLabel: target.full_name,
-        metadata: { changedFields: Object.keys(updates) },
+        metadata: { recordId: target.id, changedFields: Object.keys(updates) },
       });
       dbService.incrementRevision(institutionId);
 
@@ -1149,7 +1154,7 @@ async function startServer() {
 
   app.delete('/api/users/:id', requireAuth('users.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       if (req.params.id === req.user!.id) {
         return res.status(400).json({ success: false, error: 'You cannot delete your own account.' });
       }
@@ -1165,8 +1170,9 @@ async function startServer() {
         actionTitle: 'Operator Account Deleted',
         module: 'Security',
         description: `Deleted operator account '${target.username}'.`,
-        targetId: target.id,
+        targetId: target.username,
         targetLabel: target.full_name,
+        metadata: { recordId: target.id },
       });
       dbService.incrementRevision(institutionId);
 
@@ -1248,14 +1254,22 @@ async function startServer() {
   // --- Health, Sync & State APIs (Tenant-Scoped) ---
 
   // Health check endpoint with live database ping & pool metrics
-  app.get('/api/health', async (req, res) => {
-    const institutionId = (req.headers['x-institution-id'] as string) || (req.query.institutionId as string) || 'default';
+  // Health: unauthenticated callers (load balancers, monitors) only get overall
+  // status; the engine, pool and tenant details need a signed-in session.
+  app.get('/api/health', async (req: AuthenticatedRequest, res) => {
     const pingResult = await dbService.ping();
-    const revInfo = dbService.getRevisionInfo(institutionId);
-
     const isHealthy = pingResult.healthy;
     const statusCode = isHealthy ? 200 : 503;
 
+    if (!req.user) {
+      return res.status(statusCode).json({
+        status: isHealthy ? 'ok' : 'degraded',
+        database: { healthy: pingResult.healthy },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const revInfo = dbService.getRevisionInfo(req.institutionId as string);
     res.status(statusCode).json({
       status: isHealthy ? 'ok' : 'degraded',
       engine: pingResult.engine,
@@ -1275,11 +1289,10 @@ async function startServer() {
   });
 
   // Revision check endpoint for lightweight polling
-  app.get('/api/revision', (req, res) => {
-    const institutionId = (req.headers['x-institution-id'] as string) || (req.query.institutionId as string) || 'default';
+  app.get('/api/revision', requireAuth(), (req: AuthenticatedRequest, res) => {
     res.json({
       success: true,
-      ...dbService.getRevisionInfo(institutionId),
+      ...dbService.getRevisionInfo(req.institutionId as string),
     });
   });
 
@@ -1377,7 +1390,7 @@ async function startServer() {
 
   app.get('/api/students', requireAuth('students.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const { q, classId, familyId, status, ids, page, pageSize } = req.query;
       const { students, total } = await dbService.searchStudents(institutionId, {
         q: typeof q === 'string' ? q : undefined,
@@ -1397,31 +1410,23 @@ async function startServer() {
 
   app.post('/api/students', requireAuth('students.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const body = req.body || {};
       if (!body.name || !String(body.name).trim()) {
         return res.status(400).json({ success: false, error: 'Student name is required.' });
       }
       const duplicate = await dbService.findDuplicateStudent(institutionId, {
-        bFormNo: body.bFormNo,
+        studentNationalId: body.studentNationalId,
       });
       if (duplicate) {
         return res.status(409).json({
           success: false,
-          error: `B-Form "${body.bFormNo}" already exists in system with '${duplicate.existingStudentName}'.`,
+          error: `Student ID "${body.studentNationalId}" already exists in system with '${duplicate.existingStudentName}'.`,
           field: duplicate.field,
         });
       }
       const created = await dbService.createStudent(institutionId, body);
       dbService.incrementRevision(institutionId);
-      await recordAudit(req, {
-        actionType: 'student_created',
-        actionTitle: 'Student Record Created',
-        module: 'Students',
-        description: `Enrolled student '${created.name}' (${created.regNo}).`,
-        targetId: created.regNo,
-        targetLabel: created.name,
-      });
       res.json({ success: true, student: created });
     } catch (err: any) {
       console.error('[API] Failed to create student:', err);
@@ -1431,18 +1436,18 @@ async function startServer() {
 
   app.put('/api/students/:id', requireAuth('students.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const body = req.body || {};
-      if (body.bFormNo !== undefined) {
+      if (body.studentNationalId !== undefined) {
         const duplicate = await dbService.findDuplicateStudent(
           institutionId,
-          { bFormNo: body.bFormNo },
+          { studentNationalId: body.studentNationalId },
           req.params.id
         );
         if (duplicate) {
           return res.status(409).json({
             success: false,
-            error: `B-Form "${body.bFormNo}" already exists in system with '${duplicate.existingStudentName}'.`,
+            error: `Student ID "${body.studentNationalId}" already exists in system with '${duplicate.existingStudentName}'.`,
             field: duplicate.field,
           });
         }
@@ -1450,15 +1455,6 @@ async function startServer() {
       const updated = await dbService.updateStudent(institutionId, req.params.id, body);
       if (!updated) return res.status(404).json({ success: false, error: 'Student not found.' });
       dbService.incrementRevision(institutionId);
-      await recordAudit(req, {
-        actionType: 'student_updated',
-        actionTitle: 'Student Record Updated',
-        module: 'Students',
-        description: `Updated student record for '${updated.name}' (${updated.regNo}).`,
-        targetId: updated.regNo,
-        targetLabel: updated.name,
-        metadata: { changedFields: Object.keys(body) },
-      });
       res.json({ success: true, student: updated });
     } catch (err: any) {
       console.error('[API] Failed to update student:', err);
@@ -1468,7 +1464,7 @@ async function startServer() {
 
   app.delete('/api/students/:id', requireAuth('students.delete'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       // Fetched only for the audit-log description below; it plays no
       // part in the delete decision itself, which is made atomically by
       // deleteStudentIfNoVouchers (see its doc comment for why the
@@ -1504,9 +1500,12 @@ async function startServer() {
 
   app.get('/api/vouchers', requireAuth('fees.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const { studentId, classId, month, status, page, pageSize } = req.query;
-      const { vouchers, total } = await dbService.listVouchers(institutionId, {
+      const institutionId = req.institutionId as string;
+      const { studentId, classId, month, status, page, pageSize, window: win, monthFrom, monthBefore } = req.query;
+      const { vouchers, total, windowStart } = await dbService.listVouchers(institutionId, {
+        window: win === '1' || win === 'true',
+        monthFrom: typeof monthFrom === 'string' ? monthFrom : undefined,
+        monthBefore: typeof monthBefore === 'string' ? monthBefore : undefined,
         studentId: typeof studentId === 'string' ? studentId : undefined,
         classId: typeof classId === 'string' ? classId : undefined,
         month: typeof month === 'string' ? month : undefined,
@@ -1514,7 +1513,7 @@ async function startServer() {
         page: page ? parseInt(page as string, 10) : undefined,
         pageSize: pageSize ? parseInt(pageSize as string, 10) : undefined,
       });
-      res.json({ success: true, vouchers, total });
+      res.json({ success: true, vouchers, total, windowStart });
     } catch (err: any) {
       console.error('[API] Failed to list vouchers:', err);
       res.status(500).json({ success: false, error: err?.message || 'Failed to list vouchers.' });
@@ -1523,9 +1522,13 @@ async function startServer() {
 
   app.get('/api/collections', requireAuth('fees.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const { dateFrom, dateTo, page, pageSize } = req.query;
+      const institutionId = req.institutionId as string;
+      const { dateFrom, dateTo, page, pageSize, studentId, window: win, monthFrom, monthBefore } = req.query;
       const { collections, total } = await dbService.listCollections(institutionId, {
+        studentId: typeof studentId === 'string' ? studentId : undefined,
+        window: win === '1' || win === 'true',
+        monthFrom: typeof monthFrom === 'string' ? monthFrom : undefined,
+        monthBefore: typeof monthBefore === 'string' ? monthBefore : undefined,
         dateFrom: typeof dateFrom === 'string' ? dateFrom : undefined,
         dateTo: typeof dateTo === 'string' ? dateTo : undefined,
         page: page ? parseInt(page as string, 10) : undefined,
@@ -1540,9 +1543,12 @@ async function startServer() {
 
   app.get('/api/transactions', requireAuth('fees.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const { studentId, voucherId, collectionId, dateFrom, dateTo, page, pageSize } = req.query;
+      const institutionId = req.institutionId as string;
+      const { studentId, voucherId, collectionId, dateFrom, dateTo, page, pageSize, window: win, monthFrom, monthBefore } = req.query;
       const { transactions, total } = await dbService.listTransactions(institutionId, {
+        window: win === '1' || win === 'true',
+        monthFrom: typeof monthFrom === 'string' ? monthFrom : undefined,
+        monthBefore: typeof monthBefore === 'string' ? monthBefore : undefined,
         studentId: typeof studentId === 'string' ? studentId : undefined,
         voucherId: typeof voucherId === 'string' ? voucherId : undefined,
         collectionId: typeof collectionId === 'string' ? collectionId : undefined,
@@ -1560,22 +1566,135 @@ async function startServer() {
 
   // --- Audit Logs (read-only from the client's perspective — always server-generated) ---
 
+  const qStr = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const qInt = (v: unknown): number | undefined => {
+    const n = typeof v === 'string' ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const isIsoDate = (v: string | undefined) => !v || !Number.isNaN(Date.parse(v));
+
   app.get('/api/audit-logs', requireAuth('audit.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const { module, actionType, dateFrom, dateTo, page, pageSize } = req.query;
+      const institutionId = req.institutionId as string;
+      const dateFrom = qStr(req.query.dateFrom);
+      const dateTo = qStr(req.query.dateTo);
+      if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+        return res.status(400).json({ success: false, error: 'Invalid date filter.' });
+      }
+      // Bulk export pulls the same data in chunks; it needs its own permission.
+      if (req.query.export === '1' && !isPermissionAllowed(req.user as any, 'audit.export')) {
+        return res.status(403).json({ success: false, error: 'You do not have permission to export the audit trail.' });
+      }
+      const actionTypeRaw = qStr(req.query.actionType);
       const { logs, total } = await dbService.listAuditLogs(institutionId, {
-        module: typeof module === 'string' ? module : undefined,
-        actionType: typeof actionType === 'string' ? actionType : undefined,
-        dateFrom: typeof dateFrom === 'string' ? dateFrom : undefined,
-        dateTo: typeof dateTo === 'string' ? dateTo : undefined,
-        page: page ? parseInt(page as string, 10) : undefined,
-        pageSize: pageSize ? parseInt(pageSize as string, 10) : undefined,
+        module: qStr(req.query.module),
+        actionType: actionTypeRaw ? actionTypeRaw.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+        operator: qStr(req.query.operator),
+        month: qStr(req.query.month),
+        q: qStr(req.query.q),
+        sort: qStr(req.query.sort),
+        dir: qStr(req.query.dir),
+        dateFrom,
+        dateTo,
+        page: qInt(req.query.page),
+        pageSize: qInt(req.query.pageSize),
       });
-      res.json({ success: true, logs, total });
+      // Internal record ids are for Admins only.
+      const safeLogs =
+        req.user?.role === 'Admin'
+          ? logs
+          : logs.map((l: any) => {
+              if (!l?.metadata || typeof l.metadata !== 'object' || !('recordId' in l.metadata)) return l;
+              const { recordId: _omit, ...rest } = l.metadata;
+              return { ...l, metadata: rest };
+            });
+      res.json({ success: true, logs: safeLogs, total });
     } catch (err: any) {
       console.error('[API] Failed to list audit logs:', err);
       res.status(500).json({ success: false, error: err?.message || 'Failed to list audit logs.' });
+    }
+  });
+
+  app.get('/api/audit-logs/summary', requireAuth('audit.view'), async (req: AuthenticatedRequest, res) => {
+    try {
+      const institutionId = req.institutionId as string;
+      const dateFrom = qStr(req.query.dateFrom);
+      const dateTo = qStr(req.query.dateTo);
+      if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+        return res.status(400).json({ success: false, error: 'Invalid date filter.' });
+      }
+      const summary = await dbService.getAuditLogSummary(institutionId, { dateFrom, dateTo });
+      res.json({ success: true, ...summary });
+    } catch (err: any) {
+      console.error('[API] Failed to summarise audit logs:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Failed to summarise audit logs.' });
+    }
+  });
+
+  // Manual purge of rows older than a cutoff. Security / restore / cleanup
+  // entries are always kept. dryRun returns only the count.
+  app.post('/api/audit-logs/purge', requireAuth('settings.manage'), async (req: AuthenticatedRequest, res) => {
+    try {
+      const institutionId = req.institutionId as string;
+      const { olderThanMonths, dryRun } = req.body || {};
+      const months = Number(olderThanMonths);
+      if (!Number.isInteger(months) || months < 1 || months > 120) {
+        return res.status(400).json({ success: false, error: 'olderThanMonths must be a whole number between 1 and 120.' });
+      }
+      const cutoffDate = new Date();
+      cutoffDate.setMonth(cutoffDate.getMonth() - months);
+      const cutoff = cutoffDate.toISOString();
+      const count = await dbService.purgeAuditLogs(institutionId, cutoff, !!dryRun);
+      if (!dryRun) {
+        await recordAudit(req, {
+          actionType: 'settings_change',
+          actionTitle: 'Audit Logs Purged',
+          module: 'Settings',
+          description: `Manually purged ${count} audit log entr${count === 1 ? 'y' : 'ies'} older than ${months} month(s) (before ${cutoff}). Security, restore and cleanup entries were kept.`,
+          metadata: { deleted: count, cutoff, olderThanMonths: months },
+        });
+      }
+      res.json({ success: true, count, cutoff, dryRun: !!dryRun });
+    } catch (err: any) {
+      console.error('[API] Failed to purge audit logs:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Failed to purge audit logs.' });
+    }
+  });
+
+  // Browser-originated events that have no server-side mutation endpoint of
+  // their own (e.g. undoing a carry-forward, fine adjustments at collection).
+  // Operator identity comes from the session; only a fixed set of
+  // type/module pairs is accepted and text fields are length-capped.
+  const CLIENT_AUDIT_EVENTS: Record<string, string[]> = {
+    carry_forward: ['Defaulters'],
+    fine_modification: ['Collections', 'Vouchers'],
+    system_cleanup: ['System'],
+  };
+  const clip = (v: unknown, n: number) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+  app.post('/api/audit-logs/client-event', requireAuth(), async (req: AuthenticatedRequest, res) => {
+    try {
+      const b = req.body || {};
+      const mods = CLIENT_AUDIT_EVENTS[String(b.actionType)];
+      if (!mods || !mods.includes(String(b.module))) {
+        return res.status(400).json({ success: false, error: 'Unsupported audit event.' });
+      }
+      const meta = b.metadata && typeof b.metadata === 'object' ? b.metadata : undefined;
+      await recordAudit(req, {
+        actionType: b.actionType,
+        actionTitle: clip(b.actionTitle, 255) || 'Event',
+        module: b.module,
+        description: clip(b.description, 2000),
+        targetId: clip(b.targetId, 128),
+        targetLabel: clip(b.targetLabel, 255),
+        month: clip(b.month, 16),
+        amount: typeof b.amount === 'number' && Number.isFinite(b.amount) ? b.amount : undefined,
+        previousValue: clip(String(b.previousValue ?? ''), 1000) || undefined,
+        newValue: clip(String(b.newValue ?? ''), 1000) || undefined,
+        metadata: meta && JSON.stringify(meta).length <= 4000 ? meta : undefined,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to record event.' });
     }
   });
 
@@ -1583,7 +1702,7 @@ async function startServer() {
 
   app.get('/api/student-account-history', requireAuth('students.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const { studentId, page, pageSize } = req.query;
       const { entries, total } = await dbService.listStudentAccountHistory(institutionId, {
         studentId: typeof studentId === 'string' ? studentId : undefined,
@@ -1606,7 +1725,7 @@ async function startServer() {
   // entry there would be redundant rather than additive.
   app.post('/api/student-account-history', requireAuth('students.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const body = req.body || {};
       if (!body.studentId) {
         return res.status(400).json({ success: false, error: 'studentId is required.' });
@@ -1628,9 +1747,9 @@ async function startServer() {
 
   app.get('/api/locked-months', requireAuth('fees.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const months = await dbService.listLockedMonths(institutionId);
-      res.json({ success: true, months });
+      const institutionId = req.institutionId as string;
+      const details = await dbService.listLockedMonthDetails(institutionId);
+      res.json({ success: true, months: details.map((d: any) => d.month), details });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err?.message || 'Failed to list locked months.' });
     }
@@ -1638,18 +1757,38 @@ async function startServer() {
 
   app.post('/api/locked-months', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const { month } = req.body || {};
-      if (!month) return res.status(400).json({ success: false, error: 'month is required.' });
-      await dbService.lockMonth(institutionId, month);
+      const institutionId = req.institutionId as string;
+      const month = String(req.body?.month || '');
+      const notes = String(req.body?.notes || '').trim();
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return res.status(400).json({ success: false, error: 'month must be in YYYY-MM format.' });
+      }
+      const lockRes = await dbService.lockMonth(institutionId, month, {
+        notes,
+        lockedBy: req.user?.username,
+        lockedByName: req.user?.full_name,
+      });
+      if (lockRes.openCount) {
+        const sample = (lockRes.openSample || []).join(', ');
+        return res.status(409).json({
+          success: false,
+          error:
+            `${month} cannot be locked: ${lockRes.openCount} voucher(s) still have an unpaid balance (${sample}${lockRes.openCount > (lockRes.openSample || []).length ? ', …' : ''}). ` +
+            `Collect payment or carry the balance forward first.`,
+          openCount: lockRes.openCount,
+          openSample: lockRes.openSample,
+        });
+      }
+      if (!lockRes.created) return res.status(409).json({ success: false, error: `${month} is already locked.` });
       dbService.incrementRevision(institutionId);
       await recordAudit(req, {
         actionType: 'month_closure',
         actionTitle: 'Month Locked',
         module: 'Defaulters',
-        description: `Locked ${month} against further fee edits/generation.`,
+        description: `Locked ${month} against further changes.${notes ? ` Comment: ${notes}` : ''}`,
         targetId: month,
         month,
+        metadata: { notes },
       });
       res.json({ success: true });
     } catch (err: any) {
@@ -1659,16 +1798,36 @@ async function startServer() {
 
   app.delete('/api/locked-months/:month', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      await dbService.unlockMonth(institutionId, req.params.month);
+      const institutionId = req.institutionId as string;
+      if (req.user?.role !== 'Admin') {
+        return res.status(403).json({ success: false, error: 'Only an Admin can unlock a month.' });
+      }
+      const month = req.params.month;
+      const reason = String(req.body?.reason || '').trim();
+      if (!reason) return res.status(400).json({ success: false, error: 'A reason is required to unlock a month.' });
+      const lockedList = await dbService.listLockedMonthDetails(institutionId);
+      const prev = lockedList.find((d: any) => d.month === month);
+      // Months are reopened newest-first so a reopened month never has a frozen
+      // month after it that its changes would have to flow into.
+      const laterLocked = lockedList.map((d: any) => d.month).filter((m: string) => m > month);
+      if (prev && laterLocked.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: `${month} cannot be unlocked while later months are locked (${laterLocked.join(', ')}). Unlock the newest locked month first.`,
+          laterLocked,
+        });
+      }
+      const removed = await dbService.unlockMonth(institutionId, month);
+      if (!removed) return res.status(404).json({ success: false, error: `${month} is not locked.` });
       dbService.incrementRevision(institutionId);
       await recordAudit(req, {
         actionType: 'month_closure',
         actionTitle: 'Month Reopened',
         module: 'Defaulters',
-        description: `Reopened ${req.params.month} for fee edits/generation.`,
-        targetId: req.params.month,
-        month: req.params.month,
+        description: `Reopened ${month}. Reason: ${reason}`,
+        targetId: month,
+        month,
+        metadata: { reason, previousLock: prev || null },
       });
       res.json({ success: true });
     } catch (err: any) {
@@ -1680,15 +1839,29 @@ async function startServer() {
 
   app.put('/api/institute', requireAuth('settings.manage'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
-      const updated = await dbService.updateInstituteProfile(institutionId, req.body || {});
+      const institutionId = req.institutionId as string;
+      const body: Record<string, any> = { ...(req.body || {}) };
+      let previousCurrency: string | undefined;
+      if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+        const code = String(body.currency || '').trim().toUpperCase();
+        if (!CURRENCY_OPTIONS.some((c) => c.code === code)) {
+          return res.status(400).json({ success: false, error: 'Unsupported currency code.' });
+        }
+        body.currency = code;
+        previousCurrency = ((await dbService.getInstitutionById(institutionId)) as any)?.currency;
+        if (previousCurrency === code) delete body.currency;
+      }
+      const updated = await dbService.updateInstituteProfile(institutionId, body);
       dbService.incrementRevision(institutionId);
       await recordAudit(req, {
         actionType: 'settings_change',
         actionTitle: 'Institute Settings Updated',
         module: 'Settings',
-        description: `Updated institute profile/settings (${Object.keys(req.body || {}).join(', ') || 'no fields'}).`,
-        metadata: { changedFields: Object.keys(req.body || {}) },
+        description: `Updated institute profile/settings (${Object.keys(body).join(', ') || 'no fields'}).`,
+        metadata: {
+          changedFields: Object.keys(body),
+          ...(body.currency ? { currencyFrom: previousCurrency || 'USD', currencyTo: body.currency } : {}),
+        },
       });
       res.json({ success: true, institution: updated });
     } catch (err: any) {
@@ -1766,7 +1939,7 @@ async function startServer() {
 
   app.get('/api/dashboard/summary', requireAuth('dashboard.view'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || 'default';
+      const institutionId = req.institutionId as string;
       const [studentTotal, activeStudents, classCountsByClassId] = await Promise.all([
         dbService.searchStudents(institutionId, { pageSize: 1 }),
         dbService.searchStudents(institutionId, { status: 'Active', pageSize: 1 }),
@@ -1809,7 +1982,7 @@ async function startServer() {
   app.post('/api/vouchers/generate', requireAuth('fees.generate'), async (req: AuthenticatedRequest, res) => {
     try {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const institutionId = req.institutionId as string;
       const { vouchers: rawVouchers, carriedPriorVouchers = [] } = req.body;
 
       if (!Array.isArray(rawVouchers) || rawVouchers.length === 0) {
@@ -1818,17 +1991,19 @@ async function startServer() {
 
       let createdVouchers: any[] = [];
 
-      // Locks the ENTIRE vouchers collection for this tenant for the
-      // duration of this transaction. This is necessary (not just
-      // convenient): duplicate-generation prevention requires scanning every
-      // existing voucher for a matching studentId+month key, and a specific
-      // set of row IDs isn't known upfront the way it is for payment
-      // collection. Locking the whole collection makes "check for
-      // duplicates, then insert" atomic against a concurrent generation run
-      // — without it, two admins generating vouchers for different classes
-      // at the same moment could each silently erase the other's batch via
-      // the old full-collection-replace pattern.
-      await dbService.runVoucherTransaction(institutionId, { allVouchers: true }, async (lockedVouchers, helpers) => {
+      // Duplicate-generation prevention: same-month generations are serialized
+      // with an advisory lock and the target month's existing rows are
+      // row-locked, so "check for duplicates, then insert" is atomic against a
+      // concurrent run. The unique (institution, student, month) index is the
+      // final guard against a racing insert.
+      // (Narrowed: months are the only place a duplicate can exist, and locked
+      // months can never change, so only the target months' rows and the
+      // folded prior vouchers are read and row-locked.)
+      const genMonths = Array.from(new Set<string>(rawVouchers.map((r: any) => String(r?.month || '')).filter(Boolean)));
+      const priorIds: string[] = (Array.isArray(carriedPriorVouchers) ? carriedPriorVouchers : [])
+        .map((p: any) => (typeof p === 'string' ? p : p?.id))
+        .filter((x: any) => typeof x === 'string' && x.length > 0);
+      await dbService.runVoucherTransaction(institutionId, { months: genMonths, voucherIds: priorIds }, async (lockedVouchers, helpers) => {
         const voucherUpserts: Record<string, any> = {};
         createdVouchers = [];
 
@@ -1928,7 +2103,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[API] Error generating vouchers:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Voucher generation failed' });
+      res.status(err?.httpStatus || 500).json({ success: false, error: err?.message || 'Voucher generation failed' });
     }
   });
 
@@ -1936,7 +2111,7 @@ async function startServer() {
   app.post('/api/collections/receive', requireAuth('fees.collect'), async (req: AuthenticatedRequest, res) => {
     try {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const institutionId = req.institutionId as string;
       const {
         payments, // Array of { voucherId, amount, paymentMode, referenceNo, notes, date, fineAdded, updatedParticulars, id, transactionId }
         collectionNotes,
@@ -2151,7 +2326,7 @@ async function startServer() {
   app.post('/api/vouchers/carry-forward-batch', requireAuth('defaulters.manage'), async (req: AuthenticatedRequest, res) => {
     try {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const institutionId = req.institutionId as string;
       const { voucherIds: rawVoucherIds, targetMonth, addLateFine = false, customFineAmount, perVoucherFines, policy } = req.body;
 
       // ---- Input validation -------------------------------------------------
@@ -2205,7 +2380,7 @@ async function startServer() {
       let txResult: { processed: Processed[]; errors: string[]; updated: FeeVoucher[] } | null = null;
 
       try {
-        await dbService.runVoucherTransaction(institutionId, { allVouchers: true }, async (lockedVouchers, helpers) => {
+        await dbService.runVoucherTransaction(institutionId, { voucherIds, includeStudentTail: true }, async (lockedVouchers, helpers) => {
           const originals = new Map<string, any>(lockedVouchers);
           let list: FeeVoucher[] = Array.from(lockedVouchers.values()) as unknown as FeeVoucher[];
           const processed: Processed[] = [];
@@ -2276,55 +2451,49 @@ async function startServer() {
       dbService.incrementRevision(institutionId);
       const revInfo = dbService.getRevisionInfo(institutionId);
 
-      // Per-voucher audit trail (same entries the single-voucher flow always produced).
-      for (const item of processed) {
-        const v = updated.find((u) => u.id === item.sourceId);
-        if (!v) continue;
-        let studentLabel = v.voucherNo;
-        let studentName = 'Unknown';
-        try {
-          const st = await dbService.getStudentById(institutionId, v.studentId);
-          if (st) {
-            studentName = st.name;
-            studentLabel = `${st.name} (${st.regNo})`;
+      // One summary audit entry per batch (not one per voucher). The carried
+      // vouchers themselves keep their Carried status, month and fine.
+      {
+        const items = processed
+          .map((item) => ({ item, v: updated.find((u) => u.id === item.sourceId) }))
+          .filter((x): x is { item: typeof processed[number]; v: any } => !!x.v);
+        const totalOutstanding = items.reduce((sum, x) => sum + x.item.outstandingBalance, 0);
+        const totalFine = items.reduce((sum, x) => sum + (x.item.fineApplied || 0), 0);
+        const fineCount = items.filter((x) => x.item.fineApplied > 0).length;
+        const sourceMonths = [...new Set(items.map((x) => x.v.month))].sort();
+        let targetLabel = `${items.length} voucher(s)`;
+        if (items.length === 1) {
+          try {
+            const st = await dbService.getStudentById(institutionId, items[0].v.studentId);
+            targetLabel = st ? `${st.name} (${st.regNo})` : items[0].v.voucherNo;
+          } catch {
+            targetLabel = items[0].v.voucherNo;
           }
-        } catch {
-          /* label only */
         }
+        const cur = (req.institution as any)?.currency || 'USD';
         await recordAudit(req, {
           actionType: 'carry_forward',
-          actionTitle: 'Defaulter Voucher Carried Forward',
+          actionTitle: items.length === 1 ? 'Defaulter Voucher Carried Forward' : 'Defaulter Vouchers Carried Forward',
           module: 'Defaulters',
-          description: `Carried forward outstanding arrears of Rs ${item.outstandingBalance.toLocaleString()} on voucher ${v.voucherNo} (${studentName}) from ${v.month} to ${targetMonth}${item.fineApplied > 0 ? ` with Rs ${item.fineApplied.toLocaleString()} late fine` : ''}.`,
-          targetId: v.voucherNo,
-          targetLabel: studentLabel,
-          month: v.month,
-          amount: item.outstandingBalance,
+          description:
+            `Carried forward ${cur} ${totalOutstanding.toLocaleString('en-US')} of outstanding arrears on ${items.length} voucher(s) ` +
+            `from ${sourceMonths.join(', ')} to ${targetMonth}` +
+            (totalFine > 0 ? `, with ${cur} ${totalFine.toLocaleString('en-US')} in late fines on ${fineCount} voucher(s).` : ' (no late fine).'),
+          targetId: items.length === 1 ? items[0].v.voucherNo : undefined,
+          targetLabel,
+          month: sourceMonths.length === 1 ? sourceMonths[0] : undefined,
+          amount: totalOutstanding,
           newValue: `Carried to ${targetMonth}`,
           metadata: {
-            voucherId: v.id,
-            voucherNo: v.voucherNo,
-            studentId: v.studentId,
-            fromMonth: v.month,
+            count: items.length,
             targetMonth,
-            outstandingBalance: item.outstandingBalance,
-            fineApplied: item.fineApplied,
+            sourceMonths,
+            totalOutstanding,
+            totalFine,
+            fineCount,
+            voucherNos: items.slice(0, 500).map((x) => x.v.voucherNo),
           },
         });
-        if (item.fineApplied > 0) {
-          await recordAudit(req, {
-            actionType: 'fine_modification',
-            actionTitle: 'Late Carry Fine Imposed',
-            module: 'Defaulters',
-            description: `Imposed Rs ${item.fineApplied.toLocaleString()} late payment fine during carry-forward of voucher ${v.voucherNo} into ${targetMonth}.`,
-            targetId: v.voucherNo,
-            targetLabel: studentLabel,
-            month: targetMonth,
-            amount: item.fineApplied,
-            newValue: item.fineApplied,
-            metadata: { voucherId: v.id, targetMonth, fineAmount: item.fineApplied },
-          });
-        }
       }
 
       broadcastEvent(
@@ -2380,7 +2549,7 @@ async function startServer() {
   app.post('/api/vouchers/batch-update', requireAuth(), async (req: AuthenticatedRequest, res) => {
     try {
       const clientId = (req.headers['x-client-id'] as string) || req.body._clientId || '';
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const institutionId = req.institutionId as string;
       const {
         voucherUpserts = [],
         deleteVoucherIds = [],
@@ -2577,14 +2746,14 @@ async function startServer() {
       res.json({ success: true, revision: revInfo.revision, vouchers: assignedVoucherNumbers });
     } catch (err: any) {
       console.error('[API] Failed to apply voucher batch update:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Batch update failed' });
+      res.status(err?.httpStatus || 500).json({ success: false, error: err?.message || 'Batch update failed' });
     }
   });
 
   // Export database backup for tenant
   app.get('/api/backup/export', requireAuth('system.backup'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || (req.query.institutionId as string) || 'default';
+      const institutionId = req.institutionId as string;
       const backup = await dbService.exportInstitutionBackup(institutionId);
       res.setHeader('Content-Type', 'application/json');
       res.setHeader(
@@ -2601,7 +2770,7 @@ async function startServer() {
   // Restore database backup for tenant
   app.post('/api/backup/restore', requireAuth('system.backup'), async (req: AuthenticatedRequest, res) => {
     try {
-      const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId || 'default';
+      const institutionId = req.institutionId as string;
       const backupData = req.body;
       if (!backupData || typeof backupData !== 'object') {
         return res.status(400).json({ success: false, error: 'Invalid backup format' });
@@ -2645,6 +2814,31 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Audit-log retention: apply each institution's setting at startup, then daily.
+  const runRetention = async () => {
+    try {
+      const results = await dbService.runAuditRetention();
+      for (const r of results) {
+        console.log(`[Audit] Retention purged ${r.deleted} entries for ${r.institutionId} (older than ${r.months} months).`);
+        await dbService.appendAuditLog(r.institutionId, {
+          operatorId: 'usr-system',
+          operatorUsername: 'system',
+          operatorName: 'System',
+          operatorRole: 'Admin',
+          actionType: 'settings_change',
+          actionTitle: 'Audit Logs Purged (Retention)',
+          module: 'Settings',
+          description: `Automatic retention removed ${r.deleted} audit log entr${r.deleted === 1 ? 'y' : 'ies'} older than ${r.months} month(s). Security, restore and cleanup entries were kept.`,
+          metadata: { deleted: r.deleted, cutoff: r.cutoff, months: r.months, automatic: true },
+        });
+      }
+    } catch (err) {
+      console.error('[Audit] Retention run failed:', err);
+    }
+  };
+  setTimeout(runRetention, 30_000).unref();
+  setInterval(runRetention, 24 * 60 * 60 * 1000).unref();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Multi-Tenant School Management Server running at http://0.0.0.0:${PORT}`);

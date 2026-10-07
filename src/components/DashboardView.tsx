@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatMonthName, getPreviousMonthString, getRecentMonthsEndingAt } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getPreviousMonthString, getRecentMonthsEndingAt, getCurrencyCode } from '../utils/feeMath';
 import { ActiveTab } from '../types';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import {
@@ -58,6 +58,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     transactions,
     getMonthClosureStatus,
     themeConfig,
+    historyFrom,
+    ensureHistoryLoaded,
   } = useApp();
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
@@ -84,6 +86,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // 6-Month Fee Collection Trend Data
   const monthList = getRecentMonthsEndingAt(activeMonth, 6);
+  // The trend reaches back six months; closed months older than the loaded window come in on demand.
+  const trendStartMonth = monthList[0];
+  React.useEffect(() => {
+    if (historyFrom && trendStartMonth) void ensureHistoryLoaded(trendStartMonth);
+  }, [historyFrom, trendStartMonth, ensureHistoryLoaded]);
 
   const trendData = monthList.map((m) => {
     const vchs = vouchers.filter((v) => v.month === m && v.status !== 'Reversed');
@@ -526,7 +533,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#64748B' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickFormatter={(val) => `Rs.${val / 1000}k`} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickFormatter={(val) => `${getCurrencyCode()} ${val / 1000}k`} />
                 <Tooltip
                   formatter={(value: any) => [formatCurrency(Number(value)), 'Amount']}
                   contentStyle={{ borderRadius: '12px', border: '1px solid #E2E8F0', fontSize: '12px' }}

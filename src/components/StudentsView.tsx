@@ -1,9 +1,12 @@
+import { SortableTh } from './SortableTh';
+import { useSortState, sortRows } from '../hooks/useTableSort';
 import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student, StudentStatus } from '../types';
 import { formatCurrency, formatStudentAge, calculateAge, normalizeDateToISO } from '../utils/feeMath';
 import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
+import { mapCsvHeader, STUDENT_CSV, STUDENT_CSV_EXPORT_ONLY } from '../utils/csvHeaders';
 import { StudentAvatar } from './StudentAvatar';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { StudentFormModal } from './StudentFormModal';
@@ -48,15 +51,15 @@ interface PreviewRow {
   gender?: 'Male' | 'Female' | '';
   dob: string;
   fatherName: string;
-  fatherCnic: string;
+  fatherNationalId: string;
   fatherPhone: string;
   fatherOccupation: string;
   motherName: string;
-  motherCnic?: string;
+  motherNationalId?: string;
   motherPhone: string;
   monthlyDiscount: number;
   mobileNumber?: string;
-  bFormNo?: string;
+  studentNationalId?: string;
   address?: string;
   isValid: boolean;
   isDuplicate: boolean;
@@ -116,7 +119,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     classId?: string;
     rawClassName?: string;
     fatherName?: string;
-    fatherCnic?: string;
+    fatherNationalId?: string;
     fatherPhone?: string;
     monthlyDiscount?: number;
     isDuplicate?: boolean;
@@ -135,7 +138,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     if (!r.admissionDate?.trim()) missing.push('Admission Date');
     if (!r.firstBillingMonth?.trim()) missing.push('First Billing Month');
     if (!r.fatherName?.trim()) missing.push('Father Name');
-    if (!r.fatherCnic?.trim()) missing.push('Father CNIC');
+    if (!r.fatherNationalId?.trim()) missing.push('Father National ID');
     if (!r.fatherPhone?.trim()) missing.push('Father Phone');
     if (r.monthlyDiscount === undefined || isNaN(r.monthlyDiscount) || r.monthlyDiscount < 0) {
       missing.push('Discount in Fee');
@@ -245,8 +248,8 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
       s.name.toLowerCase().includes(term) ||
       s.regNo.toLowerCase().includes(term) ||
       s.fatherName.toLowerCase().includes(term) ||
-      (s.fatherCnic && s.fatherCnic.includes(searchTerm)) ||
-      (s.bFormNo && s.bFormNo.toLowerCase().includes(term)) ||
+      (s.fatherNationalId && s.fatherNationalId.includes(searchTerm)) ||
+      (s.studentNationalId && s.studentNationalId.toLowerCase().includes(term)) ||
       (s.mobileNumber && s.mobileNumber.includes(searchTerm));
 
     const matchesClass = selectedClassId === 'all' || s.classId === selectedClassId;
@@ -363,30 +366,30 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   // Export to CSV
   const handleExportCsv = () => {
     const headers = [
-      'Registration No.',
-      'Student Name',
-      'Date of Admission',
-      'First Billing Month',
-      'Class',
-      'Monthly Tuition Fee',
-      'Monthly Discount',
-      'Net Monthly Fee',
-      'Status',
-      'Gender',
-      'Date of Birth',
-      'Calculated Age',
-      'Student CNIC / B-Form',
-      'Mobile Number',
-      'Father Name',
-      'Father CNIC',
-      'Father Mobile',
-      'Mother Name',
-      'Mother CNIC',
-      'Mother Mobile',
-      'Family No.',
-      'Residential Address',
-      'Documents Attached',
-      'Other Notes',
+      STUDENT_CSV.columns.regNo,
+      STUDENT_CSV.columns.name,
+      STUDENT_CSV.columns.admissionDate,
+      STUDENT_CSV.columns.firstBillingMonth,
+      STUDENT_CSV.columns.class,
+      STUDENT_CSV_EXPORT_ONLY.monthlyFee,
+      STUDENT_CSV.columns.discount,
+      STUDENT_CSV_EXPORT_ONLY.netFee,
+      STUDENT_CSV_EXPORT_ONLY.status,
+      STUDENT_CSV.columns.gender,
+      STUDENT_CSV.columns.dob,
+      STUDENT_CSV_EXPORT_ONLY.age,
+      STUDENT_CSV.columns.studentId,
+      STUDENT_CSV.columns.mobile,
+      STUDENT_CSV.columns.fatherName,
+      STUDENT_CSV.columns.fatherNationalId,
+      STUDENT_CSV.columns.fatherPhone,
+      STUDENT_CSV.columns.motherName,
+      STUDENT_CSV.columns.motherNationalId,
+      STUDENT_CSV.columns.motherPhone,
+      STUDENT_CSV_EXPORT_ONLY.familyNo,
+      STUDENT_CSV.columns.address,
+      STUDENT_CSV_EXPORT_ONLY.documents,
+      STUDENT_CSV_EXPORT_ONLY.notes,
     ];
 
     const rows = sortedStudents.map((s) => {
@@ -412,13 +415,13 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         `"${s.gender}"`,
         `"${s.dob}"`,
         `"${ageStr}"`,
-        `"${s.bFormNo || ''}"`,
+        `"${s.studentNationalId || ''}"`,
         `"${s.mobileNumber || ''}"`,
         `"${s.fatherName.replace(/"/g, '""')}"`,
-        `"${s.fatherCnic}"`,
+        `"${s.fatherNationalId}"`,
         `"${s.fatherPhone}"`,
         `"${s.motherName || ''}"`,
-        `"${s.motherCnic || ''}"`,
+        `"${s.motherNationalId || ''}"`,
         `"${s.motherPhone || ''}"`,
         `"${fam ? fam.familyNo : ''}"`,
         `"${(s.address || '').replace(/"/g, '""')}"`,
@@ -436,26 +439,26 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   // Copy student list to clipboard
   const handleCopyToClipboard = async () => {
     const headers = [
-      'Reg #',
-      'Student Name',
-      'Admission Date',
-      'First Billing Month',
-      'Class',
-      'Monthly Fee',
-      'Discount',
-      'Net Fee',
-      'Status',
-      'Gender',
-      'DOB',
-      'Age',
-      'B-Form / CNIC',
-      'Mobile',
-      'Father Name',
-      'Father CNIC',
-      'Father Mobile',
-      'Mother Name',
-      'Family #',
-      'Address',
+      STUDENT_CSV.columns.regNo,
+      STUDENT_CSV.columns.name,
+      STUDENT_CSV.columns.admissionDate,
+      STUDENT_CSV.columns.firstBillingMonth,
+      STUDENT_CSV.columns.class,
+      STUDENT_CSV_EXPORT_ONLY.monthlyFee,
+      STUDENT_CSV.columns.discount,
+      STUDENT_CSV_EXPORT_ONLY.netFee,
+      STUDENT_CSV_EXPORT_ONLY.status,
+      STUDENT_CSV.columns.gender,
+      STUDENT_CSV.columns.dob,
+      STUDENT_CSV_EXPORT_ONLY.age,
+      STUDENT_CSV.columns.studentId,
+      STUDENT_CSV.columns.mobile,
+      STUDENT_CSV.columns.fatherName,
+      STUDENT_CSV.columns.fatherNationalId,
+      STUDENT_CSV.columns.fatherPhone,
+      STUDENT_CSV.columns.motherName,
+      STUDENT_CSV_EXPORT_ONLY.familyNo,
+      STUDENT_CSV.columns.address,
     ];
 
     const rows = sortedStudents.map((s) => {
@@ -479,10 +482,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         s.gender,
         s.dob,
         ageStr,
-        s.bFormNo || '',
+        s.studentNationalId || '',
         s.mobileNumber || '',
         s.fatherName,
-        s.fatherCnic,
+        s.fatherNationalId,
         s.fatherPhone,
         s.motherName || '',
         fam ? fam.familyNo : '',
@@ -542,56 +545,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         }
 
         const delimiter = detectCsvDelimiter(lines[0]);
-        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
-
-        const colMap = {
-          regNo: headerTokens.findIndex((h) => h.includes('reg') || h.includes('id') || h.includes('roll')),
-          name: headerTokens.findIndex((h) => h.includes('name') && !h.includes('father') && !h.includes('mother')),
-          admissionDate: headerTokens.findIndex((h) => h.includes('admission') || h.includes('enrolled') || h.includes('admdate')),
-          firstBillingMonth: headerTokens.findIndex((h) => h.includes('firstbilling') || h.includes('billingmonth') || h.includes('billingstart') || h.includes('startmonth')),
-          class: headerTokens.findIndex((h) => h.includes('class') || h.includes('grade')),
-          gender: headerTokens.findIndex((h) => h.includes('gender') || h.includes('sex')),
-          dob: headerTokens.findIndex((h) => h.includes('dob') || h.includes('birth')),
-          bform: headerTokens.findIndex((h) => h.includes('bform') || h.includes('birthform') || h.includes('studentcnic')),
-          mobile: headerTokens.findIndex((h) => (h.includes('studentmobile') || h.includes('studentphone') || h.includes('studentcell') || h.includes('mobile') || h.includes('cell') || h.includes('contact')) && !h.includes('father') && !h.includes('mother')),
-          address: headerTokens.findIndex((h) => h.includes('address') || h.includes('residence')),
-          fatherName: headerTokens.findIndex((h) => h.includes('fathername') || h.includes('guardianname') || (h.includes('father') && !h.includes('phone') && !h.includes('cnic') && !h.includes('mobile'))),
-          fatherCnic: headerTokens.findIndex((h) => h.includes('fathercnic') || (h.includes('father') && h.includes('cnic'))),
-          fatherPhone: headerTokens.findIndex((h) => h.includes('fatherphone') || h.includes('fathermobile') || (h.includes('father') && (h.includes('phone') || h.includes('mobile') || h.includes('cell')))),
-          fatherOccupation: headerTokens.findIndex((h) => h.includes('occupation') || h.includes('profession')),
-          motherName: headerTokens.findIndex((h) => h.includes('mothername') || (h.includes('mother') && !h.includes('phone') && !h.includes('cnic') && !h.includes('mobile'))),
-          motherCnic: headerTokens.findIndex((h) => h.includes('mothercnic') || (h.includes('mother') && h.includes('cnic'))),
-          motherPhone: headerTokens.findIndex((h) => h.includes('motherphone') || h.includes('mothermobile') || (h.includes('mother') && (h.includes('phone') || h.includes('mobile') || h.includes('cell')))),
-          discount: headerTokens.findIndex((h) => h.includes('discount') || h.includes('concession') || h.includes('scholarship')),
-        };
-
-        // Requirement 3: Match mandatory fields in student import CSV with those in add/edit student modal
-        const requiredHeaderDefs: { key: keyof typeof colMap; label: string }[] = [
-          { key: 'name', label: 'Name' },
-          { key: 'admissionDate', label: 'AdmissionDate' },
-          { key: 'firstBillingMonth', label: 'FirstBillingMonth' },
-          { key: 'class', label: 'Class' },
-          { key: 'fatherName', label: 'FatherName' },
-          { key: 'fatherCnic', label: 'FatherCnic' },
-          { key: 'fatherPhone', label: 'FatherPhone' },
-          { key: 'discount', label: 'MonthlyDiscount (or Discount)' },
-        ];
-
-        const missingHeaders = requiredHeaderDefs
-          .filter((def) => colMap[def.key] === -1)
-          .map((def) => def.label);
-
-        if (missingHeaders.length > 0) {
-          setImportStatus({
-            message: null,
-            error: `Missing required column(s) in CSV header: ${missingHeaders.join(', ')}. All mandatory columns matching the Student Registration Form (Name, AdmissionDate, FirstBillingMonth, Class, FatherName, FatherCnic, FatherPhone, MonthlyDiscount) must be present in the header.`,
-          });
+        const { map: colMap, error: headerError } = mapCsvHeader(parseCsvLine(lines[0], [delimiter]), STUDENT_CSV);
+        if (headerError) {
+          setImportStatus({ message: null, error: headerError });
           return;
         }
 
         const parsedList: PreviewRow[] = [];
         const seenRegInFile = new Map<string, string>();
-        const seenBFormInFile = new Map<string, string>();
+        const seenStudentIdInFile = new Map<string, string>();
 
         for (let i = 1; i < lines.length; i++) {
           const row = parseCsvLine(lines[i], [delimiter]);
@@ -608,15 +570,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
           const rawGender = colMap.gender !== -1 ? (row[colMap.gender] || '').trim() : '';
           const rawDob = colMap.dob !== -1 && row[colMap.dob] ? row[colMap.dob] : '';
           const dob = normalizeDateToISO(rawDob) || rawDob.trim();
-          const bFormNo = colMap.bform !== -1 ? (row[colMap.bform] || '').trim() : '';
+          const studentNationalId = colMap.studentId !== -1 ? (row[colMap.studentId] || '').trim() : '';
           const mobileNumber = colMap.mobile !== -1 ? (row[colMap.mobile] || '').trim() : '';
           const address = colMap.address !== -1 ? (row[colMap.address] || '').trim() : '';
           const fatherName = colMap.fatherName !== -1 ? (row[colMap.fatherName] || '').trim() : '';
-          const fatherCnic = colMap.fatherCnic !== -1 ? (row[colMap.fatherCnic] || '').trim() : '';
+          const fatherNationalId = colMap.fatherNationalId !== -1 ? (row[colMap.fatherNationalId] || '').trim() : '';
           const fatherPhone = colMap.fatherPhone !== -1 ? (row[colMap.fatherPhone] || '').trim() : '';
           const fatherOccupation = colMap.fatherOccupation !== -1 ? (row[colMap.fatherOccupation] || '').trim() : '';
           const motherName = colMap.motherName !== -1 ? (row[colMap.motherName] || '').trim() : '';
-          const motherCnic = colMap.motherCnic !== -1 ? (row[colMap.motherCnic] || '').trim() : '';
+          const motherNationalId = colMap.motherNationalId !== -1 ? (row[colMap.motherNationalId] || '').trim() : '';
           const motherPhone = colMap.motherPhone !== -1 ? (row[colMap.motherPhone] || '').trim() : '';
           const rawDiscount = colMap.discount !== -1 ? (row[colMap.discount] || '').trim() : '';
           const parsedDiscount = parseInt(rawDiscount.replace(/[^\d.-]/g, ''), 10);
@@ -665,24 +627,24 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             }
           }
 
-          // Pre-validate B-Form duplicates against existing students and earlier rows in file
-          if (!isDuplicate && bFormNo && bFormNo.trim() !== '') {
-            const bFormClean = bFormNo.trim().toLowerCase();
+          // Pre-validate Student ID duplicates against existing students and earlier rows in file
+          if (!isDuplicate && studentNationalId && studentNationalId.trim() !== '') {
+            const studentIdClean = studentNationalId.trim().toLowerCase();
             const existsInDb = students.find(
-              (s) => s.bFormNo && s.bFormNo.trim().toLowerCase() === bFormClean
+              (s) => s.studentNationalId && s.studentNationalId.trim().toLowerCase() === studentIdClean
             );
-            const existsInFileStudent = seenBFormInFile.get(bFormClean);
+            const existsInFileStudent = seenStudentIdInFile.get(studentIdClean);
 
             if (existsInDb) {
               isDuplicate = true;
               const existingLabel = [existsInDb.regNo, existsInDb.name].filter(Boolean).join(' ');
-              duplicateReason = `B-Form "${bFormNo}" already exists in system as '${existingLabel}'`;
+              duplicateReason = `Student ID "${studentNationalId}" already exists in system as '${existingLabel}'`;
             } else if (existsInFileStudent) {
               isDuplicate = true;
-              duplicateReason = `B-Form "${bFormNo}" duplicated in CSV with '${existsInFileStudent}'`;
+              duplicateReason = `Student ID "${studentNationalId}" duplicated in CSV with '${existsInFileStudent}'`;
             } else {
               const fileStudentLabel = [rawRegNo, name].filter(Boolean).join(' ') || `Row ${i}`;
-              seenBFormInFile.set(bFormClean, fileStudentLabel);
+              seenStudentIdInFile.set(studentIdClean, fileStudentLabel);
             }
           }
 
@@ -694,7 +656,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             classId: matchedClass ? matchedClass.id : '',
             rawClassName,
             fatherName,
-            fatherCnic,
+            fatherNationalId,
             fatherPhone,
             monthlyDiscount: isNaN(monthlyDiscount) ? -1 : monthlyDiscount,
             isDuplicate,
@@ -712,15 +674,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
             classId: matchedClass ? matchedClass.id : '',
             gender,
             dob,
-            bFormNo,
+            studentNationalId,
             mobileNumber,
             address,
             fatherName,
-            fatherCnic,
+            fatherNationalId,
             fatherPhone,
             fatherOccupation,
             motherName,
-            motherCnic,
+            motherNationalId,
             motherPhone,
             monthlyDiscount: isNaN(monthlyDiscount) ? 0 : monthlyDiscount,
             isValid: evalRes.isValid,
@@ -772,8 +734,10 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     return { total, selected, duplicates, invalid, caution, issues, valid };
   }, [previewRows]);
 
+  const { sort: previewSort, toggleSort: togglePreviewSort } = useSortState();
+
   const displayedPreviewRows = useMemo(() => {
-    return previewRows.filter((r) => {
+    const filtered = previewRows.filter((r) => {
       if (previewFilter === 'all') return true;
       if (previewFilter === 'issues') return !r.isValid || r.isDuplicate || r.hasCaution;
       if (previewFilter === 'caution') return r.hasCaution && r.isValid && !r.isDuplicate;
@@ -782,7 +746,23 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
       if (previewFilter === 'valid') return r.isValid && !r.isDuplicate;
       return true;
     });
-  }, [previewRows, previewFilter]);
+    return sortRows<PreviewRow>(filtered, previewSort, {
+      selected: (r) => r.selected && r.isValid && !r.isDuplicate,
+      regNo: (r) => r.regNo,
+      name: (r) => r.name,
+      class: (r) => classes.find((c) => c.id === r.classId)?.name || r.rawClassName,
+      admissionDate: (r) => r.admissionDate,
+      firstBillingMonth: (r) => r.firstBillingMonth,
+      fatherName: (r) => r.fatherName,
+      fatherNationalId: (r) => r.fatherNationalId,
+      fatherPhone: (r) => r.fatherPhone,
+      discount: (r) => r.monthlyDiscount || 0,
+      gender: (r) => r.gender,
+      dob: (r) => r.dob,
+      studentNationalId: (r) => r.studentNationalId,
+      status: (r) => r.validationMessage,
+    });
+  }, [previewRows, previewFilter, previewSort, classes]);
 
   const handleTogglePreviewRow = (id: string) => {
     setPreviewRows((prev) =>
@@ -813,15 +793,15 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         classId: r.classId,
         gender: r.gender ? r.gender : undefined,
         dob: r.dob,
-        bFormNo: r.bFormNo,
+        studentNationalId: r.studentNationalId,
         mobileNumber: r.mobileNumber || undefined,
         address: r.address,
         fatherName: r.fatherName,
-        fatherCnic: r.fatherCnic,
+        fatherNationalId: r.fatherNationalId,
         fatherPhone: r.fatherPhone || '',
         fatherOccupation: r.fatherOccupation,
         motherName: r.motherName,
-        motherCnic: r.motherCnic,
+        motherNationalId: r.motherNationalId,
         motherPhone: r.motherPhone || '',
         status: 'Active',
         monthlyDiscount: r.monthlyDiscount,
@@ -845,9 +825,17 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
   // Download Sample CSV
   const handleDownloadSampleCsv = () => {
-    const sampleCsv = `RegNo,Name,AdmissionDate,FirstBillingMonth,Class,Gender,DOB,BForm,StudentMobile,Address,FatherName,FatherCnic,FatherPhone,MotherName,MotherCnic,MotherPhone,MonthlyDiscount
-REG-1007,Ali Raza,2024-03-01,2024-03,Class 1,Male,2017-05-12,37405-1234567-1,+92 300 1234567,"House 12, Sector F-8, Islamabad",Raza Ahmed,37405-1234567-1,+92 300 1234567,Saima Raza,37405-7654321-1,+92 301 7654321,500
-REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321-2,+92 300 7654321,"House 45, Street 9, Rawalpindi",Fatima Ullah,37405-7654321-2,+92 300 7654322,Noreen Fatima,37405-9988776-2,+92 301 1234567,0`;
+    const C = STUDENT_CSV.columns;
+    const sampleHeaders = [
+      C.regNo, C.name, C.admissionDate, C.firstBillingMonth, C.class, C.gender, C.dob, C.studentId,
+      C.mobile, C.address, C.fatherName, C.fatherNationalId, C.fatherPhone, C.motherName,
+      C.motherNationalId, C.motherPhone, C.discount,
+    ];
+    const sampleRows = [
+      ['REG-1007', 'Alex Morgan', '2024-03-01', '2024-03', 'Class 1', 'Male', '2017-05-12', 'ID-1007-A', '+1 555 010 1007', '"12 Oak Street, Springfield"', 'Sam Morgan', 'NID-100200', '+1 555 010 1007', 'Jamie Morgan', 'NID-100201', '+1 555 010 2007', '500'],
+      ['REG-1008', 'Riley Carter', '2024-03-01', '2024-03', 'Class 2', 'Female', '2016-08-20', 'ID-1008-B', '+1 555 010 1008', '"45 Maple Avenue, Springfield"', 'Taylor Carter', 'NID-100300', '+1 555 010 1008', 'Jordan Carter', 'NID-100301', '+1 555 010 2008', '0'],
+    ];
+    const sampleCsv = [sampleHeaders.join(','), ...sampleRows.map((r) => r.join(','))].join('\n');
 
     downloadCsv('Skooler_Sample_Student_Import.csv', sampleCsv);
   };
@@ -933,7 +921,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
             )}
           </button>
 
-          {selectedIds.length > 0 && hasPermission('students.manage') && (
+          {selectedIds.length > 0 && hasPermission('students.delete') && (
             <button
               onClick={handleBulkDelete}
               className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
@@ -952,7 +940,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Search by student name, reg #, father name, CNIC, mobile, B-Form..."
+            placeholder="Search by student name, reg #, father name, National ID, mobile, Student ID..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
@@ -1275,13 +1263,15 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => handleDelete(s)}
-                                title="Delete Student"
-                                className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {hasPermission('students.delete') && (
+                                <button
+                                  onClick={() => handleDelete(s)}
+                                  title="Delete Student"
+                                  className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </>
                           ) : (
                             <>
@@ -1730,20 +1720,20 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200 whitespace-nowrap">
                       <tr>
-                        <th className="p-3 w-10 text-center">Import</th>
-                        <th className="p-3">Reg #</th>
-                        <th className="p-3">Student Name</th>
-                        <th className="p-3">Class</th>
-                        <th className="p-3">Adm Date</th>
-                        <th className="p-3">First Billing</th>
-                        <th className="p-3">Father Name</th>
-                        <th className="p-3">Father CNIC</th>
-                        <th className="p-3">Father Phone</th>
-                        <th className="p-3">Discount</th>
-                        <th className="p-3">Gender</th>
-                        <th className="p-3">DOB</th>
-                        <th className="p-3">B-Form</th>
-                        <th className="p-3">Status</th>
+                        <SortableTh label="Import" sortKey="selected" sort={previewSort} onSort={togglePreviewSort} className="w-10 text-center" />
+                        <SortableTh label="Reg #" sortKey="regNo" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Student Name" sortKey="name" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Class" sortKey="class" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Adm Date" sortKey="admissionDate" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="First Billing" sortKey="firstBillingMonth" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Father Name" sortKey="fatherName" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Father National ID" sortKey="fatherNationalId" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Father Phone" sortKey="fatherPhone" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Discount" sortKey="discount" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Gender" sortKey="gender" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="DOB" sortKey="dob" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Birth Cert. No." sortKey="studentNationalId" sort={previewSort} onSort={togglePreviewSort} />
+                        <SortableTh label="Status" sortKey="status" sort={previewSort} onSort={togglePreviewSort} />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 whitespace-nowrap">
@@ -1833,7 +1823,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                                 {r.fatherName || <span className="text-rose-600 font-bold italic">MISSING *</span>}
                               </td>
                               <td className="p-3 font-mono text-slate-700">
-                                {r.fatherCnic || <span className="text-rose-600 font-bold italic">MISSING *</span>}
+                                {r.fatherNationalId || <span className="text-rose-600 font-bold italic">MISSING *</span>}
                               </td>
                               <td className="p-3 font-mono text-slate-700">
                                 {r.fatherPhone || <span className="text-rose-600 font-bold italic">MISSING *</span>}
@@ -1860,7 +1850,7 @@ REG-1008,Amina Fatima,2024-03-01,2024-03,Class 2,Female,2016-08-20,37405-7654321
                                 {r.dob || <span className="text-slate-400 italic text-[11px]">-</span>}
                               </td>
                               <td className="p-3 font-mono text-slate-700">
-                                {r.bFormNo || <span className="text-slate-400 italic text-[11px]">-</span>}
+                                {r.studentNationalId || <span className="text-slate-400 italic text-[11px]">-</span>}
                               </td>
                               <td className="p-3">
                                 <span

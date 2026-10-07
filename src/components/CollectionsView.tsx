@@ -1,10 +1,13 @@
+import { SortableTh } from './SortableTh';
+import { useSortState, sortRows } from '../hooks/useTableSort';
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeCollection, FeeVoucher, PaymentTransaction, VoucherItem, PaymentReceiptData } from '../types';
-import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getEffectiveMultiple, roundUpToMultiple, getCurrencyCode } from '../utils/feeMath';
 import { normalizePaymentMode, paymentModeText, DEFAULT_PAYMENT_MODE, PAYMENT_MODES, type PaymentMode } from '../utils/paymentMode';
 import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
+import { mapCsvHeader, COLLECTION_CSV, CSV_REG_NO, CSV_STUDENT_NAME, CSV_CLASS, CSV_VOUCHER_NO, CSV_FEE_MONTH, CSV_PAYMENT_MODE, CSV_REFERENCE_NO } from '../utils/csvHeaders';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { DatePicker } from './DatePicker';
@@ -44,6 +47,8 @@ export const CollectionsView: React.FC = () => {
   const {
     activeMonth,
     collections,
+    historyFrom,
+    ensureHistoryLoaded,
     transactions,
     vouchers,
     students,
@@ -63,11 +68,12 @@ export const CollectionsView: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState('');
-  const [collapsedCollections, setCollapsedCollections] = useState<Record<string, boolean>>({});
+  // Itemized students/transactions stay hidden until a collection is expanded.
+  const [expandedCollections, setExpandedCollections] = useState<Record<string, boolean>>({});
   const [collectionToDelete, setCollectionToDelete] = useState<FeeCollection | null>(null);
 
   const toggleCollectionCollapse = (colId: string) => {
-    setCollapsedCollections((prev) => ({
+    setExpandedCollections((prev) => ({
       ...prev,
       [colId]: !prev[colId],
     }));
@@ -168,6 +174,24 @@ export const CollectionsView: React.FC = () => {
       errorMsg?: string;
     }[]
   >([]);
+  const { sort: bulkSort, toggleSort: toggleBulkSort } = useSortState();
+  const sortedBulkPreviewRows = useMemo(
+    () =>
+      sortRows<(typeof bulkPreviewRows)[number]>(bulkPreviewRows, bulkSort, {
+        selected: (r) => r.selected && r.isValid,
+        student: (r) => r.studentName || r.regNo,
+        voucherNo: (r) => r.voucherNo,
+        fine: (r) => r.fine,
+        netDue: (r) => r.netDue,
+        alreadyPaid: (r) => r.alreadyPaid,
+        remaining: (r) => r.remainingBalance,
+        amount: (r) => r.amount,
+        date: (r) => r.date,
+        mode: (r) => paymentModeText(r.paymentMode),
+        status: (r) => r.errorMsg || (r.amount === r.remainingBalance ? 'Clears Balance' : r.amount < (r.remainingBalance || 0) ? 'Partial Payment' : 'Overpayment'),
+      }),
+    [bulkPreviewRows, bulkSort]
+  );
 
   useEscapeKey(() => {
     if (isVoucherPickerOpen) {
@@ -208,9 +232,6 @@ export const CollectionsView: React.FC = () => {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
   }, [collections, searchTerm, sortField, sortDirection]);
-
-  // Backward compatible alias
-  const filteredCollections = sortedCollections;
 
   // Available vouchers for collection - only the single latest voucher per student
   const availableVouchers = useMemo(() => {
@@ -508,53 +529,12 @@ export const CollectionsView: React.FC = () => {
         };
 
         const delimiter = detectCsvDelimiter(rawLines[0]);
-        const firstTokens = parseCsvLine(rawLines[0], [delimiter]).map((t) => t.toLowerCase().replace(/["'\s_#\-]/g, ''));
-        const hasHeader =
-          firstTokens.some((t) => t.includes('reg') || t.includes('student') || t.includes('roll') || t.includes('admission') || t === 'id') ||
-          firstTokens.some((t) => t.includes('amount') || t.includes('paid') || t.includes('fee'));
-
-        let colMap = {
-          regNo: 0,
-          amount: 1,
-          fine: -1,
-          date: 2,
-          paymentMode: 3,
-          refNo: 4,
-        };
-
-        let dataLines = rawLines;
-
-        if (hasHeader) {
-          colMap = {
-            regNo: firstTokens.findIndex((t) => t.includes('reg') || t.includes('student') || t.includes('roll') || t.includes('admission') || t === 'id'),
-            amount: firstTokens.findIndex((t) => t.includes('amount') || t.includes('paid') || t.includes('fee') || t.includes('collec')),
-            fine: firstTokens.findIndex((t) => t.includes('fine') || t.includes('penalty') || t.includes('latefee') || t.includes('latecharge') || t.includes('late')),
-            date: firstTokens.findIndex((t) => t.includes('date') || t.includes('day') || t.includes('time') || t.includes('dt')),
-            paymentMode: firstTokens.findIndex((t) => t.includes('mode') || t.includes('method') || t.includes('type') || t.includes('channel')),
-            refNo: firstTokens.findIndex((t) => t.includes('ref') || t.includes('txn') || t.includes('trn') || t.includes('receipt') || t.includes('cheque') || t.includes('memo')),
-          };
-
-          if (colMap.regNo === -1) {
-            colMap.regNo = 0;
-          }
-          if (colMap.amount === -1) {
-            colMap.amount = colMap.regNo === 0 ? 1 : 0;
-          }
-          dataLines = rawLines.slice(1);
-        } else {
-          const sampleParts = parseCsvLine(rawLines[0], [delimiter]);
-          if (sampleParts.length >= 6) {
-            colMap = { regNo: 0, amount: 1, fine: 2, date: 3, paymentMode: 4, refNo: 5 };
-          } else if (sampleParts.length >= 5) {
-            colMap = { regNo: 0, amount: 1, fine: -1, date: 2, paymentMode: 3, refNo: 4 };
-          } else if (sampleParts.length === 4) {
-            if (/\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}/.test(sampleParts[2])) {
-              colMap = { regNo: 0, amount: 1, fine: -1, date: 2, paymentMode: 3, refNo: -1 };
-            } else {
-              colMap = { regNo: 0, amount: 1, fine: -1, date: -1, paymentMode: 2, refNo: 3 };
-            }
-          }
+        const { map: colMap, error: headerError } = mapCsvHeader(parseCsvLine(rawLines[0], [delimiter]), COLLECTION_CSV);
+        if (headerError) {
+          setBulkImportStatus({ message: null, error: headerError });
+          return;
         }
+        const dataLines = rawLines.slice(1);
 
         if (dataLines.length === 0) {
           setBulkImportStatus({ message: null, error: 'CSV file contains only a header row and no data records.' });
@@ -764,21 +744,22 @@ export const CollectionsView: React.FC = () => {
   const handleDownloadSampleBulkCsv = () => {
     const todayStr = new Date().toISOString().split('T')[0];
     const sampleVouchers = vouchers.filter((v) => v.month === activeMonth && v.status !== 'Reversed').slice(0, 4);
-    let sampleContent = `RegNo,PaidAmount,Fine,CollectionDate,PaymentMode,ReferenceNo\n`;
+    const sampleCols = COLLECTION_CSV.columns;
+    let sampleContent = `${[sampleCols.regNo, sampleCols.amount, sampleCols.fine, sampleCols.date, sampleCols.paymentMode, sampleCols.refNo].join(',')}\n`;
     if (sampleVouchers.length > 0) {
       sampleVouchers.forEach((v, i) => {
         const student = students.find((s) => s.id === v.studentId);
         const regNo = student?.regNo || `REG-${1001 + i}`;
         const remaining = Math.max(0, v.netDue - v.amountPaid);
         const sampleFine = i === 0 ? 500 : 0;
-        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${sampleFine},${todayStr},BankDeposit,PK-BANK-${1000 + i}\n`;
+        sampleContent += `${regNo},${remaining > 0 ? remaining : v.netDue},${sampleFine},${todayStr},BankDeposit,BANK-${1000 + i}\n`;
       });
     } else {
       const sampleStudents = students.slice(0, 3);
       if (sampleStudents.length > 0) {
         sampleStudents.forEach((s, i) => {
           const sampleFine = i === 0 ? 500 : 0;
-          sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankDeposit,PK-BANK-${1001 + i}\n`;
+          sampleContent += `${s.regNo},5000,${sampleFine},${todayStr},BankDeposit,BANK-${1001 + i}\n`;
         });
       } else {
         sampleContent += `REG-1001,8000,500,${todayStr},BankDeposit,TXN-9811\nREG-1002,3200,0,${todayStr},SchoolCashier,DESK-402\nREG-1003,4500,0,${todayStr},OnlineTransfer,ONL-9021\n`;
@@ -798,22 +779,22 @@ export const CollectionsView: React.FC = () => {
       'Collection Type',
       'Transaction #',
       'Transaction Date',
-      'Voucher #',
-      'Fee Month',
-      'Student Reg #',
-      'Student Name',
-      'Class',
-      'Payment Mode',
-      'Reference #',
-      'Amount Paid (Rs)',
-      'Session Total (Rs)',
+      CSV_VOUCHER_NO,
+      CSV_FEE_MONTH,
+      CSV_REG_NO,
+      CSV_STUDENT_NAME,
+      CSV_CLASS,
+      CSV_PAYMENT_MODE,
+      CSV_REFERENCE_NO,
+      `Amount Paid (${getCurrencyCode()})`,
+      `Session Total (${getCurrencyCode()})`,
       'Notes',
     ];
 
     const rows: (string | number)[][] = [];
     let grandTotal = 0;
 
-    filteredCollections.forEach((col) => {
+    sortedCollections.forEach((col) => {
       const colTxns = transactions.filter((t) => t.collectionId === col.id);
 
       if (colTxns.length === 0) {
@@ -886,7 +867,7 @@ export const CollectionsView: React.FC = () => {
   };
 
   const handleExportCsv = () => {
-    if (filteredCollections.length === 0) {
+    if (sortedCollections.length === 0) {
       showToast('No collection records to export.', 'error');
       return;
     }
@@ -904,11 +885,11 @@ export const CollectionsView: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    showToast(`Exported ${filteredCollections.length} collection session(s) to CSV.`, 'success');
+    showToast(`Exported ${sortedCollections.length} collection session(s) to CSV.`, 'success');
   };
 
   const handleCopyCsvToClipboard = () => {
-    if (filteredCollections.length === 0) {
+    if (sortedCollections.length === 0) {
       showToast('No collection records to copy.', 'error');
       return;
     }
@@ -1002,9 +983,9 @@ export const CollectionsView: React.FC = () => {
               type="button"
               id="btn-collections-export-csv"
               onClick={handleExportCsv}
-              disabled={filteredCollections.length === 0}
+              disabled={sortedCollections.length === 0}
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
-              title={filteredCollections.length === 0 ? 'No collection records to export' : 'Download Fee Collections & Payment Ledger as CSV'}
+              title={sortedCollections.length === 0 ? 'No collection records to export' : 'Download Fee Collections & Payment Ledger as CSV'}
             >
               <Download className="w-4 h-4 text-slate-600" />
               <span>Export CSV</span>
@@ -1013,9 +994,9 @@ export const CollectionsView: React.FC = () => {
               type="button"
               id="btn-collections-copy-csv"
               onClick={handleCopyCsvToClipboard}
-              disabled={filteredCollections.length === 0}
+              disabled={sortedCollections.length === 0}
               className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3.5 py-2 rounded-xl text-xs border border-slate-200 shadow-xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-slate-100"
-              title={filteredCollections.length === 0 ? 'No collection records to copy' : 'Copy Collections & Payment Ledger CSV data to clipboard'}
+              title={sortedCollections.length === 0 ? 'No collection records to copy' : 'Copy Collections & Payment Ledger CSV data to clipboard'}
             >
               {copiedCsv ? (
                 <>
@@ -1071,21 +1052,31 @@ export const CollectionsView: React.FC = () => {
         </div>
         <div className="flex items-center gap-4 text-slate-500 font-medium">
           <div>
-            Showing <span className="font-bold text-slate-800">{filteredCollections.length}</span> of{' '}
+            Showing <span className="font-bold text-slate-800">{sortedCollections.length}</span> of{' '}
             <span className="font-bold text-slate-800">{collections.length}</span> session(s)
           </div>
           <div className="h-4 w-px bg-slate-200" />
           <div className="text-emerald-700 font-bold">
-            Total: {formatCurrency(filteredCollections.reduce((sum, c) => sum + c.totalAmount, 0))}
+            Total: {formatCurrency(sortedCollections.reduce((sum, c) => sum + c.totalAmount, 0))}
           </div>
+          {historyFrom && historyFrom > '0000-01' && (
+            <button
+              type="button"
+              onClick={() => void ensureHistoryLoaded('0000-01')}
+              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-bold text-slate-600 cursor-pointer"
+              title="Closed months are loaded on demand"
+            >
+              Load older sessions
+            </button>
+          )}
         </div>
       </div>
 
       {/* Collections Grid View */}
       {viewMode === 'grid' && (
         <div className="space-y-4">
-          {filteredCollections.length > 0 ? (
-            filteredCollections.map((col) => {
+          {sortedCollections.length > 0 ? (
+            sortedCollections.map((col) => {
               const colTxns = transactions.filter((t) => t.collectionId === col.id);
 
               return (
@@ -1177,7 +1168,7 @@ export const CollectionsView: React.FC = () => {
                       type="button"
                       onClick={() => toggleCollectionCollapse(col.id)}
                       className="w-full flex items-center justify-between text-left py-1 group cursor-pointer select-none rounded-lg hover:bg-slate-50/80 px-1 -mx-1 transition"
-                      title={collapsedCollections[col.id] ? 'Expand itemized transactions' : 'Collapse itemized transactions'}
+                      title={expandedCollections[col.id] ? 'Hide itemized transactions' : 'Show itemized transactions'}
                     >
                       <div className="flex items-center gap-2">
                         <h4 className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 uppercase tracking-wider transition">
@@ -1188,16 +1179,16 @@ export const CollectionsView: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 group-hover:text-teal-700 transition">
-                        <span>{collapsedCollections[col.id] ? 'Expand' : 'Collapse'}</span>
-                        {collapsedCollections[col.id] ? (
-                          <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600 transition" />
-                        ) : (
+                        <span>{expandedCollections[col.id] ? 'Hide' : 'Show'}</span>
+                        {expandedCollections[col.id] ? (
                           <ChevronUp className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600 transition" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-600 transition" />
                         )}
                       </div>
                     </button>
 
-                    {!collapsedCollections[col.id] && (
+                    {expandedCollections[col.id] && (
                       <div className="divide-y divide-slate-100 bg-slate-50/70 rounded-xl border border-slate-100 text-xs overflow-hidden transition-all duration-200">
                         {colTxns.map((t) => {
                           const vch = vouchers.find((v) => v.id === t.voucherId);
@@ -1312,7 +1303,7 @@ export const CollectionsView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredCollections.length === 0 ? (
+                {sortedCollections.length === 0 ? (
                   <tr>
                     <td
                       colSpan={7}
@@ -1322,7 +1313,7 @@ export const CollectionsView: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredCollections.map((col, idx) => {
+                  sortedCollections.map((col, idx) => {
                     const colTxns = transactions.filter((t) => t.collectionId === col.id);
 
                     return (
@@ -1348,7 +1339,23 @@ export const CollectionsView: React.FC = () => {
                           {col.transactionCount}
                         </td>
                         <td className="p-3.5">
-                          <div className="flex flex-wrap items-center gap-1.5 max-w-xl">
+                          <button
+                            type="button"
+                            onClick={() => toggleCollectionCollapse(col.id)}
+                            aria-expanded={!!expandedCollections[col.id]}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-teal-700 transition cursor-pointer select-none"
+                          >
+                            <span>
+                              {expandedCollections[col.id] ? 'Hide' : 'Show'} {colTxns.length} student{colTxns.length === 1 ? '' : 's'}
+                            </span>
+                            {expandedCollections[col.id] ? (
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          {expandedCollections[col.id] && (
+                          <div className="flex flex-wrap items-center gap-1.5 max-w-xl mt-1.5">
                             {colTxns.map((t) => {
                               const stu = students.find((s) => s.id === t.studentId);
                               return (
@@ -1366,6 +1373,7 @@ export const CollectionsView: React.FC = () => {
                               );
                             })}
                           </div>
+                          )}
                         </td>
                         <td className="p-3.5 text-right font-mono font-bold text-sm text-emerald-700 whitespace-nowrap">
                           {formatCurrency(col.totalAmount)}
@@ -1600,11 +1608,11 @@ export const CollectionsView: React.FC = () => {
                                 <div>
                                   {rem > 0 ? (
                                     <span className="font-mono font-bold text-xs text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-md">
-                                      Bal: Rs. {Math.round(rem).toLocaleString()}
+                                      Bal: {formatCurrency(rem)}
                                     </span>
                                   ) : excess > 0 ? (
                                     <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md">
-                                      Adv: Rs. {Math.round(excess).toLocaleString()}
+                                      Adv: {formatCurrency(excess)}
                                     </span>
                                   ) : (
                                     <span className="font-mono font-bold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md">
@@ -1807,7 +1815,7 @@ export const CollectionsView: React.FC = () => {
                       <div>
                         <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                           <label className="block font-bold text-slate-700 text-[11px]">
-                            Collection Amount (Rs.) *
+                            Collection Amount ({getCurrencyCode()}) *
                           </label>
                           {selectedVoucher && dynamicRemaining > 0 ? (
                             <button
@@ -1829,7 +1837,7 @@ export const CollectionsView: React.FC = () => {
                         </div>
                         <div className="relative">
                           <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">
-                            Rs.
+                            {getCurrencyCode()}
                           </span>
                           <input
                             type="number"
@@ -1973,7 +1981,7 @@ export const CollectionsView: React.FC = () => {
                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                       >
                         <Receipt className="w-3.5 h-3.5" />
-                        <span>Record Collection ({directAmount ? formatCurrency(Number(directAmount)) : 'Rs. 0'})</span>
+                        <span>Record Collection ({directAmount ? formatCurrency(Number(directAmount)) : formatCurrency(0)})</span>
                       </button>
                     </div>
                   </form>
@@ -2165,21 +2173,21 @@ export const CollectionsView: React.FC = () => {
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                       <tr>
-                        <th className="p-3 w-10 text-center">Import</th>
-                        <th className="p-3">Student (Reg #)</th>
-                        <th className="p-3">Active Voucher</th>
-                        <th className="p-3 text-right">Fine Adj.</th>
-                        <th className="p-3 text-right">Net Due</th>
-                        <th className="p-3 text-right">Paid So Far</th>
-                        <th className="p-3 text-right">Remaining</th>
-                        <th className="p-3 text-right">Collection Amount</th>
-                        <th className="p-3">Collection Date</th>
-                        <th className="p-3">Payment Mode & Ref</th>
-                        <th className="p-3">Status</th>
+                        <SortableTh label="Import" sortKey="selected" sort={bulkSort} onSort={toggleBulkSort} className="w-10 text-center" />
+                        <SortableTh label="Student (Reg #)" sortKey="student" sort={bulkSort} onSort={toggleBulkSort} />
+                        <SortableTh label="Active Voucher" sortKey="voucherNo" sort={bulkSort} onSort={toggleBulkSort} />
+                        <SortableTh label="Fine Adj." sortKey="fine" sort={bulkSort} onSort={toggleBulkSort} className="text-right" />
+                        <SortableTh label="Net Due" sortKey="netDue" sort={bulkSort} onSort={toggleBulkSort} className="text-right" />
+                        <SortableTh label="Paid So Far" sortKey="alreadyPaid" sort={bulkSort} onSort={toggleBulkSort} className="text-right" />
+                        <SortableTh label="Remaining" sortKey="remaining" sort={bulkSort} onSort={toggleBulkSort} className="text-right" />
+                        <SortableTh label="Collection Amount" sortKey="amount" sort={bulkSort} onSort={toggleBulkSort} className="text-right" />
+                        <SortableTh label="Collection Date" sortKey="date" sort={bulkSort} onSort={toggleBulkSort} />
+                        <SortableTh label="Payment Mode & Ref" sortKey="mode" sort={bulkSort} onSort={toggleBulkSort} />
+                        <SortableTh label="Status" sortKey="status" sort={bulkSort} onSort={toggleBulkSort} />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {bulkPreviewRows.map((r) => (
+                      {sortedBulkPreviewRows.map((r) => (
                         <tr
                           key={r.id}
                           className={`hover:bg-slate-50/80 transition ${

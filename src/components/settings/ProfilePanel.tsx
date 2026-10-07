@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { InstituteProfile } from '../../types';
+import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../../utils/feeMath';
 import { DeleteInstitutionModal } from './DeleteInstitutionModal';
 import {
   AlertCircle,
@@ -323,6 +324,25 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
             />
           </div>
 
+          <div>
+            <label className="block font-bold text-slate-700 mb-1">Billing Currency</label>
+            <select
+              value={profileData.currency || DEFAULT_CURRENCY}
+              disabled={!hasPermission('settings.manage')}
+              onChange={(e) => setProfileData({ ...profileData, currency: e.target.value })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
+            >
+              {CURRENCY_OPTIONS.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} - {c.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Changes the currency label on screens, vouchers and reports. Existing amounts are not converted.
+            </p>
+          </div>
+
           <div className="sm:col-span-2">
             <label className="block font-bold text-slate-700 mb-1">Campus Address</label>
             <input
@@ -342,7 +362,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               value={profileData.phone}
               disabled={!hasPermission('settings.manage')}
               onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
-              placeholder="e.g. +92 (51) 887-2341"
+              placeholder="e.g. +1 (555) 010-0000"
               className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
             />
           </div>

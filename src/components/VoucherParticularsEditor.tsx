@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { VoucherItem, ParticularKind } from '../types';
 import { RotateCcw, Tag, Save } from 'lucide-react';
-import { formatCurrency, getEffectiveMultiple, roundUpToMultiple, resolveTemplateParticular } from '../utils/feeMath';
+import { formatCurrency, getEffectiveMultiple, roundUpToMultiple, resolveTemplateParticular, getCurrencyCode } from '../utils/feeMath';
 import { useApp } from '../context/AppContext';
 
 interface VoucherParticularsEditorProps {
@@ -137,10 +137,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
   // Check if current user has permission to edit voucher amounts / particulars
   const canEdit =
     !readOnly &&
-    (hasPermission('fees.collect') ||
-      hasPermission('fees.edit') ||
-      hasPermission('settings.manage') ||
-      hasPermission('fees.generate'));
+    (hasPermission('fees.collect') || hasPermission('fees.edit'));
 
   // Get active templates (sorted) with 6-tier waterfall overrides
   const resolvedRoster = useMemo(() => {
@@ -389,7 +386,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
               <div className="flex items-center gap-1 shrink-0">
                 {isEditableAmount ? (
                   <div className="flex items-center gap-1">
-                    <span className="font-mono text-[10px] text-slate-400 font-bold">Rs.</span>
+                    <span className="font-mono text-[10px] text-slate-400 font-bold">{getCurrencyCode()}</span>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -414,14 +411,14 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                   <div className={`w-24 text-right font-mono font-bold py-0.5 ${compact ? 'text-[11px]' : 'text-xs'}`}>
                     {isDiscount ? (
                       <span className="text-rose-600">
-                        {displayAmount > 0 ? formatCurrency(-displayAmount) : 'Rs. 0'}
+                        {displayAmount > 0 ? formatCurrency(-displayAmount) : formatCurrency(0)}
                       </span>
                     ) : item.amount < 0 ? (
                       <span className="text-rose-600">
                         {formatCurrency(item.amount)}
                       </span>
                     ) : isZero ? (
-                      <span className="text-slate-300 font-normal">Rs. 0</span>
+                      <span className="text-slate-300 font-normal">{formatCurrency(0)}</span>
                     ) : (
                       <span className="text-slate-800">{formatCurrency(displayAmount)}</span>
                     )}
@@ -448,7 +445,7 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
         <div className={`bg-white rounded border border-slate-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>
           <div className="text-[9px] text-slate-500 font-sans">Concession</div>
           <div className={`font-bold text-rose-700 ${compact ? 'text-[11px]' : 'text-xs'}`}>
-            {discountTotal > 0 ? formatCurrency(-discountTotal) : 'Rs. 0'}
+            {discountTotal > 0 ? formatCurrency(-discountTotal) : formatCurrency(0)}
           </div>
         </div>
         <div className={`bg-teal-50 rounded border border-teal-200 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}>

@@ -203,14 +203,6 @@ export function initializeSyncSnapshots(data: any): void {
     lastSyncedSnapshots['studentAccountHistory'] = histMap;
   }
 
-  if (Array.isArray(data.lockedMonths)) {
-    const lockMap = new Map<string, string>();
-    for (const m of data.lockedMonths) {
-      if (typeof m === 'string') lockMap.set(m, '1');
-    }
-    lastSyncedSnapshots['lockedMonths'] = lockMap;
-  }
-
   if (data.institute && data.institute.name) {
     lastSyncedSnapshots['institute'] = new Map([['_', JSON.stringify(data.institute)]]);
   }
@@ -304,7 +296,6 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
       collectionsRes,
       transactionsRes,
       bankAccountsRes,
-      auditLogsRes,
       historyRes,
       lockedMonthsRes,
       meRes,
@@ -318,11 +309,13 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
       safeJson(fetch('/api/transport/stops', { headers }), { items: [] }),
       safeJson(fetch('/api/transport/assignments', { headers }), { items: [] }),
       safeJson(fetch('/api/fee-templates', { headers }), { items: [] }),
-      safeJson(fetch('/api/vouchers', { headers }), { vouchers: [] }),
-      safeJson(fetch('/api/collections', { headers }), { collections: [] }),
-      safeJson(fetch('/api/transactions', { headers }), { transactions: [] }),
+      // Working set only: everything from the oldest unlocked month on, each
+      // student's latest voucher and every open voucher. Closed (locked)
+      // history is fetched on demand — see apiFetchHistory.
+      safeJson(fetch('/api/vouchers?window=1', { headers }), { vouchers: [] }),
+      safeJson(fetch('/api/collections?window=1', { headers }), { collections: [] }),
+      safeJson(fetch('/api/transactions?window=1', { headers }), { transactions: [] }),
       safeJson(fetch('/api/bank-accounts', { headers }), { items: [] }),
-      safeJson(fetch('/api/audit-logs', { headers }), { logs: [] }),
       safeJson(fetch('/api/student-account-history', { headers }), { entries: [] }),
       safeJson(fetch('/api/locked-months', { headers }), { months: [] }),
       safeJson(fetch('/api/auth/me', { headers }), {}),
@@ -349,13 +342,15 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
       stops: stopsRes.items || [],
       transportAssignments: assignmentsRes.items || [],
       templates: templatesRes.items || [],
+      institutionId: targetId,
+      windowStart: typeof vouchersRes.windowStart === 'string' ? vouchersRes.windowStart : undefined,
       vouchers: vouchersRes.vouchers || [],
       collections: collectionsRes.collections || [],
       transactions: transactionsRes.transactions || [],
       bankAccounts: bankAccountsRes.items || [],
-      auditLogs: auditLogsRes.logs || [],
       studentAccountHistory: historyRes.entries || [],
       lockedMonths: lockedMonthsRes.months || [],
+      lockedMonthDetails: lockedMonthsRes.details || [],
     };
 
     if (institution) {
@@ -376,6 +371,7 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
         email: institution.email || '',
         website: institution.website || '',
         regNo: institution.registration_no || institution.regNo || '',
+        currency: institution.currency || 'USD',
         sessionTimeoutMinutes: Number(instSettings?.sessionTimeoutMinutes) || 10,
         settings: instSettings,
       };
@@ -469,7 +465,7 @@ async function diffAndSyncSimpleCollection(
 
     if (failedMap.get(item.id) === serialized) {
       // Unchanged since it last permanently failed (e.g. still the same
-      // duplicate B-Form No.) — don't retry an operation that will fail
+      // duplicate Student ID No.) — don't retry an operation that will fail
       // identically forever.
       nextMap.set(item.id, serialized);
       continue;
@@ -582,81 +578,34 @@ async function diffAppendOnlyCollection(collectionName: string, endpoint: string
   lastSyncedSnapshots[collectionName] = nextMap;
 }
 
-/**
- * Syncs month-lock/unlock state against the server, reporting which
- * months failed to persist instead of silently marking them as synced.
- *
- * Previously this marked every month in `nextMap` unconditionally before
- * even attempting the request, and never checked `res.ok` — so a locked
- * month that was rejected server-side (permission edge case, transient
- * error) was recorded locally as "locked" forever, with no retry and no
- * indication to the user that the server never actually enforced the
- * lock. Month locks exist specifically to prevent further edits to a
- * closed accounting period, so a lock that silently didn't take is a
- * real integrity gap, not just a cosmetic one — this now only carries a
- * month forward as synced once the server has actually confirmed it.
- */
-async function diffLockedMonths(months: string[]): Promise<{ failedIds: string[] }> {
-  if (!activeInstitutionId) return { failedIds: [] };
-  const prevSet = lastSyncedSnapshots['lockedMonths'] || new Map<string, string>();
-  const nextMap = new Map<string, string>();
-  const currentSet = new Set(months);
-  const failedIds: string[] = [];
-
-  for (const month of months) {
-    if (prevSet.has(month)) {
-      // Already confirmed locked as of the last successful sync.
-      nextMap.set(month, '1');
-      continue;
-    }
-    try {
-      const res = await fetch('/api/locked-months', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
-        },
-        body: JSON.stringify({ month }),
-      });
-      if (res.ok) {
-        nextMap.set(month, '1');
-      } else {
-        console.warn(`[Sync] Failed to lock month ${month}: HTTP ${res.status}`);
-        failedIds.push(`lock:${month}`);
-        // Deliberately not added to nextMap, so this is retried on the
-        // next sync cycle instead of being treated as locked.
-      }
-    } catch (err) {
-      console.warn(`[Sync] Failed to lock month ${month}:`, err);
-      failedIds.push(`lock:${month}`);
-    }
+export async function apiLockMonth(month: string, notes: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/locked-months', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...instHeaders() },
+      body: JSON.stringify({ month, notes }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.success === false) return { success: false, error: body?.error || `Lock failed (HTTP ${res.status}).` };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error while locking month.' };
   }
+}
 
-  for (const month of prevSet.keys()) {
-    if (!currentSet.has(month)) {
-      try {
-        const res = await fetch(`/api/locked-months/${encodeURIComponent(month)}`, {
-          method: 'DELETE',
-          headers: activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {},
-        });
-        if (!res.ok && res.status !== 404) {
-          console.warn(`[Sync] Failed to unlock month ${month}: HTTP ${res.status}`);
-          failedIds.push(`unlock:${month}`);
-          // Keep tracking it as locked so the unlock is retried next
-          // cycle, and so the local UI doesn't show it as unlocked while
-          // the server still has it locked.
-          nextMap.set(month, '1');
-        }
-      } catch (err) {
-        console.warn(`[Sync] Failed to unlock month ${month}:`, err);
-        failedIds.push(`unlock:${month}`);
-        nextMap.set(month, '1');
-      }
-    }
+export async function apiUnlockMonth(month: string, reason: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/locked-months/${encodeURIComponent(month)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...instHeaders() },
+      body: JSON.stringify({ reason }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body?.success === false) return { success: false, error: body?.error || `Unlock failed (HTTP ${res.status}).` };
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error while unlocking month.' };
   }
-
-  lastSyncedSnapshots['lockedMonths'] = nextMap;
-  return { failedIds };
 }
 
 async function syncInstituteProfile(institute: any) {
@@ -680,6 +629,7 @@ async function syncInstituteProfile(institute: any) {
         email: institute.email,
         website: institute.website,
         registrationNo: institute.regNo,
+        currency: institute.currency || 'USD',
         settings: {
           sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || 10,
           ...(institute.settings || {}),
@@ -770,11 +720,6 @@ export function queueDatabaseSync(payload: any, instId?: string, delayMs = 0): v
       if (Array.isArray(toSend.studentAccountHistory)) {
         jobs.push(diffAppendOnlyCollection('studentAccountHistory', '/api/student-account-history', toSend.studentAccountHistory));
       }
-      if (Array.isArray(toSend.lockedMonths)) {
-        jobs.push(
-          diffLockedMonths(toSend.lockedMonths).then(({ failedIds }) => notifySyncFailure('lockedMonths', failedIds))
-        );
-      }
       if (toSend.institute) {
         jobs.push(syncInstituteProfile(toSend.institute));
       }
@@ -806,7 +751,10 @@ export function initLiveRealtimeSync(instId?: string): () => void {
     return () => {};
   }
 
-  const targetId = instId || activeInstitutionId || 'default';
+  const targetId = instId || activeInstitutionId;
+  if (!targetId) {
+    return () => {};
+  }
   let reconnectTimer: any = null;
 
   function connect() {
@@ -1078,20 +1026,6 @@ export async function apiDeleteInstitution(
   }
 }
 
-export async function apiListInstitutions(): Promise<{
-  success: boolean;
-  institutions?: Partial<Institution>[];
-  error?: string;
-}> {
-  try {
-    const res = await fetch('/api/institutions');
-    const data = await res.json();
-    return data;
-  } catch (err: any) {
-    return { success: false, error: 'Failed to retrieve institutions' };
-  }
-}
-
 export async function apiCreateInvite(
   institutionId: string,
   params: {
@@ -1121,10 +1055,9 @@ export async function apiCreateUser(
   params: { username: string; name: string; email?: string; password: string; role: string; permissions: string[] }
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/users', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-institution-id': instId },
+      headers: { 'Content-Type': 'application/json', ...instHeaders() },
       body: JSON.stringify(params),
     });
     const data = await res.json();
@@ -1139,10 +1072,9 @@ export async function apiUpdateUser(
   updates: Partial<{ username: string; name: string; email: string; role: string; permissions: string[]; status: string; password: string }>
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch(`/api/users/${encodeURIComponent(id)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'x-institution-id': instId },
+      headers: { 'Content-Type': 'application/json', ...instHeaders() },
       body: JSON.stringify(updates),
     });
     const data = await res.json();
@@ -1154,10 +1086,9 @@ export async function apiUpdateUser(
 
 export async function apiDeleteUser(id: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch(`/api/users/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-      headers: { 'x-institution-id': instId },
+      headers: { ...instHeaders() },
     });
     const data = await res.json();
     return data;
@@ -1194,13 +1125,12 @@ export async function apiGenerateVouchers(
     };
   }
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-client-id': CLIENT_ID,
-        'x-institution-id': instId,
+        ...instHeaders(),
       },
       body: JSON.stringify({ vouchers, carriedPriorVouchers }),
     });
@@ -1242,13 +1172,12 @@ export async function apiReceiveCollection(params: {
     };
   }
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/collections/receive', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-client-id': CLIENT_ID,
-        'x-institution-id': instId,
+        ...instHeaders(),
       },
       body: JSON.stringify(params),
     });
@@ -1286,13 +1215,12 @@ export async function apiCarryForwardBatch(params: {
     };
   }
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/carry-forward-batch', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-client-id': CLIENT_ID,
-        'x-institution-id': instId,
+        ...instHeaders(),
       },
       body: JSON.stringify(params),
     });
@@ -1326,13 +1254,12 @@ export async function apiVoucherBatchUpdate(params: {
     };
   }
   try {
-    const instId = activeInstitutionId || 'default';
     const res = await fetch('/api/vouchers/batch-update', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-client-id': CLIENT_ID,
-        'x-institution-id': instId,
+        ...instHeaders(),
       },
       body: JSON.stringify(params),
     });
@@ -1340,5 +1267,175 @@ export async function apiVoucherBatchUpdate(params: {
     return data;
   } catch (err: any) {
     return { success: false, error: err?.message || 'Network request failed' };
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Audit trail: fetched on demand (paged / filtered on the server), never part
+// of the startup state.
+// ---------------------------------------------------------------------------
+
+export interface AuditLogQuery {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  actionType?: string[];
+  operator?: string;
+  module?: string;
+  month?: string;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+  dateFrom?: string;
+  dateTo?: string;
+  export?: boolean;
+}
+
+const auditQueryString = (query: AuditLogQuery): string => {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined || v === null || v === '' || v === false) continue;
+    if (k === 'export') {
+      sp.set('export', '1');
+      continue;
+    }
+    if (Array.isArray(v)) {
+      if (v.length > 0) sp.set(k, v.join(','));
+    } else {
+      sp.set(k, String(v));
+    }
+  }
+  return sp.toString();
+};
+
+const instHeaders = (): Record<string, string> =>
+  activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {};
+
+export async function apiFetchAuditLogs(
+  query: AuditLogQuery,
+  signal?: AbortSignal
+): Promise<{ logs: any[]; total: number } | null> {
+  try {
+    const res = await fetch(`/api/audit-logs?${auditQueryString(query)}`, { headers: instHeaders(), signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return { logs: data.logs || [], total: Number(data.total) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+export interface AuditSummary {
+  total: number;
+  byType: Record<string, { count: number; amount: number }>;
+  operators: { id: string; username: string; name: string }[];
+  months: string[];
+  modules: string[];
+}
+
+export async function apiFetchAuditSummary(
+  query: Pick<AuditLogQuery, 'dateFrom' | 'dateTo'>,
+  signal?: AbortSignal
+): Promise<AuditSummary | null> {
+  try {
+    const res = await fetch(`/api/audit-logs/summary?${auditQueryString(query)}`, { headers: instHeaders(), signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      total: Number(data.total) || 0,
+      byType: data.byType || {},
+      operators: data.operators || [],
+      months: data.months || [],
+      modules: data.modules || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function apiPurgeAuditLogs(
+  olderThanMonths: number,
+  dryRun: boolean
+): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    const res = await fetch('/api/audit-logs/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...instHeaders() },
+      body: JSON.stringify({ olderThanMonths, dryRun }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, count: 0, error: data.error || 'Purge failed.' };
+    return { success: true, count: Number(data.count) || 0 };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || 'Purge failed.' };
+  }
+}
+
+/** Fire-and-forget: records a browser-originated event on the server (operator comes from the session). */
+export function apiPostAuditEvent(entry: Record<string, any>): void {
+  fetch('/api/audit-logs/client-event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...instHeaders() },
+    body: JSON.stringify(entry),
+  }).catch(() => {});
+}
+
+
+/**
+ * Closed-history fetch (vouchers + their collections and transactions).
+ * Either a month range (monthFrom <= month < monthBefore) or one student's
+ * history before `monthBefore`.
+ */
+export async function apiFetchHistory(params: {
+  monthFrom?: string;
+  monthBefore?: string;
+  studentId?: string;
+}): Promise<{ success: boolean; vouchers: any[]; collections: any[]; transactions: any[]; error?: string }> {
+  const q = new URLSearchParams();
+  if (params.monthFrom) q.set('monthFrom', params.monthFrom);
+  if (params.monthBefore) q.set('monthBefore', params.monthBefore);
+  if (params.studentId) q.set('studentId', params.studentId);
+  const qs = q.toString();
+  try {
+    const get = async (path: string) => {
+      const res = await fetch(`${path}?${qs}`, { headers: instHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+    const [v, c, t] = await Promise.all([get('/api/vouchers'), get('/api/collections'), get('/api/transactions')]);
+    return {
+      success: true,
+      vouchers: v.vouchers || [],
+      collections: c.collections || [],
+      transactions: t.transactions || [],
+    };
+  } catch (err: any) {
+    return { success: false, vouchers: [], collections: [], transactions: [], error: err?.message || 'Failed to load history.' };
+  }
+}
+
+/** Ids of EVERY voucher, collection and transaction (not just the working set) — used by destructive purges. */
+export async function apiFetchAllFinancialIds(): Promise<{
+  success: boolean;
+  voucherIds: string[];
+  collectionIds: string[];
+  transactionIds: string[];
+  error?: string;
+}> {
+  try {
+    const get = async (path: string) => {
+      const res = await fetch(path, { headers: instHeaders() });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    };
+    const [v, c, t] = await Promise.all([get('/api/vouchers'), get('/api/collections'), get('/api/transactions')]);
+    return {
+      success: true,
+      voucherIds: (v.vouchers || []).map((x: any) => x.id),
+      collectionIds: (c.collections || []).map((x: any) => x.id),
+      transactionIds: (t.transactions || []).map((x: any) => x.id),
+    };
+  } catch (err: any) {
+    return { success: false, voucherIds: [], collectionIds: [], transactionIds: [], error: err?.message || 'Failed to list records.' };
   }
 }

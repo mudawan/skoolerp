@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan to visually unify the three tabs under Defaulters & Arrears (Unpaid Defaulters, Zero-Due / Settled, and Carried Forward) with consistent columns, page-relative serial numbers, checkboxes, and tab-specific bulk action buttons.",
-  "updatedAt":  "2026-10-04T02:33:02.340400949Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

@@ -4,6 +4,8 @@ import {
   subscribeDbStatus,
   checkBackendHealth,
   fetchServerState,
+  apiFetchAuditSummary,
+  apiPurgeAuditLogs,
   queueDatabaseSync,
   DbStatus,
 } from '../../services/apiSync';
@@ -42,10 +44,12 @@ export const DatabaseBackupsPanel: React.FC = () => {
     collections,
     transactions,
     bankAccounts,
-    auditLogs,
     themeConfig,
     hasPermission,
     logAuditEvent,
+    auditRetentionMonths,
+    setAuditRetentionMonths,
+    showToast,
   } = useApp();
 
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
@@ -64,6 +68,35 @@ export const DatabaseBackupsPanel: React.FC = () => {
   }>({});
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Audit log size + retention (the logs themselves live on the server)
+  const [auditTotal, setAuditTotal] = useState<number | null>(null);
+  const [purgeMonths, setPurgeMonths] = useState(6);
+  const [purgePreview, setPurgePreview] = useState<number | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
+
+  useEffect(() => {
+    apiFetchAuditSummary({}).then((r) => setAuditTotal(r ? r.total : null));
+  }, []);
+
+  const previewPurge = async () => {
+    const r = await apiPurgeAuditLogs(purgeMonths, true);
+    if (r.success) setPurgePreview(r.count);
+    else showToast(r.error || 'Could not count entries.', 'error');
+  };
+
+  const confirmPurge = async () => {
+    setIsPurging(true);
+    const r = await apiPurgeAuditLogs(purgeMonths, false);
+    setIsPurging(false);
+    setPurgePreview(null);
+    if (r.success) {
+      showToast(`Purged ${r.count} audit log entr${r.count === 1 ? 'y' : 'ies'}.`);
+      apiFetchAuditSummary({}).then((x) => setAuditTotal(x ? x.total : null));
+    } else {
+      showToast(r.error || 'Purge failed.', 'error');
+    }
+  };
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
 
   // Restore state
@@ -122,7 +155,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
       actionType: 'settings_change',
       actionTitle: 'Database Backup Exported',
       module: 'Settings',
-      description: `Manual database backup downloaded (${students.length} students, ${vouchers.length} vouchers)`,
+      description: `Manual database backup downloaded (${students.length} students).`,
     });
   };
 
@@ -330,7 +363,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
                 <div>• Classes: <strong className="text-slate-800">{classes.length}</strong></div>
                 <div>• Vouchers: <strong className="text-slate-800">{vouchers.length}</strong></div>
                 <div>• Collections: <strong className="text-slate-800">{collections.length}</strong></div>
-                <div>• Audit Logs: <strong className="text-slate-800">{auditLogs.length}</strong></div>
+                <div>• Audit Logs: <strong className="text-slate-800">{auditTotal === null ? '…' : auditTotal}</strong></div>
               </div>
             </div>
           </div>
@@ -436,6 +469,90 @@ export const DatabaseBackupsPanel: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Audit Log Retention */}
+      {hasPermission('settings.manage') && (
+        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
+          <div>
+            <h4 className="font-bold text-slate-900 text-sm">Audit Log Retention</h4>
+            <p className="text-xs text-slate-500">
+              Older activity entries are removed automatically (checked at server start and daily). Security, restore and
+              cleanup entries are always kept. Currently stored: <strong>{auditTotal === null ? '…' : auditTotal}</strong> entries.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <label htmlFor="select-audit-retention" className="font-semibold text-slate-700">
+              Keep audit logs for
+            </label>
+            <select
+              id="select-audit-retention"
+              value={auditRetentionMonths}
+              onChange={(e) => setAuditRetentionMonths(Number(e.target.value))}
+              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            >
+              {[3, 6, 12, 24].map((m) => (
+                <option key={m} value={m}>
+                  {m} months
+                </option>
+              ))}
+              {![0, 3, 6, 12, 24].includes(auditRetentionMonths) && (
+                <option value={auditRetentionMonths}>{auditRetentionMonths} months</option>
+              )}
+              <option value={0}>Keep forever</option>
+            </select>
+          </div>
+          <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs">
+            <span className="font-semibold text-slate-700">Purge now: entries older than</span>
+            <select
+              id="select-audit-purge-months"
+              value={purgeMonths}
+              onChange={(e) => {
+                setPurgeMonths(Number(e.target.value));
+                setPurgePreview(null);
+              }}
+              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none"
+            >
+              {[1, 3, 6, 12, 24].map((m) => (
+                <option key={m} value={m}>
+                  {m} month{m === 1 ? '' : 's'}
+                </option>
+              ))}
+            </select>
+            {purgePreview === null ? (
+              <button
+                type="button"
+                id="btn-audit-purge-preview"
+                onClick={previewPurge}
+                className="px-3 py-1.5 border border-rose-200 text-rose-700 hover:bg-rose-50 font-bold rounded-xl cursor-pointer"
+              >
+                Count entries
+              </button>
+            ) : (
+              <>
+                <span className="text-slate-600">
+                  <strong>{purgePreview}</strong> entr{purgePreview === 1 ? 'y' : 'ies'} will be permanently deleted.
+                </span>
+                <button
+                  type="button"
+                  id="btn-audit-purge-confirm"
+                  disabled={isPurging || purgePreview === 0}
+                  onClick={confirmPurge}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold rounded-xl cursor-pointer"
+                >
+                  {isPurging ? 'Purging…' : 'Delete them'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPurgePreview(null)}
+                  className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 font-semibold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 3. Production Deployment & Database Engine Quick Reference */}
       <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">

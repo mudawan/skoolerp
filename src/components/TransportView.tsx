@@ -4,6 +4,7 @@ import { useEscapeKey } from '../hooks/useEscapeKey';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
 import { calculateTransportFee, formatCurrency, getDaysInMonth } from '../utils/feeMath';
 import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
+import { mapCsvHeader, TRANSPORT_CSV, STOP_CSV } from '../utils/csvHeaders';
 import { StudentAvatar } from './StudentAvatar';
 import { ConfirmModal } from './ConfirmModal';
 import { BusModal } from './transport/BusModal';
@@ -511,12 +512,13 @@ export const TransportView: React.FC = () => {
   const handleDownloadSampleTransportCsv = () => {
     const sampleStudents = students.filter((s) => s.status === 'Active').slice(0, 3);
     const sampleBus = buses[0]?.busNumber || 'BUS-01';
-    const sampleStop1 = stops[0]?.name || 'Saddar';
-    const sampleStop2 = stops[1]?.name || stops[0]?.name || 'G-10 Markaz';
+    const sampleStop1 = stops[0]?.name || 'Central Station';
+    const sampleStop2 = stops[1]?.name || stops[0]?.name || 'North Plaza';
     const targetMonth = activeMonth;
     const sampleMonthDays = getDaysInMonth(targetMonth);
 
-    const headers = ['RegNo', 'BusNumber', 'StopName', 'TripType', 'DaysAvailed', 'Discount'];
+    const tc = TRANSPORT_CSV.columns;
+    const headers = [tc.regNo, tc.bus, tc.stop, tc.tripType, tc.days, tc.discount];
     const rows = [
       [sampleStudents[0]?.regNo || 'REG-1001', sampleBus, sampleStop1, 'RoundTrip', String(sampleMonthDays), '0'],
       [sampleStudents[1]?.regNo || 'REG-1002', sampleBus, sampleStop2, 'OneWay', String(sampleMonthDays), '200'],
@@ -556,22 +558,9 @@ export const TransportView: React.FC = () => {
         }
 
         const delimiter = detectCsvDelimiter(lines[0]);
-        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
-
-        const colMap = {
-          regNo: headerTokens.findIndex((h) => h.includes('reg') || h.includes('student') || h.includes('roll') || h.includes('id')),
-          bus: headerTokens.findIndex((h) => h.includes('bus') || h.includes('vehicle') || h.includes('van') || h.includes('fleet')),
-          stop: headerTokens.findIndex((h) => h.includes('stop') || h.includes('station') || h.includes('route') || h.includes('location')),
-          tripType: headerTokens.findIndex((h) => h.includes('trip') || h.includes('type') || h.includes('direction')),
-          days: headerTokens.findIndex((h) => h.includes('day') || h.includes('availed') || h.includes('charged')),
-          discount: headerTokens.findIndex((h) => h.includes('discount') || h.includes('concession') || h.includes('scholarship') || h.includes('deduction')),
-        };
-
-        if (colMap.regNo === -1) {
-          setBulkImportStatus({
-            message: null,
-            error: 'Missing required column: "RegNo" (Student Registration #) must be present in the CSV header.',
-          });
+        const { map: colMap, error: headerError } = mapCsvHeader(parseCsvLine(lines[0], [delimiter]), TRANSPORT_CSV);
+        if (headerError) {
+          setBulkImportStatus({ message: null, error: headerError });
           return;
         }
 
@@ -869,13 +858,14 @@ export const TransportView: React.FC = () => {
   };
 
   const handleDownloadSampleStopsCsv = () => {
-    const headers = ['StopName', 'Area', 'Landmark', 'MonthlyFare', 'SortPosition'];
+    const sc = STOP_CSV.columns;
+    const headers = [sc.name, sc.area, sc.landmark, sc.fare, sc.sortOrder];
     const rows = [
-      ['Saddar', 'Rawalpindi Cantt', 'Near Metro Station', '3500', '1'],
-      ['G-10 Markaz', 'Islamabad', 'Near Post Office', '4000', '2'],
-      ['F-8 Markaz', 'Islamabad', 'Near Ayub Market', '4500', '3'],
-      ['Commercial Market', 'Satellite Town', 'Near Shell Pump', '3200', '4'],
-      ['Bahria Town Phase 4', 'Rawalpindi', 'Civic Center', '5000', '5'],
+      ['Central Station', 'Downtown', 'Near Metro Station', '3500', '1'],
+      ['North Plaza', 'Northside', 'Near Post Office', '4000', '2'],
+      ['East Market', 'Eastside', 'Near Town Market', '4500', '3'],
+      ['Commercial Market', 'Riverside', 'Near Gas Station', '3200', '4'],
+      ['Hillcrest Estate', 'Westside', 'Civic Center', '5000', '5'],
     ];
 
     downloadCsv(
@@ -911,21 +901,9 @@ export const TransportView: React.FC = () => {
         }
 
         const delimiter = detectCsvDelimiter(lines[0]);
-        const headerTokens = parseCsvLine(lines[0], [delimiter]).map((h) => h.toLowerCase().replace(/["'\s_]/g, ''));
-
-        const colMap = {
-          name: headerTokens.findIndex((h) => h.includes('stop') || h.includes('name') || h.includes('location') || h.includes('station') || h.includes('point')),
-          area: headerTokens.findIndex((h) => h.includes('area') || h.includes('sector') || h.includes('zone') || h.includes('city') || h.includes('town')),
-          landmark: headerTokens.findIndex((h) => h.includes('landmark') || h.includes('place') || h.includes('note') || h.includes('desc')),
-          fare: headerTokens.findIndex((h) => h.includes('fare') || h.includes('rate') || h.includes('amount') || h.includes('monthly') || h.includes('fee') || h.includes('price')),
-          sortOrder: headerTokens.findIndex((h) => h.includes('sort') || h.includes('order') || h.includes('position') || h.includes('pos') || h.includes('seq')),
-        };
-
-        if (colMap.name === -1) {
-          setBulkStopsImportStatus({
-            message: null,
-            error: 'Missing required column: "StopName" or "Name" must be present in the CSV header.',
-          });
+        const { map: colMap, error: headerError } = mapCsvHeader(parseCsvLine(lines[0], [delimiter]), STOP_CSV);
+        if (headerError) {
+          setBulkStopsImportStatus({ message: null, error: headerError });
           return;
         }
 
@@ -1558,13 +1536,15 @@ export const TransportView: React.FC = () => {
                               >
                                 <Pencil className="w-4 h-4" />
                               </button>
-                              <button
-                                onClick={() => setBusToDelete(bus)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                                title="Delete Bus"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {hasPermission('transport.delete') && (
+                                <button
+                                  onClick={() => setBusToDelete(bus)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+                                  title="Delete Bus"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1690,13 +1670,15 @@ export const TransportView: React.FC = () => {
                                   >
                                     <Pencil className="w-4 h-4" />
                                   </button>
-                                  <button
-                                    onClick={() => setBusToDelete(bus)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                                    title="Delete Bus"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {hasPermission('transport.delete') && (
+                                    <button
+                                      onClick={() => setBusToDelete(bus)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+                                      title="Delete Bus"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             )}
@@ -1896,13 +1878,15 @@ export const TransportView: React.FC = () => {
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => setStopToDelete(stop)}
-                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded cursor-pointer transition"
-                                title="Delete Bus Stop"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {hasPermission('transport.delete') && (
+                                <button
+                                  onClick={() => setStopToDelete(stop)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded cursor-pointer transition"
+                                  title="Delete Bus Stop"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2011,13 +1995,15 @@ export const TransportView: React.FC = () => {
                                   >
                                     <Pencil className="w-4 h-4" />
                                   </button>
-                                  <button
-                                    onClick={() => setStopToDelete(stop)}
-                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
-                                    title="Delete Bus Stop"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  {hasPermission('transport.delete') && (
+                                    <button
+                                      onClick={() => setStopToDelete(stop)}
+                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+                                      title="Delete Bus Stop"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             )}
@@ -2195,14 +2181,16 @@ export const TransportView: React.FC = () => {
                 >
                   Deselect All
                 </button>
-                <button
-                  type="button"
-                  onClick={handleBulkDeleteSelectedAsgns}
-                  className="flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1 rounded-lg shadow-2xs transition cursor-pointer"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Remove Selected ({selectedAsgnIds.length})</span>
-                </button>
+                {hasPermission('transport.delete') && (
+                  <button
+                    type="button"
+                    onClick={handleBulkDeleteSelectedAsgns}
+                    className="flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1 rounded-lg shadow-2xs transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Remove Selected ({selectedAsgnIds.length})</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -2340,7 +2328,7 @@ export const TransportView: React.FC = () => {
                           <div>
                             <span className="font-medium">{stop?.name}</span>
                             <span className="block text-[10px] text-slate-400">
-                              Base: {stop ? formatCurrency(stop.monthlyFare) : 'Rs. 0'}
+                              Base: {stop ? formatCurrency(stop.monthlyFare) : formatCurrency(0)}
                             </span>
                           </div>
                         </td>
@@ -2377,12 +2365,14 @@ export const TransportView: React.FC = () => {
                                 <Pencil className="w-3.5 h-3.5" />
                                 Edit
                               </button>
-                              <button
-                                onClick={() => setAsgnToDelete(a)}
-                                className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
-                              >
-                                Remove
-                              </button>
+                              {hasPermission('transport.delete') && (
+                                <button
+                                  onClick={() => setAsgnToDelete(a)}
+                                  className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                                >
+                                  Remove
+                                </button>
+                              )}
                             </div>
                           )}
                         </td>

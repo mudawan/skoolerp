@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { SchoolClass } from '../types';
-import { formatCurrency } from '../utils/feeMath';
+import { formatCurrency, getCurrencyCode } from '../utils/feeMath';
 import { ConfirmModal } from './ConfirmModal';
 import {
   AlertCircle,
@@ -407,14 +407,16 @@ export const ClassesView: React.FC = () => {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(cls)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                          title="Delete Class"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {hasPermission('classes.delete') && (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(cls)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                            title="Delete Class"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -564,14 +566,16 @@ export const ClassesView: React.FC = () => {
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(cls)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                                title="Delete Class"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {hasPermission('classes.delete') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(cls)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                                  title="Delete Class"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         )}
@@ -624,7 +628,7 @@ export const ClassesView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-bold text-slate-700 mb-1">Standard Monthly Fee (Rs.) *</label>
+                <label className="block font-bold text-slate-700 mb-1">Standard Monthly Fee ({getCurrencyCode()}) *</label>
                 <input
                   type="number"
                   required

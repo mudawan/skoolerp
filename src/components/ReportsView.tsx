@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { CSV_REG_NO } from '../utils/csvHeaders';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, formatMonthName, formatStudentAge } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, formatStudentAge, getArrearsByStudent, type StudentArrears } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { StudentAvatar } from './StudentAvatar';
@@ -79,7 +80,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onReportTypeChange,
   onStudentIdChange,
 }) => {
-  const { activeMonth, classes, vouchers, students, institute, bankAccounts, transactions, themeConfig } = useApp();
+  const { activeMonth, classes, vouchers, students, institute, bankAccounts, transactions, themeConfig, historyFrom, ensureHistoryLoaded, ensureStudentHistory } = useApp();
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   const [reportType, setReportType] = useState<'feeCollection' | 'studentLedger' | 'outstanding'>(
@@ -136,6 +137,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
+
+  // Closed (locked) history loads on demand: whole-history views fetch it all,
+  // a single student's view fetches just that student.
+  useEffect(() => {
+    if (!historyFrom) return;
+    const needsAll =
+      (feeReportTab === 'classWise' && classDateFilter === 'all') ||
+      (feeReportTab === 'dateRange' && dateFrom && dateFrom.slice(0, 7) < historyFrom);
+    if (needsAll) void ensureHistoryLoaded('0000-01');
+  }, [feeReportTab, classDateFilter, dateFrom, historyFrom, ensureHistoryLoaded]);
+
+  useEffect(() => {
+    if (feeReportTab === 'studentWise' && selectedStudentId) void ensureStudentHistory(selectedStudentId);
+  }, [feeReportTab, selectedStudentId, ensureStudentHistory]);
 
   const prevMonthStr = (month: string): string => {
     const [y, mo] = month.split('-').map(Number);
@@ -258,39 +273,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const thisMonthCollection = monthTxns.reduce((sum, t) => sum + t.amount, 0);
   const studentsPaidThisMonth = new Set(monthTxns.map((t) => t.studentId)).size;
 
-  const vouchersWithReceivable = vouchers.filter(
-    (v) => v.status !== 'Reversed' && v.amountPaid < v.netDue
-  );
+  // Open receivables: a voucher is owed only while no later voucher has
+  // absorbed its balance (see getStudentArrears in feeMath).
+  const arrearsMap = getArrearsByStudent(vouchers);
+  const NO_ARREARS: StudentArrears = { openVouchers: [], outstanding: 0, oldestOpenMonth: '', arrearsMonths: [] };
+  const arrearsByStudent = students.map((s) => ({ student: s, arrears: arrearsMap.get(s.id) || NO_ARREARS }));
+
+  const vouchersWithReceivable = arrearsByStudent.flatMap((x) => x.arrears.openVouchers);
 
   // Student Outstanding Balances (per student, active receivables)
-  const studentOutstandingRows = students
-    .map((s) => {
+  const studentOutstandingRows = arrearsByStudent
+    .filter(({ arrears }) => arrears.outstanding > 0)
+    .map(({ student: s, arrears }) => {
       const cls = classes.find((c) => c.id === s.classId);
-
-      const allStudentVouchers = vouchers
-        .filter((v) => v.studentId === s.id && v.status !== 'Reversed')
-        .sort((a, b) => a.month.localeCompare(b.month));
-
-      const overdueVouchers = allStudentVouchers.filter(
-        (v) => Math.max(0, v.netDue - v.amountPaid) > 0
-      );
-
-      const uncarriedUnpaidVouchers = allStudentVouchers.filter(
-        (v) => v.status !== 'Carried' && v.amountPaid < v.netDue
-      );
-
-      const totalOutstanding =
-        uncarriedUnpaidVouchers.length > 0
-          ? uncarriedUnpaidVouchers.reduce((sum, v) => sum + (v.netDue - v.amountPaid), 0)
-          : overdueVouchers.length > 0
-          ? Math.max(0, overdueVouchers.slice(-1)[0].netDue - overdueVouchers.slice(-1)[0].amountPaid)
-          : 0;
-
-      const unpaidMonths = overdueVouchers.map((v) => v.month);
-      const unpaidMonthsCount = unpaidMonths.length;
-      const oldestUnpaidMonth = unpaidMonths[0] || '';
-      const formattedMonthsList = overdueVouchers.map((v) => formatMonthName(v.month)).join(', ');
-
       return {
         studentId: s.id,
         studentNo: s.studentNo,
@@ -302,43 +297,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         className: cls?.name || 'Class',
         fatherName: s.fatherName,
         fatherPhone: s.fatherPhone,
-        unpaidVoucherCount: overdueVouchers.length,
-        unpaidMonthsCount,
-        oldestUnpaidMonth,
-        formattedMonthsList,
-        totalOutstanding,
+        unpaidVoucherCount: arrears.openVouchers.length,
+        unpaidMonthsCount: arrears.arrearsMonths.length,
+        oldestUnpaidMonth: arrears.oldestOpenMonth,
+        formattedMonthsList: arrears.arrearsMonths.map((m) => formatMonthName(m)).join(', '),
+        totalOutstanding: arrears.outstanding,
+        openVouchers: arrears.openVouchers,
       };
-    })
-    .filter((row) => row.totalOutstanding > 0);
+    });
 
   const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
 
-  const pendingRows: ReportRow[] = (() => {
-    const rows: ReportRow[] = [];
-    for (const r of studentOutstandingRows) {
-      const sv = vouchers
-        .filter((v) => v.studentId === r.studentId && v.status !== 'Reversed')
-        .sort((a, b) => a.month.localeCompare(b.month));
-      const uncarried = sv.filter((v) => v.status !== 'Carried' && v.amountPaid < v.netDue);
-      const included =
-        uncarried.length > 0
-          ? uncarried
-          : sv.filter((v) => v.amountPaid < v.netDue).slice(-1);
-      for (const v of included) {
-        rows.push({
-          date: v.dueDate,
-          regNo: r.regNo,
-          studentName: r.name,
-          className: r.className,
-          feeMonth: formatMonthName(v.month),
-          total: v.netDue,
-          paid: v.amountPaid,
-          balance: v.netDue - v.amountPaid,
-        });
-      }
-    }
-    return rows;
-  })();
+  const pendingRows: ReportRow[] = studentOutstandingRows.flatMap((r) =>
+    r.openVouchers.map((v) => ({
+      date: v.dueDate,
+      regNo: r.regNo,
+      studentName: r.name,
+      className: r.className,
+      feeMonth: formatMonthName(v.month),
+      total: v.netDue,
+      paid: v.amountPaid,
+      balance: v.netDue - v.amountPaid,
+    }))
+  );
 
   // ---- Metrics --------------------------------------------------------------
 
@@ -392,7 +373,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       icon: HandCoins,
       accent: 'text-indigo-700',
       iconBg: 'bg-indigo-50 text-indigo-600',
-      hint: 'Currently due',
+      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''} · open vouchers`,
       badge: 'Unsettled',
       badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200/70',
       tab: 'pending' as FeeReportTab,
@@ -438,7 +419,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleCopyArrears = async () => {
     if (studentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', 'Reg No', 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
     const lines = [
       headers.join('\t'),
       ...studentOutstandingRows.map((r, i) =>
@@ -467,7 +448,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleExportArrearsCsv = () => {
     if (studentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', 'Reg No', 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
     const csvRows = studentOutstandingRows.map((r, i) => [
       i + 1,
       `"${r.regNo || ''}"`,
@@ -561,7 +542,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   // ---- Report export helpers -------------------------------------------------
 
-  const REPORT_HEADERS = ['Sr#', 'Date', 'Reg No', 'Student Name', 'Class', 'Fee Month', 'Total', 'Paid', 'Balance'];
+  const REPORT_HEADERS = ['Sr#', 'Date', CSV_REG_NO, 'Student Name', 'Class', 'Fee Month', 'Total', 'Paid', 'Balance'];
 
   const ReportTable: React.FC<{ rows: ReportRow[]; title: string; filename: string }> = ({
     rows,

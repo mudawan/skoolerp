@@ -1,3 +1,6 @@
+import { SortableTh } from './SortableTh';
+import { CSV_STUDENT_NAME, CSV_CLASS } from '../utils/csvHeaders';
+import { useSortState, sortRows } from '../hooks/useTableSort';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -15,13 +18,9 @@ import {
   VoucherCopyType,
   VoucherDeletionResolution,
 } from '../types';
-import {
-  formatCurrency,
-  formatMonthName,
-  getMonthPickerWindow,
-  mergeWithDataMonths,
-} from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getMonthPickerWindow, mergeWithDataMonths, getCurrencyCode } from '../utils/feeMath';
 import { parseCsvLine, detectCsvDelimiter } from '../utils/csv';
+import { mapTemplateCsvHeader, TEMPLATE_CSV } from '../utils/csvHeaders';
 import { ConfirmModal } from './ConfirmModal';
 import { DataCleanupView } from './DataCleanupView';
 import { UserModal, UserModalSaveData } from './UserModal';
@@ -473,14 +472,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     const items = STANDARD_ROSTER.map((item) => {
       const match = sourceTpls.find((t) => t.kind === item.kind);
-      let label = match?.label || item.defaultLabel;
-      // Sanitize corrupted labels like FFFFFF2 or empty strings or legacy Transport names
-      if (!label || label.toUpperCase().includes('FFFFFF') || label.trim() === '') {
-        label = item.defaultLabel;
-      }
-      if (item.kind === 'Transport' && (label === 'Transport' || label === 'School Bus Transport Fee' || /school bus/i.test(label) || /transport charge/i.test(label))) {
-        label = 'Transport Fee';
-      }
+      const label = match?.label || item.defaultLabel;
       return {
         kind: item.kind,
         label,
@@ -1066,12 +1058,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [beforeMonthChange]);
 
   const handleConfirmResetAll = () => {
-    const targetResetMonth = effectiveTemplateMonth === 'all' ? activeMonth : effectiveTemplateMonth;
-    resetAllTemplates(targetResetMonth);
+    resetAllTemplates();
     setRosterState(initializeRosterState());
     setShowResetAllModal(false);
     showToast(
-      `Global fee templates reset to system defaults and all student-specific template overrides deleted for ${formatMonthName(targetResetMonth)}!`,
+      'All fee templates reset: global defaults restored and every month-specific, class and student override deleted.',
       'info'
     );
   };
@@ -1183,8 +1174,44 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       .filter((item) => !!item.student && item.overrides.length > 0);
   }, [templates, students, classes, overridesFilter, templateSpecificMonth, activeMonth]);
 
-  // Total active overrides count across class and student tiers
-  const totalOverridesCount = activeClassOverridesList.length + activeStudentOverridesList.length;
+  // Month-specific GLOBAL templates (saved from the Global Default tab with a specific month selected)
+  const activeGlobalOverridesList = useMemo(() => {
+    const map = new Map<string, FeeTemplate[]>();
+    for (const t of templates) {
+      if (t.classId || t.studentId) continue;
+      if (!t.month || t.month === 'all') continue;
+      if (overridesFilter === 'all_months') continue;
+      if ((overridesFilter === 'target' || overridesFilter === 'active') && t.month !== templateSpecificMonth) continue;
+      if (overridesFilter === 'billing' && t.month !== activeMonth) continue;
+      if (!map.has(t.month)) map.set(t.month, []);
+      map.get(t.month)!.push(t);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, items]) => ({
+        month,
+        uniqueKey: `global:::${month}`,
+        overrides: [...items].sort((a, b) => a.sortOrder - b.sortOrder),
+      }));
+  }, [templates, overridesFilter, templateSpecificMonth, activeMonth]);
+
+  // Total active overrides count across global (month-specific), class and student tiers
+  const totalOverridesCount =
+    activeGlobalOverridesList.length + activeClassOverridesList.length + activeStudentOverridesList.length;
+
+  // Everything "Reset All" will remove (unfiltered), for the confirmation modal
+  const resetAllSummary = useMemo(() => {
+    const globalMonths = new Set<string>();
+    const classKeys = new Set<string>();
+    const studentKeys = new Set<string>();
+    for (const t of templates) {
+      const m = !t.month || t.month === 'all' ? 'all' : t.month;
+      if (t.studentId) studentKeys.add(`${t.studentId}:::${m}`);
+      else if (t.classId) classKeys.add(`${t.classId}:::${m}`);
+      else if (m !== 'all') globalMonths.add(m);
+    }
+    return { globalMonths: globalMonths.size, classes: classKeys.size, students: studentKeys.size };
+  }, [templates]);
 
   // Bulk selection state for active student overrides list (keyed by uniqueKey: studentId:::month)
   const [selectedOverrideKeys, setSelectedOverrideKeys] = useState<string[]>([]);
@@ -1253,7 +1280,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isCsvDragging, setIsCsvDragging] = useState(false);
   const [csvParseError, setCsvParseError] = useState<string | null>(null);
   const [parsedCsvRows, setParsedCsvRows] = useState<ParsedCsvTemplateRow[]>([]);
-  const [isParsedPreviewExpanded, setIsParsedPreviewExpanded] = useState(false);
+  const [csvPreviewFilter, setCsvPreviewFilter] = useState<'all' | 'valid' | 'invalid'>('all');
+  const { sort: csvSort, toggleSort: toggleCsvSort } = useSortState();
+  useEffect(() => {
+    if (parsedCsvRows.length === 0) setCsvPreviewFilter('all');
+  }, [parsedCsvRows.length]);
+  const displayedCsvRows = useMemo(() => {
+    const filtered = parsedCsvRows.filter((r) =>
+      csvPreviewFilter === 'all' ? true : csvPreviewFilter === 'valid' ? r.isValid : !r.isValid
+    );
+    return sortRows<ParsedCsvTemplateRow>(filtered, csvSort, {
+      rowNum: (r) => r.rowNum,
+      status: (r) => (r.isValid ? 'Matched' : 'Invalid'),
+      student: (r) => r.student?.name || r.rawId,
+      fine: (r) => r.fineAmount,
+      flex1: (r) => r.flex1Amount,
+      flex2: (r) => r.flex2Amount,
+      flex3: (r) => r.flex3Amount,
+      flex4: (r) => r.flex4Amount,
+      total: (r) => r.totalOverrideAmount,
+    });
+  }, [parsedCsvRows, csvPreviewFilter, csvSort]);
   const csvFileInputRef = useRef<HTMLInputElement>(null);
 
   const processCsvContent = (text: string) => {
@@ -1275,127 +1322,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     const delimiter = detectCsvDelimiter(lines[0]);
     const firstLineCells = parseCsvLine(lines[0], [delimiter]);
-    const firstLineClean = firstLineCells.map((c) => c.toLowerCase().replace(/[^a-z0-9]/g, ''));
-
-    // Check if first line is a header
-    const isHeader = firstLineClean.some(
-      (c) =>
-        c === 'reg' ||
-        c === 'regno' ||
-        c === 'regnumber' ||
-        c === 'registration' ||
-        c === 'registrationno' ||
-        c === 'registrationnumber' ||
-        c === 'id' ||
-        c === 'fine' ||
-        c.includes('flex') ||
-        c.includes('label') ||
-        c.includes('value') ||
-        c.includes('amount')
-    );
-
-    const headerMap: Record<string, number> = {};
-
-    if (isHeader) {
-      firstLineClean.forEach((c, idx) => {
-        if (
-          c === 'reg' ||
-          c === 'regno' ||
-          c === 'regnumber' ||
-          c === 'registration' ||
-          c === 'registrationno' ||
-          c === 'registrationnumber' ||
-          c === 'id' ||
-          c === 'studentid' ||
-          c === 'studentno' ||
-          c === 'rollno'
-        ) {
-          if (headerMap.id === undefined) headerMap.id = idx;
-        } else if (
-          c === 'fine' ||
-          c === 'fineamount' ||
-          c === 'finevalue' ||
-          c === 'penalty' ||
-          c === 'latefine'
-        ) {
-          headerMap.fine = idx;
-        } else if (
-          c === 'flex1label' ||
-          c === 'flex1name' ||
-          c === 'flex1title' ||
-          c === 'admissionlabel'
-        ) {
-          headerMap.flex1Label = idx;
-        } else if (
-          c === 'flex1value' ||
-          c === 'flex1amount' ||
-          c === 'flex1' ||
-          c === 'admissionfee' ||
-          c === 'admission'
-        ) {
-          headerMap.flex1Value = idx;
-        } else if (
-          c === 'flex2label' ||
-          c === 'flex2name' ||
-          c === 'flex2title' ||
-          c === 'registrationlabel'
-        ) {
-          headerMap.flex2Label = idx;
-        } else if (
-          c === 'flex2value' ||
-          c === 'flex2amount' ||
-          c === 'flex2' ||
-          c === 'registrationfee' ||
-          c === 'registration'
-        ) {
-          headerMap.flex2Value = idx;
-        } else if (
-          c === 'flex3label' ||
-          c === 'flex3name' ||
-          c === 'flex3title' ||
-          c === 'examlabel'
-        ) {
-          headerMap.flex3Label = idx;
-        } else if (
-          c === 'flex3value' ||
-          c === 'flex3amount' ||
-          c === 'flex3' ||
-          c === 'examfee' ||
-          c === 'exam'
-        ) {
-          headerMap.flex3Value = idx;
-        } else if (
-          c === 'flex4label' ||
-          c === 'flex4name' ||
-          c === 'flex4title' ||
-          c === 'otherlabel'
-        ) {
-          headerMap.flex4Label = idx;
-        } else if (
-          c === 'flex4value' ||
-          c === 'flex4amount' ||
-          c === 'flex4' ||
-          c === 'otherfee' ||
-          c === 'other'
-        ) {
-          headerMap.flex4Value = idx;
-        }
-      });
+    const { map: headerMap, error: headerError } = mapTemplateCsvHeader(firstLineCells);
+    if (headerError) {
+      setParsedCsvRows([]);
+      setCsvParseError(headerError);
+      return;
     }
 
-    // Fallbacks for standard positional format: id, fine, flex1 label, flex1 value, flex2 label, flex2 value, flex3 label, flex3 value, flex4 label, flex4 value
-    const idIdx = headerMap.id ?? 0;
-    const fineIdx = headerMap.fine ?? 1;
-    const flex1LabelIdx = headerMap.flex1Label ?? 2;
-    const flex1ValueIdx = headerMap.flex1Value ?? 3;
-    const flex2LabelIdx = headerMap.flex2Label ?? 4;
-    const flex2ValueIdx = headerMap.flex2Value ?? 5;
-    const flex3LabelIdx = headerMap.flex3Label ?? 6;
-    const flex3ValueIdx = headerMap.flex3Value ?? 7;
-    const flex4LabelIdx = headerMap.flex4Label ?? 8;
-    const flex4ValueIdx = headerMap.flex4Value ?? 9;
+    // Columns are identified by header name only. An absent column is never read by
+    // position: its label falls back to the global template label and its amount to 0.
+    const idIdx = headerMap.id;
+    const fineIdx = headerMap.fine;
+    const flex1LabelIdx = headerMap.flex1Label;
+    const flex1ValueIdx = headerMap.flex1Value;
+    const flex2LabelIdx = headerMap.flex2Label;
+    const flex2ValueIdx = headerMap.flex2Value;
+    const flex3LabelIdx = headerMap.flex3Label;
+    const flex3ValueIdx = headerMap.flex3Value;
+    const flex4LabelIdx = headerMap.flex4Label;
+    const flex4ValueIdx = headerMap.flex4Value;
 
-    const dataLines = isHeader ? lines.slice(1) : lines;
+    const dataLines = lines.slice(1);
 
     const globalFlex1 =
       templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex1')?.label || 'Admission Fee';
@@ -1419,7 +1366,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const cells = parseCsvLine(line, [delimiter]);
       if (cells.length === 0 || (cells.length === 1 && !cells[0].trim())) return;
 
-      const rawId = (cells[idIdx] || '').trim();
+      const cellAt = (i: number | undefined) => (i === undefined ? '' : cells[i] ?? '');
+      const rawId = (cellAt(idIdx) || '').trim();
       if (!rawId) return;
 
       const cleanId = rawId.toLowerCase();
@@ -1436,22 +1384,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         ? classes.find((c) => c.id === matchedStudent.classId)
         : undefined;
 
-      const fineAmount = Math.max(0, parseNum(cells[fineIdx]));
+      const fineAmount = Math.max(0, parseNum(cellAt(fineIdx)));
 
-      const rawF1Label = (cells[flex1LabelIdx] || '').trim();
-      const flex1Amount = parseNum(cells[flex1ValueIdx]);
+      const rawF1Label = (cellAt(flex1LabelIdx) || '').trim();
+      const flex1Amount = parseNum(cellAt(flex1ValueIdx));
       const flex1Label = rawF1Label || globalFlex1;
 
-      const rawF2Label = (cells[flex2LabelIdx] || '').trim();
-      const flex2Amount = parseNum(cells[flex2ValueIdx]);
+      const rawF2Label = (cellAt(flex2LabelIdx) || '').trim();
+      const flex2Amount = parseNum(cellAt(flex2ValueIdx));
       const flex2Label = rawF2Label || globalFlex2;
 
-      const rawF3Label = (cells[flex3LabelIdx] || '').trim();
-      const flex3Amount = parseNum(cells[flex3ValueIdx]);
+      const rawF3Label = (cellAt(flex3LabelIdx) || '').trim();
+      const flex3Amount = parseNum(cellAt(flex3ValueIdx));
       const flex3Label = rawF3Label || globalFlex3;
 
-      const rawF4Label = (cells[flex4LabelIdx] || '').trim();
-      const flex4Amount = parseNum(cells[flex4ValueIdx]);
+      const rawF4Label = (cellAt(flex4LabelIdx) || '').trim();
+      const flex4Amount = parseNum(cellAt(flex4ValueIdx));
       const flex4Label = rawF4Label || globalFlex4;
 
       const isValid = !!matchedStudent;
@@ -1509,16 +1457,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleDownloadSampleCsv = () => {
     const headers = [
-      'reg #',
-      'fine',
-      'flex1 label',
-      'flex1 value',
-      'flex2 label',
-      'flex2 value',
-      'flex3 label',
-      'flex3 value',
-      'flex4 label',
-      'flex4 value',
+      TEMPLATE_CSV.columns.id,
+      TEMPLATE_CSV.columns.fine,
+      TEMPLATE_CSV.columns.flex1Label,
+      TEMPLATE_CSV.columns.flex1Value,
+      TEMPLATE_CSV.columns.flex2Label,
+      TEMPLATE_CSV.columns.flex2Value,
+      TEMPLATE_CSV.columns.flex3Label,
+      TEMPLATE_CSV.columns.flex3Value,
+      TEMPLATE_CSV.columns.flex4Label,
+      TEMPLATE_CSV.columns.flex4Value,
     ];
 
     const globalFlex1 =
@@ -1550,19 +1498,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleExportStudentOverridesCsv = () => {
     const headers = [
-      'reg #',
-      'student name',
-      'class',
-      'schedule',
-      'fine',
-      'flex1 label',
-      'flex1 value',
-      'flex2 label',
-      'flex2 value',
-      'flex3 label',
-      'flex3 value',
-      'flex4 label',
-      'flex4 value',
+      TEMPLATE_CSV.columns.id,
+      CSV_STUDENT_NAME,
+      CSV_CLASS,
+      'Schedule',
+      TEMPLATE_CSV.columns.fine,
+      TEMPLATE_CSV.columns.flex1Label,
+      TEMPLATE_CSV.columns.flex1Value,
+      TEMPLATE_CSV.columns.flex2Label,
+      TEMPLATE_CSV.columns.flex2Value,
+      TEMPLATE_CSV.columns.flex3Label,
+      TEMPLATE_CSV.columns.flex3Value,
+      TEMPLATE_CSV.columns.flex4Label,
+      TEMPLATE_CSV.columns.flex4Value,
     ];
 
     const globalFlex1 =
@@ -1717,7 +1665,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     setShowCsvModal(false);
     setParsedCsvRows([]);
-    setIsParsedPreviewExpanded(false);
     setCsvFileName('');
     setCsvParseError(null);
   };
@@ -1743,7 +1690,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } else if (showCsvModal) {
       setShowCsvModal(false);
       setParsedCsvRows([]);
-      setIsParsedPreviewExpanded(false);
       setCsvFileName('');
       setCsvParseError(null);
     } else if (showUserModal) {
@@ -2083,7 +2029,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
                   {templateScopeMode === 'overrides'
-                    ? 'Audit, filter, bulk-manage, and import/export class & student custom fee template overrides.'
+                    ? 'Audit, filter, bulk-manage, and import/export month-specific global, class & student custom fee template overrides.'
                     : 'Configure default fee particular templates and multi-tier override rules for billing vouchers.'}
                 </p>
               </div>
@@ -2112,6 +2058,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 >
                   <Sliders className="w-3.5 h-3.5 text-teal-600" />
                   <span>1. Global Default</span>
+                  {activeGlobalOverridesList.length > 0 && (
+                    <span
+                      className="px-1.5 py-0.2 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold"
+                      title="Months with their own global template set"
+                    >
+                      {activeGlobalOverridesList.length}
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -2615,7 +2569,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       Class: <span className="font-semibold text-slate-800">{selectedStudentClass?.name || 'N/A'}</span>
                       {selectedStudent.section && ` (Sec ${selectedStudent.section})`}
                       {selectedStudent.fatherName && ` • S/D/O: ${selectedStudent.fatherName}`}
-                      {selectedStudent.monthlyDiscount ? ` • Base Discount: Rs. ${Math.round(selectedStudent.monthlyDiscount)}` : ''}
+                      {selectedStudent.monthlyDiscount ? ` • Base Discount: ${formatCurrency(selectedStudent.monthlyDiscount)}` : ''}
                     </div>
                   </div>
                 </div>
@@ -2718,7 +2672,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
                       {selectedClass.name}
                       <span className="text-xs font-bold text-indigo-700 bg-white border border-indigo-200 px-2 py-0.5 rounded-md">
-                        Base Monthly Fee: Rs. {selectedClass.monthlyFee || 0}
+                        Base Monthly Fee: {formatCurrency(selectedClass.monthlyFee || 0)}
                       </span>
                     </div>
                     <div className="text-xs text-slate-600 mt-0.5">
@@ -2838,7 +2792,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <th className="p-3 w-12 text-center">#</th>
                       <th className="p-3">Fee Particular / Label</th>
                       <th className="p-3">Calculation / Description</th>
-                      <th className="p-3 text-right w-44">Default Amount (Rs.)</th>
+                      <th className="p-3 text-right w-44">Default Amount ({getCurrencyCode()})</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -2962,7 +2916,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           <td className="p-3 text-right">
                             {isFlexField ? (
                               <div className="inline-flex items-center gap-1.5">
-                                <span className="text-slate-400 font-semibold text-xs">Rs.</span>
+                                <span className="text-slate-400 font-semibold text-xs">{getCurrencyCode()}</span>
                                 <input
                                   type="number"
                                   value={currentAmount === 0 ? '0' : (currentAmount ?? '')}
@@ -3105,7 +3059,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="flex items-center gap-2 text-slate-600">
                 <ListFilter className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>
-                  <strong>{totalOverridesCount}</strong> custom fee override{totalOverridesCount === 1 ? '' : 's'} active ({activeClassOverridesList.length} class, {activeStudentOverridesList.length} student).
+                  <strong>{totalOverridesCount}</strong> custom fee override{totalOverridesCount === 1 ? '' : 's'} active ({activeGlobalOverridesList.length} global month{activeGlobalOverridesList.length === 1 ? '' : 's'}, {activeClassOverridesList.length} class, {activeStudentOverridesList.length} student).
                 </span>
               </div>
               <button
@@ -3137,7 +3091,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div>
                 <span className="text-xs font-bold text-slate-800">Overrides List View:</span>{' '}
                 <span className="text-xs text-slate-500">
-                  Filter class and student custom overrides by application period
+                  Filter global, class and student custom overrides by application period
                 </span>
               </div>
             </div>
@@ -3196,6 +3150,108 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
+          {/* Month-specific Global Templates */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-teal-600" />
+                  Month-Specific Global Templates
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Months that use their own global fee particulars instead of the recurring Global Default.
+                </p>
+              </div>
+              <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-auto">
+                {activeGlobalOverridesList.length} month{activeGlobalOverridesList.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            {activeGlobalOverridesList.length > 0 ? (
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+                      <tr>
+                        <th className="p-3">Month</th>
+                        <th className="p-3">Particulars</th>
+                        <th className="p-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {activeGlobalOverridesList.map((item) => (
+                        <tr key={item.uniqueKey} className="hover:bg-teal-50/40 transition">
+                          <td className="p-3">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              <Calendar className="w-3 h-3 text-slate-500" />
+                              {formatMonthName(item.month)}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex flex-wrap gap-1.5 max-w-xl">
+                              {item.overrides.map((ov) => (
+                                <span
+                                  key={ov.id}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-teal-50 text-teal-800 border border-teal-200"
+                                >
+                                  <strong>{ov.label || ov.kind}:</strong> {formatCurrency(ov.defaultAmount)}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="inline-flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  requestTransition({
+                                    kind: 'scope',
+                                    label: scopeLabel,
+                                    apply: () => {
+                                      setSelectedClassId('');
+                                      setSelectedStudentId('');
+                                      setTemplateScopeMode('global');
+                                      setTemplateMonthMode('specific');
+                                      setTemplateSpecificMonth(item.month);
+                                      window.scrollTo({ top: 100, behavior: 'smooth' });
+                                    },
+                                  });
+                                }}
+                                className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-lg transition cursor-pointer"
+                              >
+                                Edit in Table
+                              </button>
+                              {hasPermission('settings.manage') && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    deleteGlobalTemplates(item.month);
+                                    showToast(
+                                      `Month-specific global templates removed for ${formatMonthName(item.month)}. That month now uses the Global Default.`,
+                                      'info'
+                                    );
+                                  }}
+                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                  title="Delete month-specific global templates"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
+                No month-specific global templates match the selected view.
+              </div>
+            )}
+          </div>
+
           {/* Active Class Overrides Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -3247,7 +3303,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             )}
                           </td>
                           <td className="p-3 font-medium text-slate-700">
-                            Rs. {item.classObj?.monthlyFee || 0}
+                            {formatCurrency(item.classObj?.monthlyFee || 0)}
                           </td>
                           <td className="p-3">
                             <div className="flex flex-wrap gap-1.5 max-w-md">
@@ -3643,14 +3699,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block font-bold text-xs text-slate-800">
-                      ہدایات برائے واؤچر (Right-to-Left / Urdu)
+                      Voucher Instructions (Right-to-Left)
                     </label>
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">RTL</span>
                   </div>
                   <input
                     type="text"
                     dir="rtl"
-                    placeholder="مثال: فیس مقررہ تاریخ تک کسی بھی برانچ یا موبائل ایپ کے ذریعے جمع کروائی جا سکتی ہے۔"
+                    placeholder="Right-to-left instructions (e.g. Arabic, Urdu, Hebrew)"
                     value={bankFormData.instructionsRtl}
                     onChange={(e) =>
                       setBankFormData({
@@ -3659,7 +3715,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         instructionsLine2: e.target.value,
                       })
                     }
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-right font-urdu font-medium focus:bg-white focus:border-teal-500 transition"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-right font-rtl font-medium focus:bg-white focus:border-teal-500 transition"
                   />
                   <p className="text-[10px] text-slate-400 mt-0.5 text-right">
                     واؤچر پر دائیں سے بائیں (RTL) اردو انداز میں پرنٹ ہوگا۔
@@ -3705,7 +3761,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => {
                   setShowCsvModal(false);
                   setParsedCsvRows([]);
-                  setIsParsedPreviewExpanded(false);
                   setCsvFileName('');
                   setCsvParseError(null);
                 }}
@@ -3801,64 +3856,89 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             ) : (
-              /* Preview View with Collapsible Table */
+              /* Preview View */
               <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
                 {/* Status Bar */}
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <div>
-                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Total Rows</span>
-                      <span className="font-bold text-slate-900 text-sm">{parsedCsvRows.length}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Valid Matches</span>
-                      <span className="font-bold text-emerald-700 text-sm">
-                        {parsedCsvRows.filter((r) => r.isValid).length}
-                      </span>
-                    </div>
-                    {parsedCsvRows.some((r) => !r.isValid) && (
-                      <div>
-                        <span className="text-slate-500 block text-[10px] uppercase font-bold">Invalid / Skipped</span>
-                        <span className="font-bold text-rose-600 text-sm">
-                          {parsedCsvRows.filter((r) => !r.isValid).length}
-                        </span>
+                {/* Compact Status & Action Bar */}
+                {(() => {
+                  const validCount = parsedCsvRows.filter((r) => r.isValid).length;
+                  const invalidCount = parsedCsvRows.length - validCount;
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 px-3 py-2 rounded-xl border border-slate-200 text-xs shrink-0">
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        <div className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-slate-500 font-semibold text-[11px]">Total Rows:</span>
+                          <span className="font-bold text-slate-900">{parsedCsvRows.length}</span>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80 shadow-2xs">
+                          <span className="text-emerald-700 font-semibold text-[11px]">Valid Matches:</span>
+                          <span className="font-bold text-emerald-800">{validCount}</span>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
+                          <span className="text-rose-700 font-semibold text-[11px]">Invalid / Skipped:</span>
+                          <span className="font-bold text-rose-800">{invalidCount}</span>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 shadow-2xs">
+                          <span className="text-teal-700 font-semibold text-[11px]">Target Month:</span>
+                          <span className="font-bold text-teal-800">
+                            {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
+                          </span>
+                        </div>
                       </div>
-                    )}
-                    <div>
-                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Target Month</span>
-                      <span className="font-bold text-teal-800 text-sm">
-                        {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParsedCsvRows([]);
+                          setCsvFileName('');
+                          setCsvParseError(null);
+                          setCsvPreviewFilter('all');
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 rounded-lg font-semibold text-xs transition cursor-pointer shrink-0"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload New File</span>
+                      </button>
                     </div>
-                  </div>
+                  );
+                })()}
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      id="btn-toggle-parsed-preview"
-                      onClick={() => setIsParsedPreviewExpanded((prev) => !prev)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer text-xs transition shadow-2xs"
-                    >
-                      <span>{isParsedPreviewExpanded ? 'Hide Table Preview' : 'Show Table Preview'}</span>
-                      {isParsedPreviewExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5 text-slate-600" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5 text-slate-600" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setParsedCsvRows([]);
-                        setIsParsedPreviewExpanded(false);
-                        setCsvFileName('');
-                        setCsvParseError(null);
-                      }}
-                      className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 font-semibold cursor-pointer text-xs"
-                    >
-                      Clear & Upload New File
-                    </button>
+                {/* Filter Selector Tabs */}
+                <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs shrink-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {([
+                      ['all', 'All', 'bg-slate-900'],
+                      ['valid', 'Valid Only', 'bg-emerald-700'],
+                      ['invalid', 'Issues', 'bg-rose-700'],
+                    ] as const).map(([key, label, activeCls]) => {
+                      const count =
+                        key === 'all'
+                          ? parsedCsvRows.length
+                          : key === 'valid'
+                          ? parsedCsvRows.filter((r) => r.isValid).length
+                          : parsedCsvRows.filter((r) => !r.isValid).length;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setCsvPreviewFilter(key)}
+                          className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
+                            csvPreviewFilter === key ? `${activeCls} text-white shadow-xs` : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {label} ({count})
+                        </button>
+                      );
+                    })}
                   </div>
+                  {csvPreviewFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setCsvPreviewFilter('all')}
+                      className="text-xs text-teal-700 hover:text-teal-900 font-bold underline cursor-pointer"
+                    >
+                      Reset Filter (Show All)
+                    </button>
+                  )}
                 </div>
 
                 {csvParseError && (
@@ -3868,25 +3948,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
 
-                {/* Collapsible Preview Section */}
-                {isParsedPreviewExpanded ? (
-                  <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] flex-1">
+                {/* Preview table (always visible) */}
+                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] flex-1">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                         <tr>
-                          <th className="p-3 w-12 text-center">Row</th>
-                          <th className="p-3">Status</th>
-                          <th className="p-3">Student</th>
-                          <th className="p-3">Fine</th>
-                          <th className="p-3">Flex 1</th>
-                          <th className="p-3">Flex 2</th>
-                          <th className="p-3">Flex 3</th>
-                          <th className="p-3">Flex 4</th>
-                          <th className="p-3 text-right">Total Override</th>
+                          <SortableTh label="Row" sortKey="rowNum" sort={csvSort} onSort={toggleCsvSort} className="w-12 text-center" />
+                          <SortableTh label="Status" sortKey="status" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Student" sortKey="student" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Fine" sortKey="fine" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Flex 1" sortKey="flex1" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Flex 2" sortKey="flex2" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Flex 3" sortKey="flex3" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Flex 4" sortKey="flex4" sort={csvSort} onSort={toggleCsvSort} />
+                          <SortableTh label="Total Override" sortKey="total" sort={csvSort} onSort={toggleCsvSort} className="text-right" />
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {parsedCsvRows.map((row) => (
+                      <tbody className="divide-y divide-slate-100 whitespace-nowrap">
+                        {displayedCsvRows.length === 0 && (
+                          <tr>
+                            <td colSpan={9} className="p-8 text-center bg-white text-slate-500 text-sm font-semibold">
+                              No rows match the current filter.
+                            </td>
+                          </tr>
+                        )}
+                        {displayedCsvRows.map((row) => (
                           <tr
                             key={row.rowNum}
                             className={`hover:bg-slate-50/80 transition ${
@@ -3972,23 +4058,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         ))}
                       </tbody>
                     </table>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => setIsParsedPreviewExpanded(true)}
-                    className="border border-dashed border-slate-300 hover:border-teal-400 rounded-xl p-4 bg-slate-50/50 hover:bg-slate-50 flex items-center justify-between cursor-pointer transition"
-                  >
-                    <div className="flex items-center gap-2">
-                      <FileSpreadsheet className="w-4 h-4 text-teal-600" />
-                      <span className="text-xs text-slate-700 font-medium">
-                        {parsedCsvRows.filter((r) => r.isValid).length} student override{parsedCsvRows.filter((r) => r.isValid).length === 1 ? '' : 's'} parsed. Preview table is collapsed.
-                      </span>
-                    </div>
-                    <span className="text-xs text-teal-700 font-bold hover:underline flex items-center gap-1">
-                      Click to expand preview <ChevronDown className="w-3.5 h-3.5" />
-                    </span>
-                  </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -3999,7 +4069,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 onClick={() => {
                   setShowCsvModal(false);
                   setParsedCsvRows([]);
-                  setIsParsedPreviewExpanded(false);
                   setCsvFileName('');
                   setCsvParseError(null);
                 }}
@@ -4037,9 +4106,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">Reset All Fee Templates?</h3>
-                  <p className="text-xs text-slate-500">
-                    Working Month: {formatMonthName(effectiveTemplateMonth === 'all' ? activeMonth : effectiveTemplateMonth)}
-                  </p>
+                  <p className="text-xs text-slate-500">All months, classes and students</p>
                 </div>
               </div>
               <button
@@ -4055,11 +4122,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Are you sure you want to perform a comprehensive template reset?
               </p>
               <ul className="list-disc pl-5 space-y-1.5 text-slate-700 font-medium">
-                <li>Reset the <strong>global 9-item fee particulars roster</strong> to default system labels, ordering, and amounts.</li>
-                <li>Delete all <strong>student-specific fee template overrides</strong> for <strong>{formatMonthName(effectiveTemplateMonth === 'all' ? activeMonth : effectiveTemplateMonth)} ({effectiveTemplateMonth === 'all' ? activeMonth : effectiveTemplateMonth})</strong>.</li>
+                <li>Reset the <strong>global fee particulars roster</strong> to default system labels, ordering, and amounts.</li>
+                <li>Delete <strong>{resetAllSummary.globalMonths}</strong> month-specific global template set{resetAllSummary.globalMonths === 1 ? '' : 's'}.</li>
+                <li>Delete <strong>{resetAllSummary.classes}</strong> class override{resetAllSummary.classes === 1 ? '' : 's'} (all months).</li>
+                <li>Delete <strong>{resetAllSummary.students}</strong> student override{resetAllSummary.students === 1 ? '' : 's'} (all months).</li>
               </ul>
               <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[11px] font-medium mt-2">
-                All newly generated vouchers and re-generated/printed PDF vouchers for this month will use clean default fee rules.
+                This affects every month. Already-issued vouchers are unchanged; newly generated and re-printed vouchers will use clean default fee rules.
               </div>
             </div>
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -4190,7 +4259,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       Late Surcharge Rate
                     </span>
                     <span className="text-[10px] font-bold text-slate-400">
-                      Rs. {defaultLateFeeRate} &rarr; <span className="text-teal-700 font-extrabold">Rs. {selectedLateFeeRate}</span>
+                      {formatCurrency(defaultLateFeeRate)} &rarr; <span className="text-teal-700 font-extrabold">{formatCurrency(selectedLateFeeRate)}</span>
                     </span>
                   </div>
                   <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
@@ -4233,10 +4302,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       Net Due Rounding
                     </span>
                     <span className="text-[10px] font-bold text-slate-400">
-                      {roundingEnabled && roundingMultiple > 1 ? `Nearest Rs. ${roundingMultiple}` : 'Exact (1)'}{' '}
+                      {roundingEnabled && roundingMultiple > 1 ? `Nearest ${formatCurrency(roundingMultiple)}` : 'Exact (1)'}{' '}
                       &rarr;{' '}
                       <span className="text-indigo-700 font-extrabold">
-                        {selectedRoundingMultiple > 1 ? `Nearest Rs. ${selectedRoundingMultiple}` : 'Exact (1)'}
+                        {selectedRoundingMultiple > 1 ? `Nearest ${formatCurrency(selectedRoundingMultiple)}` : 'Exact (1)'}
                       </span>
                     </span>
                   </div>
@@ -4258,10 +4327,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       Transport Fee Rounding
                     </span>
                     <span className="text-[10px] font-bold text-slate-400">
-                      {transportRoundingMultiple > 1 ? `Nearest Rs. ${transportRoundingMultiple}` : 'Exact (1)'}{' '}
+                      {transportRoundingMultiple > 1 ? `Nearest ${formatCurrency(transportRoundingMultiple)}` : 'Exact (1)'}{' '}
                       &rarr;{' '}
                       <span className="text-amber-700 font-extrabold">
-                        {selectedTransportRoundingMultiple > 1 ? `Nearest Rs. ${selectedTransportRoundingMultiple}` : 'Exact (1)'}
+                        {selectedTransportRoundingMultiple > 1 ? `Nearest ${formatCurrency(selectedTransportRoundingMultiple)}` : 'Exact (1)'}
                       </span>
                     </span>
                   </div>
@@ -4269,7 +4338,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <strong>Impact:</strong>{' '}
                     {selectedTransportRoundingMultiple <= 1
                       ? 'Transport rounding is set to Exact (1) — calculated transportation fares are billed at exact amounts with no rounding.'
-                      : `Calculated transportation fares round up to the nearest multiple of Rs. ${selectedTransportRoundingMultiple} before adding to vouchers.`}
+                      : `Calculated transportation fares round up to the nearest multiple of ${formatCurrency(selectedTransportRoundingMultiple)} before adding to vouchers.`}
                   </div>
                 </div>
               )}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { FeeVoucher } from '../../types';
-import { formatCurrency, formatMonthName } from '../../utils/feeMath';
+import { formatCurrency, formatMonthName, getCurrencyCode } from '../../utils/feeMath';
 import { ArrowRight, X } from 'lucide-react';
 
 export interface CarryModalState {
@@ -74,7 +74,7 @@ export const CarryForwardModal: React.FC<CarryForwardModalProps> = ({
           </label>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className={`text-[11px] font-bold ${addLateFine ? 'text-amber-800' : 'text-slate-400'}`}>Rs.</span>
+            <span className={`text-[11px] font-bold ${addLateFine ? 'text-amber-800' : 'text-slate-400'}`}>{getCurrencyCode()}</span>
             <input
               type="number"
               min="0"

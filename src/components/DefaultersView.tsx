@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { CSV_REG_NO } from '../utils/csvHeaders';
 import { DEFAULT_PAYMENT_MODE } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -10,14 +11,8 @@ import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import { CollectPaymentModal } from './vouchers/CollectPaymentModal';
 import { RecordsPerPageSelector } from './RecordsPerPageSelector';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
-import {
-  formatCurrency,
-  formatMonthName,
-  getAppliedFineAmount,
-  getEffectiveMultiple,
-  getNextMonthString,
-  roundUpToMultiple,
-} from '../utils/feeMath';
+import { downloadCsv } from '../utils/csv';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getNextMonthString, roundUpToMultiple } from '../utils/feeMath';
 import {
   AlertTriangle,
   ArrowRight,
@@ -26,9 +21,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  Download,
   Eye,
   Filter,
   Info,
+  Printer,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -160,6 +157,193 @@ export const DefaultersView: React.FC = () => {
     }
   };
 
+  // Selections never bleed across tabs
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [activeTab]);
+
+  // Bulk Undo Carry Forward Modal State
+  const [bulkUndoModal, setBulkUndoModal] = useState<{
+    valid: FeeVoucher[];
+    blocked: { voucher: FeeVoucher; months: string[] }[];
+  } | null>(null);
+
+  const handleOpenBulkUndoModal = () => {
+    const targets = carriedVouchers.filter((v) => selectedIds.includes(v.id));
+    if (targets.length === 0) {
+      showToast('Select at least one carried voucher first.', 'error');
+      return;
+    }
+    const valid: FeeVoucher[] = [];
+    const blocked: { voucher: FeeVoucher; months: string[] }[] = [];
+    for (const v of targets) {
+      const months: string[] = Array.from(
+        new Set<string>(
+          vouchers
+            .filter(
+              (item) =>
+                item.studentId === v.studentId &&
+                item.id !== v.id &&
+                item.status !== 'Reversed' &&
+                item.month > v.month
+            )
+            .map((item) => item.month)
+        )
+      ).sort();
+      if (months.length > 0) blocked.push({ voucher: v, months });
+      else valid.push(v);
+    }
+    setBulkUndoModal({ valid, blocked });
+  };
+
+  const executeBulkUndoCarryForward = () => {
+    if (!bulkUndoModal) return;
+    let done = 0;
+    const failures: string[] = [];
+    const restoredIds: string[] = [];
+    for (const v of bulkUndoModal.valid) {
+      const res = undoCarryForwardVoucher(v.id);
+      if (res.success) {
+        done++;
+        restoredIds.push(v.id);
+      } else {
+        failures.push(res.error || `Voucher ${v.voucherNo} failed`);
+      }
+    }
+    setSelectedIds((prev) => prev.filter((id) => !restoredIds.includes(id)));
+    setBulkUndoModal(null);
+    if (done > 0) {
+      showToast(
+        `Reverted carry forward on ${done} voucher(s).` +
+          (failures.length > 0 ? ` ${failures.length} failed.` : '')
+      );
+    }
+    if (failures.length > 0 && done === 0) {
+      showToast(failures[0], 'error');
+    }
+  };
+
+  // Export / Print of selected rows (tab specific)
+  const getSelectedRows = () => filteredVouchers.filter((v) => selectedIds.includes(v.id));
+
+  const studentRef = (studentId: string) => {
+    const st = students.find((s) => s.id === studentId);
+    return st?.rollNumber ? `Roll: ${st.rollNumber}` : st?.regNo ? `Reg: ${st.regNo}` : '';
+  };
+
+  const buildExportTable = (rows: FeeVoucher[]) => {
+    let headers: string[];
+    let body: (string | number)[][];
+    if (activeTab === 'uncarried') {
+      headers = ['Voucher #', 'Student Name', CSV_REG_NO, 'Class', 'Net Due', 'Paid', 'Outstanding'];
+      body = rows.map((v) => [
+        v.voucherNo,
+        students.find((s) => s.id === v.studentId)?.name || 'Unknown',
+        studentRef(v.studentId),
+        classes.find((c) => c.id === v.classId)?.name || '',
+        v.netDue,
+        v.amountPaid,
+        Math.max(0, v.netDue - v.amountPaid),
+      ]);
+    } else if (activeTab === 'zeroDue') {
+      headers = ['Voucher #', 'Student Name', CSV_REG_NO, 'Class', 'Gross', 'Concession', 'Net Due', 'Status'];
+      body = rows.map((v) => [
+        v.voucherNo,
+        students.find((s) => s.id === v.studentId)?.name || 'Unknown',
+        studentRef(v.studentId),
+        classes.find((c) => c.id === v.classId)?.name || '',
+        v.grossTotal,
+        v.discountTotal || v.grossTotal,
+        v.netDue,
+        'Settled (0 Due)',
+      ]);
+    } else {
+      headers = ['Voucher #', 'Student Name', CSV_REG_NO, 'Class', 'Carried Balance', 'Carried To Month', 'Carried Late Fine'];
+      body = rows.map((v) => [
+        v.voucherNo,
+        students.find((s) => s.id === v.studentId)?.name || 'Unknown',
+        studentRef(v.studentId),
+        classes.find((c) => c.id === v.classId)?.name || '',
+        Math.max(0, v.netDue - v.amountPaid),
+        v.carryForwardMonth ? formatMonthName(v.carryForwardMonth) : '',
+        v.carriedLateFine || 0,
+      ]);
+    }
+    return { headers, body };
+  };
+
+  const tabFileLabel = activeTab === 'uncarried' ? 'defaulters' : activeTab === 'zeroDue' ? 'zero-due' : 'carried-forward';
+  const tabTitleLabel =
+    activeTab === 'uncarried' ? 'Unpaid Defaulters' : activeTab === 'zeroDue' ? 'Zero-Due / Settled' : 'Carried Forward';
+
+  const handleExportSelectedCsv = () => {
+    const rows = getSelectedRows();
+    if (rows.length === 0) {
+      showToast('Select at least one record to export.', 'error');
+      return;
+    }
+    const { headers, body } = buildExportTable(rows);
+    const esc = (val: string | number) => `"${String(val).replace(/"/g, '""')}"`;
+    const csv = [headers, ...body].map((r) => r.map(esc).join(',')).join('\r\n');
+    downloadCsv(`${tabFileLabel}-${activeMonth}.csv`, '\uFEFF' + csv);
+    showToast(`Exported ${rows.length} record(s) to CSV.`);
+  };
+
+  const handlePrintSelected = () => {
+    const rows = getSelectedRows();
+    if (rows.length === 0) {
+      showToast('Select at least one record to print.', 'error');
+      return;
+    }
+    const { headers, body } = buildExportTable(rows);
+    const html = (t: string | number) =>
+      String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const numericCols = new Set(
+      headers
+        .map((h, i) => ({ h, i }))
+        .filter(({ h }) => /Due|Paid|Outstanding|Gross|Concession|Balance|Fine/.test(h))
+        .map(({ i }) => i)
+    );
+    const fmt = (val: string | number, i: number) =>
+      numericCols.has(i) && typeof val === 'number' ? formatCurrency(val) : html(val);
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${html(tabTitleLabel)} - ${html(
+      formatMonthName(activeMonth)
+    )}</title><style>
+      body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#0f172a;margin:24px}
+      h1{font-size:16px;margin:0 0 4px}p{margin:0 0 12px;color:#475569}
+      table{width:100%;border-collapse:collapse}th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left}
+      th{background:#f1f5f9}.r{text-align:right}
+    </style></head><body><h1>${html(tabTitleLabel)}</h1><p>${html(formatMonthName(activeMonth))} &bull; ${rows.length} record(s)</p>
+    <table><thead><tr><th>Sr #</th>${headers
+      .map((h, i) => `<th class="${numericCols.has(i) ? 'r' : ''}">${html(h)}</th>`)
+      .join('')}</tr></thead><tbody>${body
+      .map(
+        (r, n) =>
+          `<tr><td>${n + 1}</td>${r
+            .map((c, i) => `<td class="${numericCols.has(i) ? 'r' : ''}">${fmt(c, i)}</td>`)
+            .join('')}</tr>`
+      )
+      .join('')}</tbody></table></body></html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(iframe);
+    const idoc = iframe.contentDocument;
+    if (!idoc || !iframe.contentWindow) {
+      document.body.removeChild(iframe);
+      showToast('Unable to open print preview.', 'error');
+      return;
+    }
+    idoc.open();
+    idoc.write(doc);
+    idoc.close();
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => document.body.removeChild(iframe), 1000);
+    }, 150);
+  };
+
   // Carry Forward Confirmation Modal State
   const [carryModal, setCarryModal] = useState<{
     isOpen: boolean;
@@ -199,8 +383,10 @@ export const DefaultersView: React.FC = () => {
       setCarryModal(null);
     } else if (undoCarryModal) {
       setUndoCarryModal(null);
+    } else if (bulkUndoModal) {
+      setBulkUndoModal(null);
     }
-  }, !!(collectingVoucher || inspectVoucher || carryModal || undoCarryModal));
+  }, !!(collectingVoucher || inspectVoucher || carryModal || undoCarryModal || bulkUndoModal));
 
   const monthStatus = getMonthClosureStatus(activeMonth);
 
@@ -345,7 +531,7 @@ export const DefaultersView: React.FC = () => {
     if (!carryModal || carryModal.targetVouchers.length === 0) return;
 
     const idsToCarry = carryModal.targetVouchers.map((v) => v.id);
-    const { successCount } = await bulkCarryForwardDefaulters(
+    const { successCount, errors: carryErrors } = await bulkCarryForwardDefaulters(
       idsToCarry,
       carryModal.targetMonth,
       addLateFine,
@@ -361,7 +547,7 @@ export const DefaultersView: React.FC = () => {
       setSelectedIds((prev) => prev.filter((id) => !idsToCarry.includes(id)));
       setCarryModal(null);
     } else {
-      showToast('Failed to carry forward selected voucher(s).', 'error');
+      showToast(carryErrors?.[0] || 'Failed to carry forward selected voucher(s).', 'error');
     }
   };
 
@@ -758,7 +944,7 @@ export const DefaultersView: React.FC = () => {
           </div>
         </div>
 
-        {hasPermission('fees.generate') && defaulterVouchers.length > 0 && (
+        {hasPermission('defaulters.manage') && defaulterVouchers.length > 0 && (
           <button
             onClick={handleOpenCarryModalMain}
             className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition cursor-pointer hover:scale-102 active:scale-98 whitespace-nowrap self-stretch lg:self-auto justify-center"
@@ -834,7 +1020,7 @@ export const DefaultersView: React.FC = () => {
               id="input-defaulters-search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by student name, roll #, reg #, father name, voucher #..."
+              placeholder="Search by student name, roll #, reg #, voucher #..."
               className="w-full pl-10 pr-9 py-2 bg-slate-50 hover:bg-slate-100/60 focus:bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition shadow-2xs font-medium"
             />
             {searchTerm && (
@@ -884,11 +1070,15 @@ export const DefaultersView: React.FC = () => {
         </div>
 
         {/* Selection Banner (when items are selected) */}
-        {selectedIds.length > 0 && activeTab === 'uncarried' && (
+        {selectedIds.length > 0 && (
           <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-bold text-amber-950">
-                {selectedIds.length} of {defaulterVouchers.length} defaulters selected
+                {activeTab === 'uncarried'
+                  ? `${selectedIds.length} of ${defaulterVouchers.length} defaulters selected`
+                  : activeTab === 'zeroDue'
+                    ? `${selectedIds.length} of ${zeroDueVouchers.length} zero-due records selected`
+                    : `${selectedIds.length} of ${carriedVouchers.length} carried vouchers selected`}
               </span>
               <span className="text-amber-700">&bull;</span>
               <button
@@ -902,8 +1092,8 @@ export const DefaultersView: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              {hasPermission('fees.generate') && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeTab === 'uncarried' && hasPermission('defaulters.manage') && (
                 <button
                   type="button"
                   onClick={handleOpenCarryModalMain}
@@ -913,6 +1103,32 @@ export const DefaultersView: React.FC = () => {
                   <span>Carry Forward Selected ({selectedIds.length})</span>
                 </button>
               )}
+              {activeTab === 'carried' && hasPermission('defaulters.manage') && (
+                <button
+                  type="button"
+                  onClick={handleOpenBulkUndoModal}
+                  className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Bulk Undo Carry Forward ({selectedIds.length})</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handlePrintSelected}
+                className="px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print List</span>
+              </button>
+                            <button
+                type="button"
+                onClick={handleExportSelectedCsv}
+                className="px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-bold rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
               <button
                 type="button"
                 onClick={clearSelection}
@@ -930,7 +1146,7 @@ export const DefaultersView: React.FC = () => {
             <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold">Zero Net Due / Full Scholarship Concession:</span>{' '}
-              These students have vouchers issued with Rs. 0 net payable (e.g. 100% concession, full scholarship, or zero tuition). Their vouchers are automatically settled and marked <strong className="underline">Paid (Closed)</strong>, allowing the month to close smoothly without blocking.
+              These students have vouchers issued with zero net payable (e.g. 100% concession, full scholarship, or zero tuition). Their vouchers are automatically settled and marked <strong className="underline">Paid (Closed)</strong>, allowing the month to close smoothly without blocking.
             </div>
           </div>
         )}
@@ -954,12 +1170,13 @@ export const DefaultersView: React.FC = () => {
                       }}
                       onChange={toggleSelectVisible}
                       className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
-                      title="Select all vouchers on current page"
+                      title="Select all visible vouchers on this page"
                     />
                   </th>
-                  <th className="p-3">Voucher #</th>
-                  <th className="p-3">Student & Father Name</th>
-                  <th className="p-3">Class</th>
+                  <th className="p-3 w-12 text-center">Sr #</th>
+                  <th className="p-3 w-28">Voucher #</th>
+                  <th className="p-3">Student Name</th>
+                  <th className="p-3 w-24">Class</th>
                   <th className="p-3 text-right">Net Due</th>
                   <th className="p-3 text-right">Paid</th>
                   <th className="p-3 text-right">Outstanding</th>
@@ -968,7 +1185,7 @@ export const DefaultersView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedVouchers.length > 0 ? (
-                  paginatedVouchers.map((v) => {
+                  paginatedVouchers.map((v, idx) => {
                     const student = students.find((s) => s.id === v.studentId);
                     const cls = classes.find((c) => c.id === v.classId);
                     const outstanding = Math.max(0, v.netDue - v.amountPaid);
@@ -989,7 +1206,8 @@ export const DefaultersView: React.FC = () => {
                             className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
                           />
                         </td>
-                        <td className="p-3">
+                        <td className="p-3 w-12 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
+                        <td className="p-3 w-28">
                           <span className="font-mono font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200/60 text-[11px]">
                             {v.voucherNo}
                           </span>
@@ -1001,12 +1219,11 @@ export const DefaultersView: React.FC = () => {
                               <div className="font-bold text-slate-900 truncate">{student?.name || 'Unknown'}</div>
                               <div className="text-[11px] text-slate-500 font-medium">
                                 {student?.rollNumber ? `Roll: ${student.rollNumber}` : student?.regNo ? `Reg: ${student.regNo}` : ''}
-                                {student?.fatherName ? ` • S/D/O ${student.fatherName}` : ''}
                               </div>
                             </div>
                           </div>
                         </td>
-                        <td className="p-3">
+                        <td className="p-3 w-24">
                           <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                             {cls?.name}
                           </span>
@@ -1027,7 +1244,7 @@ export const DefaultersView: React.FC = () => {
                                 <span>Collect</span>
                               </button>
                             )}
-                            {hasPermission('fees.generate') && (
+                            {hasPermission('defaulters.manage') && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenCarryModalSingle(v)}
@@ -1044,7 +1261,7 @@ export const DefaultersView: React.FC = () => {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={9} className="p-8 text-center text-slate-400 italic">
                       {searchTerm || selectedClassId !== 'all'
                         ? 'No uncarried defaulters match your search criteria.'
                         : `No uncarried defaulter vouchers in ${formatMonthName(activeMonth)}. Month is closed!`}
@@ -1060,9 +1277,24 @@ export const DefaultersView: React.FC = () => {
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                 <tr>
-                  <th className="p-3">Voucher #</th>
+                  <th className="p-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllVisibleSelected}
+                      ref={(input) => {
+                        if (input) {
+                          input.indeterminate = !isAllVisibleSelected && isSomeVisibleSelected;
+                        }
+                      }}
+                      onChange={toggleSelectVisible}
+                      className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      title="Select all visible vouchers on this page"
+                    />
+                  </th>
+                  <th className="p-3 w-12 text-center">Sr #</th>
+                  <th className="p-3 w-28">Voucher #</th>
                   <th className="p-3">Student Name</th>
-                  <th className="p-3">Class</th>
+                  <th className="p-3 w-24">Class</th>
                   <th className="p-3 text-right">Gross Total</th>
                   <th className="p-3 text-right">Scholarship / Concession</th>
                   <th className="p-3 text-right">Net Payable</th>
@@ -1072,13 +1304,23 @@ export const DefaultersView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedVouchers.length > 0 ? (
-                  paginatedVouchers.map((v) => {
+                  paginatedVouchers.map((v, idx) => {
                     const student = students.find((s) => s.id === v.studentId);
                     const cls = classes.find((c) => c.id === v.classId);
+                    const isSelected = selectedIds.includes(v.id);
 
                     return (
-                      <tr key={v.id} className="hover:bg-slate-50/80 transition">
-                        <td className="p-3 font-mono font-bold text-slate-900">
+                      <tr key={v.id} className={`hover:bg-slate-50/80 transition ${isSelected ? 'bg-amber-50/50' : ''}`}>
+                        <td className="p-3 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(v.id)}
+                            className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-3 w-12 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
+                        <td className="p-3 w-28 font-mono font-bold text-slate-900">
                           <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200/60 text-[11px]">
                             {v.voucherNo}
                           </span>
@@ -1090,12 +1332,11 @@ export const DefaultersView: React.FC = () => {
                               <div className="font-bold text-slate-900">{student?.name || 'Unknown'}</div>
                               <div className="text-[11px] text-slate-500 font-medium">
                                 {student?.rollNumber ? `Roll: ${student.rollNumber}` : student?.regNo ? `Reg: ${student.regNo}` : ''}
-                                {student?.fatherName ? ` • S/D/O ${student.fatherName}` : ''}
                               </div>
                             </div>
                           </div>
                         </td>
-                        <td className="p-3">
+                        <td className="p-3 w-24">
                           <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                             {cls?.name}
                           </span>
@@ -1129,7 +1370,7 @@ export const DefaultersView: React.FC = () => {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={10} className="p-8 text-center text-slate-400 italic">
                       {searchTerm || selectedClassId !== 'all'
                         ? 'No zero-due / scholarship vouchers match your search criteria.'
                         : `No zero-due vouchers in ${formatMonthName(activeMonth)}.`}
@@ -1145,9 +1386,24 @@ export const DefaultersView: React.FC = () => {
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                 <tr>
-                  <th className="p-3">Voucher #</th>
+                  <th className="p-3 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      checked={isAllVisibleSelected}
+                      ref={(input) => {
+                        if (input) {
+                          input.indeterminate = !isAllVisibleSelected && isSomeVisibleSelected;
+                        }
+                      }}
+                      onChange={toggleSelectVisible}
+                      className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      title="Select all visible vouchers on this page"
+                    />
+                  </th>
+                  <th className="p-3 w-12 text-center">Sr #</th>
+                  <th className="p-3 w-28">Voucher #</th>
                   <th className="p-3">Student Name</th>
-                  <th className="p-3">Class</th>
+                  <th className="p-3 w-24">Class</th>
                   <th className="p-3 text-right">Carried Balance</th>
                   <th className="p-3">Carried To Month</th>
                   <th className="p-3 text-right">Carried Late Surcharge</th>
@@ -1156,13 +1412,23 @@ export const DefaultersView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedVouchers.length > 0 ? (
-                  paginatedVouchers.map((v) => {
+                  paginatedVouchers.map((v, idx) => {
                     const student = students.find((s) => s.id === v.studentId);
                     const cls = classes.find((c) => c.id === v.classId);
+                    const isSelected = selectedIds.includes(v.id);
 
                     return (
-                      <tr key={v.id} className="hover:bg-slate-50/80 transition">
-                        <td className="p-3 font-mono font-bold text-slate-900">
+                      <tr key={v.id} className={`hover:bg-slate-50/80 transition ${isSelected ? 'bg-amber-50/50' : ''}`}>
+                        <td className="p-3 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(v.id)}
+                            className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-3 w-12 text-center text-slate-500 font-mono text-[11px]">{idx + 1}</td>
+                        <td className="p-3 w-28 font-mono font-bold text-slate-900">
                           <span className="bg-slate-100 px-2 py-0.5 rounded border border-slate-200/60 text-[11px]">
                             {v.voucherNo}
                           </span>
@@ -1178,7 +1444,7 @@ export const DefaultersView: React.FC = () => {
                             </div>
                           </div>
                         </td>
-                        <td className="p-3">
+                        <td className="p-3 w-24">
                           <span className="font-semibold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
                             {cls?.name}
                           </span>
@@ -1202,7 +1468,7 @@ export const DefaultersView: React.FC = () => {
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {hasPermission('fees.generate') && (
+                            {hasPermission('defaulters.manage') && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenUndoCarryModal(v)}
@@ -1220,7 +1486,7 @@ export const DefaultersView: React.FC = () => {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={9} className="p-8 text-center text-slate-400 italic">
                       {searchTerm || selectedClassId !== 'all'
                         ? 'No carried forward vouchers match your search criteria.'
                         : `No carried forward vouchers in ${formatMonthName(activeMonth)}.`}
@@ -1499,6 +1765,83 @@ export const DefaultersView: React.FC = () => {
                 >
                   <RotateCcw className="w-4 h-4" />
                   <span>Confirm Undo Carry</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Undo Carry Forward Modal */}
+      {bulkUndoModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-3 rounded-xl shrink-0 bg-amber-100 text-amber-700">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">Bulk Undo Carry Forward</h3>
+                <p className="text-xs text-slate-500">
+                  {formatMonthName(activeMonth)} &bull; {bulkUndoModal.valid.length + bulkUndoModal.blocked.length} voucher(s) selected
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50">
+                <div className="text-emerald-700 font-semibold">Can be restored</div>
+                <div className="text-lg font-bold text-emerald-900">{bulkUndoModal.valid.length}</div>
+              </div>
+              <div className="p-3 rounded-xl border border-rose-200 bg-rose-50">
+                <div className="text-rose-700 font-semibold">Blocked (downstream)</div>
+                <div className="text-lg font-bold text-rose-900">{bulkUndoModal.blocked.length}</div>
+              </div>
+            </div>
+
+            {bulkUndoModal.blocked.length > 0 && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1.5">
+                <p className="font-semibold">
+                  These vouchers will be skipped: a later voucher already exists for the student.
+                </p>
+                <ul className="max-h-32 overflow-y-auto space-y-0.5">
+                  {bulkUndoModal.blocked.map(({ voucher, months }) => (
+                    <li key={voucher.id} className="flex justify-between gap-2">
+                      <span>
+                        <span className="font-mono font-bold">#{voucher.voucherNo}</span>{' '}
+                        {students.find((s) => s.id === voucher.studentId)?.name || 'Unknown'}
+                      </span>
+                      <span className="text-rose-700">{months.map((m) => formatMonthName(m)).join(', ')}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {bulkUndoModal.valid.length > 0 && (
+              <p className="text-xs text-slate-600">
+                {bulkUndoModal.valid.length} voucher(s) will be restored to <strong>Issued</strong> or{' '}
+                <strong>Partial</strong> (based on payments already received) and become available for collection or
+                re-carrying.
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setBulkUndoModal(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-semibold rounded-xl text-xs cursor-pointer"
+              >
+                {bulkUndoModal.valid.length === 0 ? 'Close' : 'Cancel'}
+              </button>
+              {bulkUndoModal.valid.length > 0 && (
+                <button
+                  type="button"
+                  onClick={executeBulkUndoCarryForward}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Confirm Undo ({bulkUndoModal.valid.length})</span>
                 </button>
               )}
             </div>

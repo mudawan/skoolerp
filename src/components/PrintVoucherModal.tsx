@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, ParticularKind, VoucherCopyType, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getCurrencyCode } from '../utils/feeMath';
 import { exportSingleFeeVoucherPdf, printFeeVoucherPdf } from '../utils/pdfGenerator';
 import {
   CheckCircle,
@@ -346,11 +346,11 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
 
                 {/* Itemized Particulars */}
                 <div className="border border-slate-200 rounded overflow-hidden">
-                  <table className="w-full text-left text-[10px]">
+                  <table data-no-resize className="w-full text-left text-[10px]">
                     <thead className="bg-slate-100 font-bold text-slate-700 border-b border-slate-200">
                       <tr>
                         <th className="p-1">Particulars</th>
-                        <th className="p-1 text-right">Amount (Rs.)</th>
+                        <th className="p-1 text-right">Amount ({getCurrencyCode()})</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -409,12 +409,12 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                         </div>
                       )}
 
-                      {/* RTL Instructions (Urdu) */}
+                      {/* RTL Instructions */}
                       {(activeBank.instructionsRtl || activeBank.instructionsLine2) && (
                         <div
                           className="text-[9.5px] text-slate-800 text-right leading-tight font-medium"
                           dir="rtl"
-                          style={{ fontFamily: "'Noto Nastaliq Urdu', 'Noto Sans Arabic', 'Jameel Noori Nastaleeq', 'Urdu Typesetting', sans-serif" }}
+                          style={{ fontFamily: "'Noto Sans Arabic', 'Noto Sans Hebrew', sans-serif" }}
                         >
                           {activeBank.instructionsRtl || activeBank.instructionsLine2}
                         </div>

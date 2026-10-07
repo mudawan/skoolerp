@@ -310,7 +310,7 @@ export const AppearancePanel: React.FC = () => {
                       >
                         FN
                       </span>
-                      <span className="truncate">Fatima Noor <span className="text-slate-400 font-normal text-[10px] ml-1">(REG-2024-009)</span></span>
+                      <span className="truncate">Maya Brooks <span className="text-slate-400 font-normal text-[10px] ml-1">(REG-2024-009)</span></span>
                     </div>
                     <div className="col-span-3 text-slate-600 font-medium">Class 5-A</div>
                     <div className="col-span-3 text-right font-bold text-slate-900">$3,500</div>
@@ -337,7 +337,7 @@ export const AppearancePanel: React.FC = () => {
                       >
                         AA
                       </span>
-                      <span className="truncate">Ayan Ahmed <span className="text-slate-400 font-normal text-[10px] ml-1">(REG-2024-012)</span></span>
+                      <span className="truncate">Ethan Hayes <span className="text-slate-400 font-normal text-[10px] ml-1">(REG-2024-012)</span></span>
                     </div>
                     <div className="col-span-3 text-slate-600 font-medium">Class 5-A</div>
                     <div className="col-span-3 text-right font-bold text-amber-700">$1,200</div>

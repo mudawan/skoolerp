@@ -1,9 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { ParticularKind, Student } from '../types';
-import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString, resolveTemplateParticular, normalizeDateToISO } from '../utils/feeMath';
+import { formatCurrency, calculateAge, formatStudentAge, formatMonthName, getCurrentMonthString, getPreviousMonthString, resolveTemplateParticular, normalizeDateToISO, getCurrencyCode } from '../utils/feeMath';
 import { StudentAvatar } from './StudentAvatar';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
@@ -57,7 +57,14 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     getComputedDefaultDueDate,
     themeConfig,
     getStudentAccountHistory,
+    ensureStudentHistory,
   } = useApp();
+
+  // The admission-voucher check below looks at this student's own history, which
+  // may sit in closed (not yet loaded) months.
+  useEffect(() => {
+    void ensureStudentHistory(student.id);
+  }, [student.id, ensureStudentHistory]);
 
   // Tab state: 'profile' (Information & Particulars) or 'history' (Account History Log)
   const [activeTab, setActiveTab] = useState<'profile' | 'history'>('profile');
@@ -407,9 +414,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <span className="font-bold text-slate-900 text-xs">{student.gender || 'Not specified'}</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Student CNIC / B-Form</span>
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Student ID / Birth Cert. No.</span>
                 <span className="font-mono font-semibold text-slate-800 text-xs">
-                  {student.bFormNo || 'Not provided'}
+                  {student.studentNationalId || 'Not provided'}
                 </span>
               </div>
               <div>
@@ -444,9 +451,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 <span className="font-bold text-slate-900 text-xs">{student.fatherName}</span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Father’s CNIC</span>
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Father’s National ID</span>
                 <span className="font-mono font-semibold text-slate-800 text-xs">
-                  {student.fatherCnic || 'Not provided'}
+                  {student.fatherNationalId || 'Not provided'}
                 </span>
               </div>
               <div>
@@ -470,9 +477,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 </span>
               </div>
               <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Mother’s CNIC</span>
+                <span className="text-[10px] text-slate-400 font-bold uppercase block">Mother’s National ID</span>
                 <span className="font-mono font-semibold text-slate-800 text-xs">
-                  {student.motherCnic || 'Not provided'}
+                  {student.motherNationalId || 'Not provided'}
                 </span>
               </div>
               <div>
@@ -504,7 +511,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   )}
                 </div>
                 <p className="font-semibold text-slate-700 truncate text-[11px]">
-                  {student.document1?.name || 'Birth Certificate / B-Form'}
+                  {student.document1?.name || 'Birth Certificate / Student ID'}
                 </p>
                 {student.document1?.fileData ? (
                   <div className="flex items-center gap-1.5 pt-1">
@@ -592,7 +599,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   )}
                 </div>
                 <p className="font-semibold text-slate-700 truncate text-[11px]">
-                  {student.document3?.name || 'CNIC Copy / Other'}
+                  {student.document3?.name || 'National ID Copy / Other'}
                 </p>
                 {student.document3?.fileData ? (
                   <div className="flex items-center gap-1.5 pt-1">
@@ -809,7 +816,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                   <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
                     <div className="px-3 py-1.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between text-[10px] font-bold text-slate-600 uppercase tracking-wider">
                       <span>Particular Description</span>
-                      <span className="w-28 text-right">Amount (Rs)</span>
+                      <span className="w-28 text-right">Amount ({getCurrencyCode()})</span>
                     </div>
                     <div className="divide-y divide-slate-100 p-2 space-y-1.5">
                       {admItems.map((it) => (
@@ -829,7 +836,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                           </div>
                           <div className="relative w-28 shrink-0">
                             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
-                              Rs
+                              {getCurrencyCode()}
                             </span>
                             <input
                               type="number"

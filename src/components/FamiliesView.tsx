@@ -479,7 +479,7 @@ export const FamiliesView: React.FC = () => {
             )}
           </button>
 
-          {selectedFamilyIds.length > 0 && hasPermission('families.manage') && (
+          {selectedFamilyIds.length > 0 && hasPermission('families.delete') && (
             <button
               onClick={() => setShowBulkDeleteModal(true)}
               className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs transition cursor-pointer"
@@ -651,13 +651,15 @@ export const FamiliesView: React.FC = () => {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button
-                            onClick={() => handleDelete(family)}
-                            title="Delete Family Record"
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {hasPermission('families.delete') && (
+                            <button
+                              onClick={() => handleDelete(family)}
+                              title="Delete Family Record"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -944,13 +946,15 @@ export const FamiliesView: React.FC = () => {
                               >
                                 <Edit2 className="w-4 h-4" />
                               </button>
-                              <button
-                                onClick={() => handleDelete(family)}
-                                title="Delete Family Record"
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {hasPermission('families.delete') && (
+                                <button
+                                  onClick={() => handleDelete(family)}
+                                  title="Delete Family Record"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         )}
@@ -1007,7 +1011,7 @@ export const FamiliesView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="+92 3XX 1234567"
+                  placeholder="+1 555 010 1234"
                   value={formData.contactPhone}
                   onChange={(e) => setFormData({ ...formData, contactPhone: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -1018,7 +1022,7 @@ export const FamiliesView: React.FC = () => {
                 <label className="block font-bold text-slate-700 mb-1">Residential Address</label>
                 <input
                   type="text"
-                  placeholder="Street, Sector, City"
+                  placeholder="Street, Area, City"
                   value={formData.address}
                   onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -1064,7 +1068,7 @@ export const FamiliesView: React.FC = () => {
             s.regNo.toLowerCase().includes(term) ||
             (s.studentNo && s.studentNo.toLowerCase().includes(term)) ||
             (s.fatherName && s.fatherName.toLowerCase().includes(term)) ||
-            (s.fatherCnic && s.fatherCnic.includes(term)) ||
+            (s.fatherNationalId && s.fatherNationalId.includes(term)) ||
             (s.mobileNumber && s.mobileNumber.includes(term)) ||
             (cls && cls.name.toLowerCase().includes(term)) ||
             (otherFam && otherFam.familyNo.toLowerCase().includes(term))

@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { CSV_VOUCHER_NO, CSV_REFERENCE_NO } from '../utils/csvHeaders';
 import { DEFAULT_PAYMENT_MODE, paymentModeText } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, formatStudentAge, calculateAge, getEffectiveMultiple, roundUpToMultiple } from '../utils/feeMath';
+import { formatCurrency, formatMonthName, formatStudentAge, calculateAge, getEffectiveMultiple, roundUpToMultiple, getCurrencyCode, getStudentArrears } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
 import { exportStudentFeeLedgerPdf, printStudentFeeLedgerPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
@@ -54,6 +55,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     classes,
     vouchers,
     transactions,
+    ensureStudentHistory,
     institute,
     bankAccounts,
     templates,
@@ -140,6 +142,12 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
   // Selected Student
   const currentStudent = students.find((s) => s.id === selectedStudentId);
+
+  // The ledger shows a student's complete history; closed (locked) months are
+  // loaded on demand.
+  useEffect(() => {
+    if (selectedStudentId) void ensureStudentHistory(selectedStudentId);
+  }, [selectedStudentId, ensureStudentHistory]);
   const currentClass = currentStudent ? classes.find((c) => c.id === currentStudent.classId) : undefined;
 
   // Filtered Students for Combobox
@@ -247,15 +255,13 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   const recoveryRate = totalBilled > 0 ? Math.round((totalDeposited / totalBilled) * 100) : 0;
   const unpaidCount = ledgerEntries.filter((e) => e.total > e.deposit).length;
 
-  // Overdue months analysis (non-zero due balance cycles)
-  const overdueVouchers = useMemo(() => {
-    return studentVouchers
-      .filter((v) => Math.max(0, v.netDue - v.amountPaid) > 0)
-      .sort((a, b) => a.month.localeCompare(b.month));
-  }, [studentVouchers]);
-
-  const nonZeroDueMonthsCount = overdueVouchers.length;
-  const oldestOverdueMonth = overdueVouchers.length > 0 ? overdueVouchers[0].month : null;
+  // Overdue months analysis: only open (not yet carried-forward) balances count.
+  const studentArrears = useMemo(
+    () => getStudentArrears(studentVouchers, selectedStudentId),
+    [studentVouchers, selectedStudentId]
+  );
+  const nonZeroDueMonthsCount = studentArrears.arrearsMonths.length;
+  const oldestOverdueMonth = studentArrears.oldestOpenMonth || null;
 
   // Availability of ledger records for action buttons
   const hasLedgerRecords = Boolean(currentStudent && ledgerEntries.length > 0);
@@ -278,9 +284,9 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       'Collection Date',
       'Receipt / Txn #',
       'Payment Mode',
-      'Total (Rs)',
-      'Deposit (Rs)',
-      'Balance (Rs)',
+      `Total (${getCurrencyCode()})`,
+      `Deposit (${getCurrencyCode()})`,
+      `Balance (${getCurrencyCode()})`,
       'Status',
     ];
 
@@ -297,7 +303,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
       e.status,
     ]);
 
-    const titleInfo = `FEE COLLECTIONS LEDGER - ${currentStudent.name} (Reg #: ${currentStudent.regNo}) - Class: ${currentClass?.name || 'N/A'}\nTotal Billed: Rs. ${Math.round(totalBilled)} | Total Deposited: Rs. ${Math.round(totalDeposited)} | Outstanding Balance: Rs. ${Math.round(totalBalance)}\n\n`;
+    const titleInfo = `FEE COLLECTIONS LEDGER - ${currentStudent.name} (Reg #: ${currentStudent.regNo}) - Class: ${currentClass?.name || 'N/A'}\nTotal Billed: ${formatCurrency(totalBilled)} | Total Deposited: ${formatCurrency(totalDeposited)} | Outstanding Balance: ${formatCurrency(totalBalance)}\n\n`;
 
     const textContent =
       titleInfo +
@@ -324,14 +330,14 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     const headers = [
       'Serial No',
       'Fee Month',
-      'Voucher No',
+      CSV_VOUCHER_NO,
       'Collection Date',
       'Receipt / Txn No',
       'Payment Mode',
-      'Reference No',
-      'Total Billed (Rs)',
-      'Deposit Paid (Rs)',
-      'Remaining Balance (Rs)',
+      CSV_REFERENCE_NO,
+      `Total Billed (${getCurrencyCode()})`,
+      `Deposit Paid (${getCurrencyCode()})`,
+      `Remaining Balance (${getCurrencyCode()})`,
       'Status',
     ];
 
@@ -1001,9 +1007,9 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                     <th className="p-3">Voucher #</th>
                     <th className="p-3">Collection Date</th>
                     <th className="p-3">Receipt / Txn #</th>
-                    <th className="p-3 text-right">Total (Rs)</th>
-                    <th className="p-3 text-right">Deposit (Rs)</th>
-                    <th className="p-3 text-right">Balance (Rs)</th>
+                    <th className="p-3 text-right">Total ({getCurrencyCode()})</th>
+                    <th className="p-3 text-right">Deposit ({getCurrencyCode()})</th>
+                    <th className="p-3 text-right">Balance ({getCurrencyCode()})</th>
                     <th className="p-3 text-center">Status</th>
                     <th className="p-3 text-center print:hidden">Action</th>
                   </tr>
@@ -1078,7 +1084,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                           <td className="p-3 text-right font-bold">
                             {entry.balance === 0 ? (
                               <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
-                                Rs. 0
+                                {formatCurrency(0)}
                               </span>
                             ) : (
                               <span className="text-rose-600 font-bold bg-rose-50 px-2 py-0.5 rounded">
@@ -1445,7 +1451,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                       <div>
                         <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                           <label className="font-bold text-slate-700 text-[11px] block">
-                            Deposit Amount to Collect (Rs.) *
+                            Deposit Amount to Collect ({getCurrencyCode()}) *
                           </label>
                           {collectDynamicRemaining > 0 ? (
                             <button
@@ -1466,7 +1472,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                           )}
                         </div>
                         <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">Rs.</span>
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">{getCurrencyCode()}</span>
                           <input
                             type="number"
                             required
@@ -1474,7 +1480,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                             value={collectAmount}
                             onWheel={(e) => (e.target as HTMLElement).blur()}
                             onChange={(e) => setCollectAmount(e.target.value)}
-                            className="w-full h-[38px] pl-9 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                            className="w-full h-[38px] pl-12 pr-3 bg-white border border-slate-200 rounded-lg font-bold text-sm text-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                             placeholder="Enter Amount"
                           />
                         </div>
@@ -1582,7 +1588,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                       >
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Confirm Deposit ({collectAmount ? formatCurrency(Number(collectAmount)) : 'Rs. 0'})</span>
+                        <span>Confirm Deposit ({collectAmount ? formatCurrency(Number(collectAmount)) : formatCurrency(0)})</span>
                       </button>
                     </div>
                   </form>

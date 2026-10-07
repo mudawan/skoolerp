@@ -23,15 +23,6 @@ interface GlobalStudentSearchProps {
   onNavigateToStudents?: () => void;
 }
 
-const RECENT_STUDENTS_STORAGE_KEY = 'quickfees_recent_searched_students';
-
-// Purge any legacy recent searched students from browser disk cache
-try {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem(RECENT_STUDENTS_STORAGE_KEY);
-  }
-} catch {}
-
 export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
   onNavigateToLedger,
   onNavigateToStudents,
@@ -107,8 +98,8 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
           if (student.fatherPhone?.toLowerCase().includes(cleanQuery)) return true;
           if (student.motherPhone?.toLowerCase().includes(cleanQuery)) return true;
           if (student.mobileNumber?.toLowerCase().includes(cleanQuery)) return true;
-          if (student.bFormNo?.toLowerCase().includes(cleanQuery)) return true;
-          if (student.fatherCnic?.toLowerCase().includes(cleanQuery)) return true;
+          if (student.studentNationalId?.toLowerCase().includes(cleanQuery)) return true;
+          if (student.fatherNationalId?.toLowerCase().includes(cleanQuery)) return true;
           const className = classMap.get(student.classId)?.toLowerCase() || '';
           if (className.includes(cleanQuery)) return true;
           const famName = familyMap.get(student.familyId || '')?.toLowerCase() || '';
@@ -142,9 +133,9 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
         if (student.fatherPhone?.toLowerCase().includes(cleanQuery)) return true;
         if (student.motherPhone?.toLowerCase().includes(cleanQuery)) return true;
         if (student.mobileNumber?.toLowerCase().includes(cleanQuery)) return true;
-        // B-Form / CNIC
-        if (student.bFormNo?.toLowerCase().includes(cleanQuery)) return true;
-        if (student.fatherCnic?.toLowerCase().includes(cleanQuery)) return true;
+        // Student ID / Birth Cert. No.
+        if (student.studentNationalId?.toLowerCase().includes(cleanQuery)) return true;
+        if (student.fatherNationalId?.toLowerCase().includes(cleanQuery)) return true;
         // Class Name
         const className = classMap.get(student.classId)?.toLowerCase() || '';
         if (className.includes(cleanQuery)) return true;

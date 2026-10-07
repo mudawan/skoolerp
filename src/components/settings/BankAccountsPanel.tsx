@@ -149,13 +149,13 @@ export const BankAccountsPanel: React.FC<BankAccountsPanelProps> = ({
                   </p>
                 </div>
 
-                {/* RTL Instructions (Urdu) */}
+                {/* RTL Instructions */}
                 <div className="bg-white p-2 rounded-lg border border-slate-200/80 space-y-0.5" dir="rtl">
                   <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block text-right">
-                    ہدایات (RTL / Urdu)
+                    Instructions (RTL)
                   </span>
-                  <p className="text-slate-800 text-[11.5px] font-medium leading-relaxed text-right font-urdu">
-                    {bank.instructionsRtl || bank.instructionsLine2 || <span className="text-slate-400 italic">اردو ہدایات درج نہیں ہیں</span>}
+                  <p className="text-slate-800 text-[11.5px] font-medium leading-relaxed text-right font-rtl">
+                    {bank.instructionsRtl || bank.instructionsLine2 || <span className="text-slate-400 italic">No right-to-left instructions entered</span>}
                   </p>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   CalendarCheck,
@@ -22,7 +22,7 @@ import {
   Send,
   Building2,
 } from 'lucide-react';
-import { formatMonthName, getNextMonthString, getPreviousMonthString, normalizeMonthString } from '../../utils/feeMath';
+import { formatMonthName, getNextMonthString, getPreviousMonthString, normalizeMonthString, getCurrencyCode, formatCurrency } from '../../utils/feeMath';
 import { PaymentMode } from '../../types';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { CarryForwardModal } from '../vouchers/CarryForwardModal';
@@ -49,9 +49,12 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     setActiveMonth,
     getMonthClosureStatus,
     lockedMonths,
+    lockedMonthDetails,
     lockMonth,
     unlockMonth,
     isMonthLocked,
+    historyFrom,
+    ensureHistoryLoaded,
     bulkCarryForwardDefaulters,
     startActionLock,
     stopActionLock,
@@ -92,6 +95,11 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     if (normPrev && /^\d{4}-\d{2}$/.test(normPrev)) set.add(normPrev);
     return Array.from(set).sort().reverse();
   }, [vouchers, activeMonth, prevMonthStr]);
+
+  // Reviewing a closed month older than the loaded window brings it in on demand.
+  useEffect(() => {
+    if (historyFrom && selectedMonth) void ensureHistoryLoaded(selectedMonth);
+  }, [historyFrom, selectedMonth, ensureHistoryLoaded]);
 
   const monthStatus = getMonthClosureStatus(selectedMonth);
   const isLocked = isMonthLocked(selectedMonth);
@@ -239,6 +247,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   const [advanceActiveMonth, setAdvanceActiveMonth] = useState(true);
   const [isLocking, setIsLocking] = useState(false);
   const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false);
+  const [unlockReason, setUnlockReason] = useState('');
 
   // Execute Carry Forward
   const handleCarryForwardAll = async () => {
@@ -290,7 +299,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     );
 
     if (res.success) {
-      showToast(`Payment of Rs ${collectingVoucher.amount.toLocaleString()} recorded successfully.`, 'success');
+      showToast(`Payment of ${formatCurrency(collectingVoucher.amount)} recorded successfully.`, 'success');
       setCollectingVoucher(null);
     } else {
       showToast(res.error || 'Failed to record payment.', 'error');
@@ -311,7 +320,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
       `Finalizing ledger and sealing fee books for ${formatMonthName(selectedMonth)}...`
     );
     try {
-      const res = lockMonth(
+      const res = await lockMonth(
         selectedMonth,
         closureNotes ||
           `Month-End closure and fee books finalized for ${formatMonthName(selectedMonth)}. Collections reconciled.`
@@ -336,15 +345,20 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
 
   // Unlock Fee Books
   const handleUnlock = async () => {
+    if (!unlockReason.trim()) {
+      showToast('Please enter a reason for unlocking.', 'error');
+      return;
+    }
     startActionLock(
       'Unlocking Fee Books',
       1,
       `Re-opening fee books for ${formatMonthName(selectedMonth)}...`
     );
     try {
-      const res = unlockMonth(selectedMonth);
+      const res = await unlockMonth(selectedMonth, unlockReason);
       if (res.success) {
         setUnlockConfirmOpen(false);
+        setUnlockReason('');
       } else {
         showToast(res.error || 'Failed to unlock fee books.', 'error');
       }
@@ -546,11 +560,11 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 Billing Target (Net Due)
               </span>
               <div className="text-2xl font-black text-slate-900 mt-1.5">
-                Rs {financialSummary.totalNetDue.toLocaleString()}
+                {formatCurrency(financialSummary.totalNetDue)}
               </div>
               <div className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
                 <span>{monthVouchers.length} Total Vouchers</span>
-                <span>Gross: Rs {financialSummary.totalGross.toLocaleString()}</span>
+                <span>Gross: {formatCurrency(financialSummary.totalGross)}</span>
               </div>
             </div>
 
@@ -559,7 +573,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 Realized Collections
               </span>
               <div className="text-2xl font-black text-emerald-700 mt-1.5">
-                Rs {financialSummary.totalCollected.toLocaleString()}
+                {formatCurrency(financialSummary.totalCollected)}
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -579,7 +593,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 Uncollected Arrears
               </span>
               <div className="text-2xl font-black text-rose-700 mt-1.5">
-                Rs {financialSummary.totalOutstanding.toLocaleString()}
+                {formatCurrency(financialSummary.totalOutstanding)}
               </div>
               <div className="text-[11px] text-slate-500 mt-1">
                 Across {uncarriedDefaulters.length} uncarried defaulter voucher(s)
@@ -591,7 +605,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 Discounts & Concessions
               </span>
               <div className="text-2xl font-black text-indigo-700 mt-1.5">
-                Rs {financialSummary.totalDiscounts.toLocaleString()}
+                {formatCurrency(financialSummary.totalDiscounts)}
               </div>
               <div className="text-[11px] text-slate-500 mt-1">
                 {financialSummary.zeroDueCount} voucher(s) at 100% scholarship / waiver
@@ -614,7 +628,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                   <div>
                     <span className="text-xs font-bold text-slate-700 block">{paymentModeText(m)}</span>
                     <span className="text-lg font-black text-slate-900">
-                      Rs {financialSummary.modeBreakdown[m].amount.toLocaleString()}
+                      {formatCurrency(financialSummary.modeBreakdown[m].amount)}
                     </span>
                   </div>
                   <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-600">
@@ -666,22 +680,22 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 {
                   id: 'cashCounted',
                   title: 'Physical Cash Drawer Reconciled',
-                  desc: `Rs ${financialSummary.modeBreakdown.SchoolCashier.amount.toLocaleString()} in cash receipts physically tallied with cashier logs.`,
+                  desc: `${formatCurrency(financialSummary.modeBreakdown.SchoolCashier.amount)} in cash receipts physically tallied with cashier logs.`,
                 },
                 {
                   id: 'bankVerified',
                   title: 'Bank Deposits Verified',
-                  desc: `Rs ${financialSummary.modeBreakdown.BankDeposit.amount.toLocaleString()} in bank deposits (including cheques) matched against bank statements.`,
+                  desc: `${formatCurrency(financialSummary.modeBreakdown.BankDeposit.amount)} in bank deposits (including cheques) matched against bank statements.`,
                 },
                 {
                   id: 'onlineVerified',
                   title: 'Online Transfers Verified',
-                  desc: `Rs ${financialSummary.modeBreakdown.OnlineTransfer.amount.toLocaleString()} in online transfers matched against account records.`,
+                  desc: `${formatCurrency(financialSummary.modeBreakdown.OnlineTransfer.amount)} in online transfers matched against account records.`,
                 },
                 {
                   id: 'discountsAudited',
                   title: 'Discounts & Waivers Approved',
-                  desc: `Rs ${financialSummary.totalDiscounts.toLocaleString()} in fee concessions verified against approval records.`,
+                  desc: `${formatCurrency(financialSummary.totalDiscounts)} in fee concessions verified against approval records.`,
                 },
               ].map((item) => {
                 const checked = checklist[item.id as keyof typeof checklist];
@@ -824,7 +838,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                             {t.referenceNo || t.notes || '—'}
                           </td>
                           <td className="p-3 text-right font-bold text-emerald-700 whitespace-nowrap">
-                            Rs {t.amount.toLocaleString()}
+                            {formatCurrency(t.amount)}
                           </td>
                         </tr>
                       );
@@ -892,7 +906,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                     {uncarriedDefaulters.length} Final Defaulter(s) Require Resolution
                   </h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    Total unpaid arrears of Rs {financialSummary.totalOutstanding.toLocaleString()} must be carried forward to {formatMonthName(nextMonthStr)} or collected before fee books can be locked.
+                    Total unpaid arrears of {formatCurrency(financialSummary.totalOutstanding)} must be carried forward to {formatMonthName(nextMonthStr)} or collected before fee books can be locked.
                   </p>
                 </div>
               </div>
@@ -960,13 +974,13 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                           </td>
                           <td className="p-3 whitespace-nowrap font-mono font-bold text-slate-700">{v.voucherNo}</td>
                           <td className="p-3 text-right font-bold text-slate-900 whitespace-nowrap">
-                            Rs {v.netDue.toLocaleString()}
+                            {formatCurrency(v.netDue)}
                           </td>
                           <td className="p-3 text-right font-bold text-emerald-700 whitespace-nowrap">
-                            Rs {v.amountPaid.toLocaleString()}
+                            {formatCurrency(v.amountPaid)}
                           </td>
                           <td className="p-3 text-right font-black text-rose-700 whitespace-nowrap">
-                            Rs {balance.toLocaleString()}
+                            {formatCurrency(balance)}
                           </td>
                           <td className="p-3 text-center whitespace-nowrap">
                             <button
@@ -1030,7 +1044,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                     Cannot Lock Fee Books: Defaulters Still Unresolved
                   </h4>
                   <p className="text-xs text-rose-800 mt-0.5">
-                    There are {uncarriedDefaulters.length} uncarried defaulter voucher(s) with total outstanding balance of Rs {financialSummary.totalOutstanding.toLocaleString()}. All defaulters must be resolved before locking the month.
+                    There are {uncarriedDefaulters.length} uncarried defaulter voucher(s) with total outstanding balance of {formatCurrency(financialSummary.totalOutstanding)}. All defaulters must be resolved before locking the month.
                   </p>
                 </div>
               </div>
@@ -1056,6 +1070,21 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 </p>
               </div>
 
+              {lockedMonthDetails[selectedMonth] && (
+                <div className="max-w-lg mx-auto text-left bg-white/70 border border-emerald-200 rounded-2xl p-3.5">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Closing comment</div>
+                  <p className="text-xs text-emerald-950 mt-1 whitespace-pre-wrap">
+                    {lockedMonthDetails[selectedMonth].notes || 'No comment was entered.'}
+                  </p>
+                  <div className="text-[10px] text-emerald-700 mt-2">
+                    Locked by {lockedMonthDetails[selectedMonth].lockedByName || lockedMonthDetails[selectedMonth].lockedBy || 'unknown'}
+                    {lockedMonthDetails[selectedMonth].lockedAt
+                      ? ` on ${new Date(lockedMonthDetails[selectedMonth].lockedAt).toLocaleString()}`
+                      : ''}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-center gap-3 pt-2">
                 {onNavigateToTab && (
                   <button
@@ -1065,7 +1094,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                     <span>Go to Fee Vouchers &rarr;</span>
                   </button>
                 )}
-                {(currentUser.role === 'Admin' || hasPermission('settings.manage')) && (
+                {currentUser.role === 'Admin' && (
                   <button
                     onClick={() => setUnlockConfirmOpen(true)}
                     className="px-4 py-2 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5"
@@ -1094,7 +1123,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 <div>
                   <span className="text-slate-500 font-bold block">Reconciled Collections:</span>
                   <span className="text-base font-black text-emerald-700 mt-0.5 block">
-                    Rs {financialSummary.totalCollected.toLocaleString()}
+                    {formatCurrency(financialSummary.totalCollected)}
                   </span>
                   <span className="text-[11px] text-slate-500">{financialSummary.paidCount} Vouchers Settled</span>
                 </div>
@@ -1198,11 +1227,11 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
             <form onSubmit={handleQuickCollect} className="space-y-3 text-xs">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between font-bold">
                 <span className="text-slate-600">Outstanding Balance:</span>
-                <span className="text-rose-700 text-sm font-black">Rs {collectingVoucher.balance.toLocaleString()}</span>
+                <span className="text-rose-700 text-sm font-black">{formatCurrency(collectingVoucher.balance)}</span>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Amount to Collect (Rs):</label>
+                <label className="font-bold text-slate-700 block mb-1">Amount to Collect ({getCurrencyCode()}):</label>
                 <input
                   type="number"
                   required
@@ -1296,11 +1325,20 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
               <p className="text-xs text-slate-500 mt-1">
                 Unlocking historical books will permit adjustments to vouchers and collections. This event will be logged in the permanent audit trail.
               </p>
+              <label className="block text-[11px] font-bold text-slate-700 mt-3 mb-1">Reason for unlocking (required)</label>
+              <textarea
+                value={unlockReason}
+                onChange={(e) => setUnlockReason(e.target.value)}
+                rows={3}
+                className="w-full text-xs border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                placeholder="e.g. Correction of a mis-posted payment"
+                id="unlock-reason-input"
+              />
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setUnlockConfirmOpen(false)}
+                onClick={() => { setUnlockConfirmOpen(false); setUnlockReason(''); }}
                 className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-50 transition cursor-pointer"
               >
                 Keep Locked
@@ -1308,7 +1346,8 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
               <button
                 type="button"
                 onClick={handleUnlock}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition shadow-xs cursor-pointer"
+                disabled={!unlockReason.trim()}
+                className="px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl transition shadow-xs cursor-pointer"
               >
                 Confirm Unlock
               </button>

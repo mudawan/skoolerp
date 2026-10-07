@@ -113,7 +113,7 @@ export const BusModal: React.FC<BusModalProps> = ({
                 type="text"
                 value={busData.routeName}
                 onChange={(e) => set('routeName', e.target.value)}
-                placeholder="e.g. Gulberg Line"
+                placeholder="e.g. North Line"
                 className={inputClass}
               />
             </div>

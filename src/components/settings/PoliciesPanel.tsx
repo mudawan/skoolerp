@@ -1,3 +1,4 @@
+import { getCurrencyCode } from '../../utils/feeMath';
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -43,17 +44,17 @@ const DUE_DAY_PRESETS: { day: number | null; label: string; shortLabel: string; 
 ];
 
 const ROUNDING_QUICK_PRESETS: { value: number; label: string; description?: string }[] = [
-  { value: 1, label: 'Exact (1)', description: 'Exact PKR billing (no round up)' },
-  { value: 10, label: '10', description: 'Round up net due to nearest Rs. 10' },
-  { value: 20, label: '20', description: 'Round up net due to nearest Rs. 20' },
-  { value: 50, label: '50', description: 'Round up net due to nearest Rs. 50' },
+  { value: 1, label: 'Exact (1)', description: 'Exact billing (no round up)' },
+  { value: 10, label: '10', description: 'Round up net due to nearest 10' },
+  { value: 20, label: '20', description: 'Round up net due to nearest 20' },
+  { value: 50, label: '50', description: 'Round up net due to nearest 50' },
 ];
 
 const TRANSPORT_ROUNDING_PRESETS: { value: number; label: string; description?: string }[] = [
   { value: 1, label: 'Exact (1)', description: 'Exact transport fare (no round up)' },
-  { value: 10, label: '10', description: 'Round up transport fare to nearest Rs. 10' },
-  { value: 20, label: '20', description: 'Round up transport fare to nearest Rs. 20' },
-  { value: 50, label: '50', description: 'Round up transport fare to nearest Rs. 50' },
+  { value: 10, label: '10', description: 'Round up transport fare to nearest 10' },
+  { value: 20, label: '20', description: 'Round up transport fare to nearest 20' },
+  { value: 50, label: '50', description: 'Round up transport fare to nearest 50' },
 ];
 
 export interface PoliciesPanelProps {
@@ -266,7 +267,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
 
           <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
             <div className="relative w-36">
-              <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">Rs.</span>
+              <span className="absolute left-3 top-2 text-xs font-bold text-slate-400">{getCurrencyCode()}</span>
               <input
                 type="number"
                 min="0"
@@ -275,7 +276,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 value={selectedLateFeeRate}
                 onWheel={(e) => (e.target as HTMLElement).blur()}
                 onChange={(e) => setSelectedLateFeeRate(Math.max(0, Number(e.target.value) || 0))}
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
+                className="w-full pl-11 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500"
               />
             </div>
           </div>
@@ -308,7 +309,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
             {/* Integrated Text & Dropdown Combo */}
             <div ref={roundingDropdownRef} className="relative w-36">
               <span className="absolute left-3 top-2 text-xs font-bold text-slate-400 pointer-events-none select-none">
-                Rs.
+                {getCurrencyCode()}
               </span>
               <input
                 type="number"
@@ -383,7 +384,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                         >
                           <div>
                             <span className="font-bold font-mono">
-                              {preset.value === 1 ? 'Exact (1)' : `Rs. ${preset.value}`}
+                              {preset.value === 1 ? 'Exact (1)' : `${getCurrencyCode()} ${preset.value}`}
                             </span>
                             {preset.description && (
                               <p className="text-[10px] text-slate-500">{preset.description}</p>
@@ -427,7 +428,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
             {/* Integrated Text & Dropdown Combo */}
             <div ref={transportRoundingDropdownRef} className="relative w-36">
               <span className="absolute left-3 top-2 text-xs font-bold text-slate-400 pointer-events-none select-none">
-                Rs.
+                {getCurrencyCode()}
               </span>
               <input
                 type="number"
@@ -499,7 +500,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                         >
                           <div>
                             <span className="font-bold font-mono">
-                              {preset.value === 1 ? 'Exact (1)' : `Rs. ${preset.value}`}
+                              {preset.value === 1 ? 'Exact (1)' : `${getCurrencyCode()} ${preset.value}`}
                             </span>
                             {preset.description && (
                               <p className="text-[10px] text-slate-500">{preset.description}</p>
@@ -964,7 +965,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
 
                               <div className="pt-2 border-t border-slate-200 flex justify-between items-center text-[7px] font-bold text-teal-800">
                                 <span>NET DUE:</span>
-                                <span>Rs. XXXX</span>
+                                <span>{getCurrencyCode()} XXXX</span>
                               </div>
                             </div>
                           );

@@ -1,3 +1,4 @@
+import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../utils/feeMath';
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
@@ -81,7 +82,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
   };
 
   const [generatedSchoolCode, setGeneratedSchoolCode] = useState('');
-  const [currency, setCurrency] = useState('PKR');
+  const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
   const [regNo, setRegNo] = useState('');
   const [schoolEmail, setSchoolEmail] = useState('');
   const [schoolPhone, setSchoolPhone] = useState('');
@@ -653,15 +654,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                         onChange={(e) => setCurrency(e.target.value)}
                         className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-teal-500 appearance-none cursor-pointer"
                       >
-                        <option value="PKR">PKR - Pakistani Rupee (Rs.)</option>
-                        <option value="USD">USD - US Dollar ($)</option>
-                        <option value="GBP">GBP - British Pound (£)</option>
-                        <option value="EUR">EUR - Euro (€)</option>
-                        <option value="AED">AED - UAE Dirham (AED)</option>
-                        <option value="SAR">SAR - Saudi Riyal (SAR)</option>
-                        <option value="INR">INR - Indian Rupee (₹)</option>
-                        <option value="CAD">CAD - Canadian Dollar ($)</option>
-                        <option value="AUD">AUD - Australian Dollar ($)</option>
+                        {CURRENCY_OPTIONS.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.code} - {c.name}
+                          </option>
+                        ))}
                       </select>
                       <Coins className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
                     </div>
@@ -690,7 +687,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                       id="reg-school-phone"
                       value={schoolPhone}
                       onChange={(e) => setSchoolPhone(e.target.value)}
-                      placeholder="+92 42 111-222-333"
+                      placeholder="+1 555 010 0000"
                       className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
                     />
                   </div>
