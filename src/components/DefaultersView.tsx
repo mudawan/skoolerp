@@ -30,6 +30,9 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   X,
 } from 'lucide-react';
 
@@ -459,11 +462,94 @@ export const DefaultersView: React.FC = () => {
     });
   }, [currentTabList, students, classes, selectedClassId, searchTerm]);
 
+  // Sorting state
+  const [sortField, setSortField] = useState<string>('voucherNo');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection(
+        field === 'netDue' || field === 'paid' || field === 'outstanding' || field === 'gross' || field === 'concession' || field === 'carriedBalance'
+          ? 'desc'
+          : 'asc'
+      );
+    }
+  };
+
+  const renderSortIcon = (field: string) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return sortDirection === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-amber-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-amber-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedVouchers = useMemo(() => {
+    return [...filteredVouchers].sort((a, b) => {
+      const studentA = students.find((s) => s.id === a.studentId);
+      const studentB = students.find((s) => s.id === b.studentId);
+      const clsA = classes.find((c) => c.id === a.classId);
+      const clsB = classes.find((c) => c.id === b.classId);
+
+      let cmp = 0;
+      switch (sortField) {
+        case 'voucherNo':
+          cmp = (a.voucherNo || '').localeCompare(b.voucherNo || '', undefined, { numeric: true });
+          break;
+        case 'studentName':
+          cmp = (studentA?.name || '').localeCompare(studentB?.name || '');
+          break;
+        case 'class':
+          cmp = (clsA?.name || '').localeCompare(clsB?.name || '');
+          break;
+        case 'netDue':
+          cmp = a.netDue - b.netDue;
+          break;
+        case 'paid':
+          cmp = a.amountPaid - b.amountPaid;
+          break;
+        case 'outstanding': {
+          const outA = Math.max(0, a.netDue - a.amountPaid);
+          const outB = Math.max(0, b.netDue - b.amountPaid);
+          cmp = outA - outB;
+          break;
+        }
+        case 'gross':
+          cmp = (a.grossTotal || a.netDue) - (b.grossTotal || b.netDue);
+          break;
+        case 'concession':
+          cmp = (a.totalConcession || 0) - (b.totalConcession || 0);
+          break;
+        case 'status':
+          cmp = (a.status || '').localeCompare(b.status || '');
+          break;
+        case 'carriedBalance':
+          cmp = a.netDue - b.netDue;
+          break;
+        case 'carriedToMonth':
+          cmp = (a.month || '').localeCompare(b.month || '');
+          break;
+        case 'carriedSurcharge':
+          cmp = (a.lateFeeRate || 0) - (b.lateFeeRate || 0);
+          break;
+        default:
+          cmp = 0;
+      }
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredVouchers, sortField, sortDirection, students, classes]);
+
   // Pagination calculations
-  const totalPages = Math.ceil(filteredVouchers.length / itemsPerPage) || 1;
+  const totalPages = Math.ceil(sortedVouchers.length / itemsPerPage) || 1;
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const startIndex = (safeCurrentPage - 1) * itemsPerPage;
-  const paginatedVouchers = filteredVouchers.slice(startIndex, startIndex + itemsPerPage);
+  const paginatedVouchers = sortedVouchers.slice(startIndex, startIndex + itemsPerPage);
 
   const visibleIds = useMemo(() => paginatedVouchers.map((v) => v.id), [paginatedVouchers]);
   const isAllVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
@@ -1157,7 +1243,7 @@ export const DefaultersView: React.FC = () => {
           {activeTab === 'uncarried' && (
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
+                <tr className="select-none">
                   <th className="p-3 w-10 text-center">
                     <input
                       type="checkbox"
@@ -1173,13 +1259,67 @@ export const DefaultersView: React.FC = () => {
                       title="Select all visible vouchers on this page"
                     />
                   </th>
-                  <th className="p-3 w-12 text-center">Sr #</th>
-                  <th className="p-3 w-28">Voucher #</th>
-                  <th className="p-3">Student Name</th>
-                  <th className="p-3 w-24">Class</th>
-                  <th className="p-3 text-right">Net Due</th>
-                  <th className="p-3 text-right">Paid</th>
-                  <th className="p-3 text-right">Outstanding</th>
+                  <th className="p-3 w-12 text-center text-slate-700">Sr #</th>
+                  <th
+                    onClick={() => handleSort('voucherNo')}
+                    className="p-3 w-28 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Voucher #"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Voucher #</span>
+                      {renderSortIcon('voucherNo')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('studentName')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Student Name</span>
+                      {renderSortIcon('studentName')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('class')}
+                    className="p-3 w-24 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Class"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Class</span>
+                      {renderSortIcon('class')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('netDue')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Net Due"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Net Due</span>
+                      {renderSortIcon('netDue')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('paid')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Amount Paid"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Paid</span>
+                      {renderSortIcon('paid')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('outstanding')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Outstanding Balance"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Outstanding</span>
+                      {renderSortIcon('outstanding')}
+                    </div>
+                  </th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -1276,7 +1416,7 @@ export const DefaultersView: React.FC = () => {
           {activeTab === 'zeroDue' && (
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
+                <tr className="select-none">
                   <th className="p-3 w-10 text-center">
                     <input
                       type="checkbox"
@@ -1291,14 +1431,77 @@ export const DefaultersView: React.FC = () => {
                       title="Select all visible vouchers on this page"
                     />
                   </th>
-                  <th className="p-3 w-12 text-center">Sr #</th>
-                  <th className="p-3 w-28">Voucher #</th>
-                  <th className="p-3">Student Name</th>
-                  <th className="p-3 w-24">Class</th>
-                  <th className="p-3 text-right">Gross Total</th>
-                  <th className="p-3 text-right">Scholarship / Concession</th>
-                  <th className="p-3 text-right">Net Payable</th>
-                  <th className="p-3 text-center">Status</th>
+                  <th className="p-3 w-12 text-center text-slate-700">Sr #</th>
+                  <th
+                    onClick={() => handleSort('voucherNo')}
+                    className="p-3 w-28 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Voucher #"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Voucher #</span>
+                      {renderSortIcon('voucherNo')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('studentName')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Student Name</span>
+                      {renderSortIcon('studentName')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('class')}
+                    className="p-3 w-24 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Class"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Class</span>
+                      {renderSortIcon('class')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('gross')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Gross Total"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Gross Total</span>
+                      {renderSortIcon('gross')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('concession')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Scholarship / Concession"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Scholarship / Concession</span>
+                      {renderSortIcon('concession')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('netDue')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Net Payable"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Net Payable</span>
+                      {renderSortIcon('netDue')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('status')}
+                    className="p-3 text-center cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Status"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Status</span>
+                      {renderSortIcon('status')}
+                    </div>
+                  </th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -1385,7 +1588,7 @@ export const DefaultersView: React.FC = () => {
           {activeTab === 'carried' && (
             <table className="w-full text-left text-xs text-slate-700">
               <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
+                <tr className="select-none">
                   <th className="p-3 w-10 text-center">
                     <input
                       type="checkbox"
@@ -1400,13 +1603,67 @@ export const DefaultersView: React.FC = () => {
                       title="Select all visible vouchers on this page"
                     />
                   </th>
-                  <th className="p-3 w-12 text-center">Sr #</th>
-                  <th className="p-3 w-28">Voucher #</th>
-                  <th className="p-3">Student Name</th>
-                  <th className="p-3 w-24">Class</th>
-                  <th className="p-3 text-right">Carried Balance</th>
-                  <th className="p-3">Carried To Month</th>
-                  <th className="p-3 text-right">Carried Late Surcharge</th>
+                  <th className="p-3 w-12 text-center text-slate-700">Sr #</th>
+                  <th
+                    onClick={() => handleSort('voucherNo')}
+                    className="p-3 w-28 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Voucher #"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Voucher #</span>
+                      {renderSortIcon('voucherNo')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('studentName')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Student Name</span>
+                      {renderSortIcon('studentName')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('class')}
+                    className="p-3 w-24 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Class"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Class</span>
+                      {renderSortIcon('class')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('carriedBalance')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Carried Balance"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Carried Balance</span>
+                      {renderSortIcon('carriedBalance')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('carriedToMonth')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Carried To Month"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Carried To Month</span>
+                      {renderSortIcon('carriedToMonth')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('carriedSurcharge')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Carried Late Surcharge"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Carried Late Surcharge</span>
+                      {renderSortIcon('carriedSurcharge')}
+                    </div>
+                  </th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>

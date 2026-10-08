@@ -131,7 +131,7 @@ export const SessionInactivityGuard: React.FC = () => {
           );
         } catch {}
         logout();
-      } else if (remainingSec <= WARNING_THRESHOLD_SECONDS) {
+      } else if (remainingSec <= Math.min(WARNING_THRESHOLD_SECONDS, Math.max(15, Math.floor(((sessionTimeoutMinutes || 10) * 60) / 2)))) {
         setSecondsRemaining(remainingSec);
         if (!isWarningOpenRef.current) {
           isWarningOpenRef.current = true;

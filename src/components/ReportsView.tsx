@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { CSV_REG_NO } from '../utils/csvHeaders';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, formatStudentAge, getArrearsByStudent, type StudentArrears } from '../utils/feeMath';
@@ -41,6 +41,9 @@ import {
   School,
   GraduationCap,
   TrendingUp,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 
@@ -308,6 +311,54 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
 
+  type ArrearsSortField = 'name' | 'class' | 'father' | 'unpaidMonths' | 'outstanding';
+  const [arrearsSortField, setArrearsSortField] = useState<ArrearsSortField>('outstanding');
+  const [arrearsSortDir, setArrearsSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleArrearsSort = (field: ArrearsSortField) => {
+    if (arrearsSortField === field) {
+      setArrearsSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setArrearsSortField(field);
+      setArrearsSortDir(field === 'outstanding' || field === 'unpaidMonths' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderArrearsSortIcon = (field: ArrearsSortField) => {
+    if (arrearsSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return arrearsSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedStudentOutstandingRows = useMemo(() => {
+    return [...studentOutstandingRows].sort((a, b) => {
+      let cmp = 0;
+      switch (arrearsSortField) {
+        case 'name':
+          cmp = a.name.localeCompare(b.name);
+          break;
+        case 'class':
+          cmp = a.className.localeCompare(b.className);
+          break;
+        case 'father':
+          cmp = a.fatherName.localeCompare(b.fatherName);
+          break;
+        case 'unpaidMonths':
+          cmp = a.unpaidMonthsCount - b.unpaidMonthsCount;
+          break;
+        case 'outstanding':
+          cmp = a.totalOutstanding - b.totalOutstanding;
+          break;
+      }
+      return arrearsSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [studentOutstandingRows, arrearsSortField, arrearsSortDir]);
+
   const pendingRows: ReportRow[] = studentOutstandingRows.flatMap((r) =>
     r.openVouchers.map((v) => ({
       date: v.dueDate,
@@ -418,11 +469,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [isSavingArrearsPdf, setIsSavingArrearsPdf] = useState(false);
 
   const handleCopyArrears = async () => {
-    if (studentOutstandingRows.length === 0) return;
+    if (sortedStudentOutstandingRows.length === 0) return;
     const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
     const lines = [
       headers.join('\t'),
-      ...studentOutstandingRows.map((r, i) =>
+      ...sortedStudentOutstandingRows.map((r, i) =>
         [i + 1, r.regNo, r.name, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.totalOutstanding].join('\t')
       ),
       ['TOTAL', '', '', '', '', '', '', totalPending].join('\t'),
@@ -447,9 +498,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const handleExportArrearsCsv = () => {
-    if (studentOutstandingRows.length === 0) return;
+    if (sortedStudentOutstandingRows.length === 0) return;
     const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
-    const csvRows = studentOutstandingRows.map((r, i) => [
+    const csvRows = sortedStudentOutstandingRows.map((r, i) => [
       i + 1,
       `"${r.regNo || ''}"`,
       `"${(r.name || '').replace(/"/g, '""')}"`,
@@ -467,10 +518,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const handleSaveArrearsPdf = async () => {
-    if (studentOutstandingRows.length === 0 || isSavingArrearsPdf) return;
+    if (sortedStudentOutstandingRows.length === 0 || isSavingArrearsPdf) return;
     try {
       setIsSavingArrearsPdf(true);
-      const pdfRows: OutstandingArrearsPdfRow[] = studentOutstandingRows.map((r) => ({
+      const pdfRows: OutstandingArrearsPdfRow[] = sortedStudentOutstandingRows.map((r) => ({
         regNo: r.regNo,
         name: r.name,
         dob: r.dob,
@@ -500,10 +551,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   };
 
   const handlePrintArrears = async () => {
-    if (studentOutstandingRows.length === 0 || isPrintingArrears) return;
+    if (sortedStudentOutstandingRows.length === 0 || isPrintingArrears) return;
     try {
       setIsPrintingArrears(true);
-      const pdfRows: OutstandingArrearsPdfRow[] = studentOutstandingRows.map((r) => ({
+      const pdfRows: OutstandingArrearsPdfRow[] = sortedStudentOutstandingRows.map((r) => ({
         regNo: r.regNo,
         name: r.name,
         dob: r.dob,
@@ -553,6 +604,66 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const [csvDownloaded, setCsvDownloaded] = useState(false);
     const [isPrinting, setIsPrinting] = useState(false);
     const [isSavingPdf, setIsSavingPdf] = useState(false);
+    const [sortField, setSortField] = useState<'sr' | 'date' | 'regNo' | 'studentName' | 'className' | 'feeMonth' | 'total' | 'paid' | 'balance'>('sr');
+    const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+    const handleSort = (field: 'sr' | 'date' | 'regNo' | 'studentName' | 'className' | 'feeMonth' | 'total' | 'paid' | 'balance') => {
+      if (sortField === field) {
+        setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortField(field);
+        setSortDirection(field === 'total' || field === 'paid' || field === 'balance' ? 'desc' : 'asc');
+      }
+    };
+
+    const renderSortIcon = (field: 'sr' | 'date' | 'regNo' | 'studentName' | 'className' | 'feeMonth' | 'total' | 'paid' | 'balance') => {
+      if (sortField !== field) {
+        return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+      }
+      return sortDirection === 'asc' ? (
+        <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+      ) : (
+        <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+      );
+    };
+
+    const sortedRows = useMemo(() => {
+      if (sortField === 'sr') {
+        return sortDirection === 'asc' ? rows : [...rows].reverse();
+      }
+      return [...rows].sort((a, b) => {
+        let cmp = 0;
+        switch (sortField) {
+          case 'date':
+            cmp = a.date.localeCompare(b.date);
+            break;
+          case 'regNo':
+            cmp = (a.regNo || '').localeCompare(b.regNo || '', undefined, { numeric: true });
+            break;
+          case 'studentName':
+            cmp = a.studentName.localeCompare(b.studentName);
+            break;
+          case 'className':
+            cmp = a.className.localeCompare(b.className);
+            break;
+          case 'feeMonth':
+            cmp = a.feeMonth.localeCompare(b.feeMonth);
+            break;
+          case 'total':
+            cmp = a.total - b.total;
+            break;
+          case 'paid':
+            cmp = a.paid - b.paid;
+            break;
+          case 'balance':
+            cmp = a.balance - b.balance;
+            break;
+          default:
+            cmp = 0;
+        }
+        return sortDirection === 'asc' ? cmp : -cmp;
+      });
+    }, [rows, sortField, sortDirection]);
 
     const totals = rows.reduce(
       (acc, r) => ({
@@ -564,10 +675,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     );
 
     const handleCopy = async () => {
-      if (rows.length === 0) return;
+      if (sortedRows.length === 0) return;
       const lines = [
         REPORT_HEADERS.join('\t'),
-        ...rows.map((r, i) =>
+        ...sortedRows.map((r, i) =>
           [i + 1, r.date, r.regNo || '', r.studentName, r.className, r.feeMonth, r.total, r.paid, r.balance].join('\t')
         ),
         ['TOTAL', '', '', '', '', '', totals.total, totals.paid, totals.balance].join('\t'),
@@ -592,8 +703,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     };
 
     const handleCsv = () => {
-      if (rows.length === 0) return;
-      const csvRows = rows.map((r, i) => [
+      if (sortedRows.length === 0) return;
+      const csvRows = sortedRows.map((r, i) => [
         i + 1,
         `"${r.date}"`,
         `"${r.regNo || ''}"`,
@@ -624,10 +735,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     };
 
     const handleSavePdf = async () => {
-      if (rows.length === 0 || isSavingPdf) return;
+      if (sortedRows.length === 0 || isSavingPdf) return;
       try {
         setIsSavingPdf(true);
-        const pdfRows: FeeCollectionReportPdfRow[] = rows.map((r) => ({
+        const pdfRows: FeeCollectionReportPdfRow[] = sortedRows.map((r) => ({
           date: r.date,
           regNo: r.regNo,
           studentName: r.studentName,
@@ -655,10 +766,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     };
 
     const handlePrintPdf = async () => {
-      if (rows.length === 0 || isPrinting) return;
+      if (sortedRows.length === 0 || isPrinting) return;
       try {
         setIsPrinting(true);
-        const pdfRows: FeeCollectionReportPdfRow[] = rows.map((r) => ({
+        const pdfRows: FeeCollectionReportPdfRow[] = sortedRows.map((r) => ({
           date: r.date,
           regNo: r.regNo,
           studentName: r.studentName,
@@ -869,21 +980,102 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
-                  <th className="p-2.5">Sr#</th>
-                  <th className="p-2.5">Date</th>
-                  <th className="p-2.5">Reg No</th>
-                  <th className="p-2.5">Student Name</th>
-                  <th className="p-2.5">Class</th>
-                  <th className="p-2.5">Fee Month</th>
-                  <th className="p-2.5 text-right">Total</th>
-                  <th className="p-2.5 text-right">Paid</th>
-                  <th className="p-2.5 text-right">Balance</th>
+              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                <tr className="select-none">
+                  <th
+                    onClick={() => handleSort('sr')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Serial #"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Sr#</span>
+                      {renderSortIcon('sr')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('date')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Date"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Date</span>
+                      {renderSortIcon('date')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('regNo')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Reg No"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Reg No</span>
+                      {renderSortIcon('regNo')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('studentName')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Student Name</span>
+                      {renderSortIcon('studentName')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('className')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Class"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Class</span>
+                      {renderSortIcon('className')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('feeMonth')}
+                    className="p-2.5 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Fee Month"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Fee Month</span>
+                      {renderSortIcon('feeMonth')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('total')}
+                    className="p-2.5 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Total Amount"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Total</span>
+                      {renderSortIcon('total')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('paid')}
+                    className="p-2.5 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Paid Amount"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Paid</span>
+                      {renderSortIcon('paid')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('balance')}
+                    className="p-2.5 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Balance"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Balance</span>
+                      {renderSortIcon('balance')}
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map((r, i) => (
+                {sortedRows.map((r, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="p-2.5 text-slate-400">{i + 1}</td>
                     <td className="p-2.5 font-medium">{r.date}</td>
@@ -1117,19 +1309,64 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
-                <tr>
-                  <th className="p-3">Student Info</th>
-                  <th className="p-3">Class</th>
-                  <th className="p-3">Father Name & Contact</th>
-                  <th className="p-3">Months Unpaid (Streak)</th>
-                  <th className="p-3 text-right">Outstanding (Net)</th>
+              <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                <tr className="select-none">
+                  <th
+                    onClick={() => handleArrearsSort('name')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Student Info</span>
+                      {renderArrearsSortIcon('name')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('class')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Academic Class"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Class</span>
+                      {renderArrearsSortIcon('class')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('father')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Father Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Father Name & Contact</span>
+                      {renderArrearsSortIcon('father')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('unpaidMonths')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Months Unpaid"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Months Unpaid (Streak)</span>
+                      {renderArrearsSortIcon('unpaidMonths')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('outstanding')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Outstanding Net Amount"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Outstanding (Net)</span>
+                      {renderArrearsSortIcon('outstanding')}
+                    </div>
+                  </th>
                   <th className="p-3 text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {studentOutstandingRows.length > 0 ? (
-                  studentOutstandingRows.map((r) => (
+                {sortedStudentOutstandingRows.length > 0 ? (
+                  sortedStudentOutstandingRows.map((r) => (
                     <tr key={r.studentId} className="hover:bg-slate-50">
                       <td className="p-3">
                         <div className="flex items-center gap-2.5">

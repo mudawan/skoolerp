@@ -640,17 +640,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     apiUpdateInstituteSettings({ voucherDeletionResolution: resolution });
   };
 
-  // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings & persisted in PostgreSQL)
-  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(10);
+  // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings & persisted in PostgreSQL & localStorage)
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('quickfees_session_timeout_minutes');
+      if (stored) {
+        const parsed = Number(stored);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) return parsed;
+      }
+    } catch {}
+    return 10;
+  });
 
   const setSessionTimeoutMinutes = (mins: number) => {
     const sanitized = Math.max(1, Math.min(180, Number(mins) || 10));
     setSessionTimeoutMinutesState(sanitized);
+    try {
+      localStorage.setItem('quickfees_session_timeout_minutes', String(sanitized));
+      localStorage.setItem('quickfees_inactivity_duration', String(sanitized));
+    } catch {}
     setInstitute((prev) => ({
       ...prev,
       sessionTimeoutMinutes: sanitized,
       settings: { ...prev.settings, sessionTimeoutMinutes: sanitized },
     }));
+    setCurrentInstitution((prev) => {
+      if (!prev) return prev;
+      const s = prev.settings
+        ? typeof prev.settings === 'string'
+          ? JSON.parse(prev.settings)
+          : prev.settings
+        : {};
+      return {
+        ...prev,
+        settings: { ...s, sessionTimeoutMinutes: sanitized },
+      };
+    });
     apiUpdateInstituteSettings({ sessionTimeoutMinutes: sanitized });
   };
 
@@ -1005,22 +1030,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      // Check for transport assignments that might not have an explicit history record
-      const studentAssignments = transportAssignments.filter((a) => a.studentId === studentId);
+      // Check for transport assignments that might not have an explicit history record.
+      // Sort chronologically (oldest month first) to evaluate transitions accurately.
+      const studentAssignments = transportAssignments
+        .filter((a) => a.studentId === studentId && a.active !== false)
+        .sort((a, b) => a.month.localeCompare(b.month));
+
+      let priorSynthesizedAsgn: TransportAssignment | null = null;
       for (const asgn of studentAssignments) {
         const hasMatchingTransport = explicitEntries.some(
           (e) => e.category === 'transport' && e.month === asgn.month
         );
-        if (!hasMatchingTransport) {
-          const stop = stops.find((s) => s.id === asgn.stopId);
-          const bus = buses.find((b) => b.id === asgn.busId);
-          const monthName = formatMonthName(asgn.month);
-          const fare = stop?.monthlyFare ? Math.max(0, stop.monthlyFare - (asgn.discount || 0)) : 0;
+        if (hasMatchingTransport) {
+          priorSynthesizedAsgn = asgn;
+          continue;
+        }
+
+        // CSV transport assignments should be smart: do not make new entry if exact same assignment already exists in any prior month
+        if (priorSynthesizedAsgn) {
+          const isIdentical =
+            priorSynthesizedAsgn.stopId === asgn.stopId &&
+            priorSynthesizedAsgn.busId === asgn.busId &&
+            priorSynthesizedAsgn.tripType === asgn.tripType &&
+            (priorSynthesizedAsgn.discount || 0) === (asgn.discount || 0);
+
+          if (isIdentical) {
+            // Unchanged ongoing assignment: skip redundant entry
+            priorSynthesizedAsgn = asgn;
+            continue;
+          }
+        }
+
+        const stop = stops.find((s) => s.id === asgn.stopId);
+        const bus = buses.find((b) => b.id === asgn.busId);
+        const monthName = formatMonthName(asgn.month);
+        const fare = stop?.monthlyFare ? Math.max(0, stop.monthlyFare - (asgn.discount || 0)) : 0;
+        // Use actual timestamp of event rather than static time
+        const eventTimestamp = asgn.createdAt || (student?.admissionDate ? `${student.admissionDate}T08:00:00.000Z` : new Date().toISOString());
+        const eventDate = asgn.createdAt ? asgn.createdAt.split('T')[0] : (student?.admissionDate || `${asgn.month}-01`);
+
+        if (!priorSynthesizedAsgn) {
           synthesized.push({
             id: `synth-tr-${asgn.id}`,
             studentId: asgn.studentId,
-            timestamp: `${asgn.month}-01T08:30:00.000Z`,
-            date: `${asgn.month}-01`,
+            timestamp: eventTimestamp,
+            date: eventDate,
             category: 'transport',
             actionTitle: `Transport Added (${monthName})`,
             description: `Transport assigned for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${bus?.routeName || 'Route'}) - ${asgn.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Net fare: ${formatCurrency(fare)}.`,
@@ -1031,7 +1085,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             operatorRole: 'Accountant',
             metadata: { isSynthesized: true, assignmentId: asgn.id },
           });
+        } else {
+          const prevStop = stops.find((s) => s.id === priorSynthesizedAsgn!.stopId);
+          const prevBus = buses.find((b) => b.id === priorSynthesizedAsgn!.busId);
+          synthesized.push({
+            id: `synth-tr-${asgn.id}`,
+            studentId: asgn.studentId,
+            timestamp: eventTimestamp,
+            date: eventDate,
+            category: 'transport',
+            actionTitle: `Transport Route Updated (${monthName})`,
+            description: `Transport route updated for ${monthName}: ${stop?.name || 'Stop'} via ${bus?.busNumber || 'Bus'} (${asgn.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}). Previous: ${prevStop?.name || 'Stop'} via ${prevBus?.busNumber || 'Bus'}. Net fare: ${formatCurrency(fare)}.`,
+            previousValue: `${prevStop?.name || 'Stop'} (${prevBus?.busNumber || 'Bus'})`,
+            newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
+            month: asgn.month,
+            operatorName: 'Transport Incharge',
+            operatorRole: 'Accountant',
+            metadata: { isSynthesized: true, assignmentId: asgn.id },
+          });
         }
+
+        priorSynthesizedAsgn = asgn;
       }
 
       // Sort descending (newest first)
@@ -1587,12 +1661,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (instSettings.defaultDueDay !== undefined) setDefaultDueDayState(Number(instSettings.defaultDueDay));
             if (Array.isArray(instSettings.voucherCopyOrder) && instSettings.voucherCopyOrder.length > 0) setVoucherCopyOrderState(instSettings.voucherCopyOrder);
             if (Array.isArray(instSettings.voucherDefaultCopies) && instSettings.voucherDefaultCopies.length > 0) setVoucherDefaultCopiesState(instSettings.voucherDefaultCopies);
+            const timeout = Number(instSettings.sessionTimeoutMinutes) || 10;
             if (instSettings.sessionTimeoutMinutes) {
               const parsed = Number(instSettings.sessionTimeoutMinutes);
               if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
                 setSessionTimeoutMinutesState(parsed);
               }
             }
+            const instAny = me.institution as any;
+            setInstitute((prev) => ({
+              ...prev,
+              name: instAny.name || prev.name,
+              logoUrl: instAny.logo_url || instAny.logoUrl || prev.logoUrl,
+              address: instAny.address || prev.address,
+              phone: instAny.phone || prev.phone,
+              email: instAny.email || prev.email,
+              website: instAny.website || prev.website,
+              regNo: instAny.registration_no || instAny.regNo || prev.regNo,
+              currency: instAny.currency || prev.currency,
+              sessionTimeoutMinutes: timeout,
+              settings: {
+                ...prev.settings,
+                ...instSettings,
+                sessionTimeoutMinutes: timeout,
+              },
+            }));
           } catch {}
         }
       } else {
@@ -2782,6 +2875,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newAsgn: TransportAssignment = {
         ...assignment,
         id: `asgn-${Date.now()}`,
+        createdAt: new Date().toISOString(),
       };
       setTransportAssignments((prev) => [...prev, newAsgn]);
     }
@@ -2813,6 +2907,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           updated.push({
             ...asgn,
             id: generateUniqueId('asgn'),
+            createdAt: asgn.createdAt || new Date().toISOString(),
           });
         }
       }
@@ -5324,8 +5419,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Settings
-  const updateInstitute = (updates: Partial<InstituteProfile>) => {
-    setInstitute((prev) => ({ ...prev, ...updates }));
+  const updateInstitute = async (updates: Partial<InstituteProfile>) => {
+    const perm = ensureMutationAllowed('Update institute profile');
+    if (!perm.allowed) return;
+
+    let timeout: number | undefined = undefined;
+    if (updates.sessionTimeoutMinutes !== undefined) {
+      timeout = Math.max(1, Math.min(180, Number(updates.sessionTimeoutMinutes) || 10));
+    } else if (updates.settings?.sessionTimeoutMinutes !== undefined) {
+      timeout = Math.max(1, Math.min(180, Number(updates.settings.sessionTimeoutMinutes) || 10));
+    }
+
+    if (timeout !== undefined) {
+      setSessionTimeoutMinutesState(timeout);
+      try {
+        localStorage.setItem('quickfees_session_timeout_minutes', String(timeout));
+        localStorage.setItem('quickfees_inactivity_duration', String(timeout));
+      } catch {}
+    }
+
+    const currentTimeout = timeout !== undefined ? timeout : (institute.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10);
+    const mergedSettings = {
+      ...(institute.settings || {}),
+      ...(updates.settings || {}),
+      sessionTimeoutMinutes: currentTimeout,
+    };
+
+    const newInst: InstituteProfile = {
+      ...institute,
+      ...updates,
+      sessionTimeoutMinutes: currentTimeout,
+      settings: mergedSettings,
+    };
+
+    setInstitute(newInst);
+
+    // Explicitly persist to PostgreSQL via PUT /api/institute
+    const targetInstId = currentInstitution?.id || 'default';
+    try {
+      await fetch('/api/institute', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-institution-id': targetInstId,
+        },
+        body: JSON.stringify({
+          name: newInst.name,
+          logoUrl: newInst.logoUrl,
+          address: newInst.address,
+          phone: newInst.phone,
+          email: newInst.email,
+          website: newInst.website,
+          registrationNo: newInst.regNo,
+          currency: newInst.currency || 'USD',
+          settings: mergedSettings,
+        }),
+      });
+    } catch (err) {
+      console.warn('[Institute] Failed to persist institute updates:', err);
+    }
   };
 
   const addBankAccount = (bank: Omit<BankAccount, 'id'>) => {

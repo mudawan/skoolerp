@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { InstituteProfile } from '../../types';
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../../utils/feeMath';
@@ -60,12 +60,46 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
     handleSaveProfile,
   } = props;
 
-  const { hasPermission, currentInstitution, institute, showToast, currentUser } = useApp();
+  const {
+    hasPermission,
+    currentInstitution,
+    institute,
+    showToast,
+    currentUser,
+    sessionTimeoutMinutes,
+    setSessionTimeoutMinutes,
+    updateInstitute,
+  } = useApp();
   const [codeCopied, setCodeCopied] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
   const activeSchoolCode = currentInstitution?.code || institute.code || 'SYS';
   const activeSchoolName = currentInstitution?.name || institute.name || 'School Workspace';
+
+  const currentTimeout = profileData.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10;
+  const [customMinutesInput, setCustomMinutesInput] = useState<string>(String(currentTimeout));
+
+  useEffect(() => {
+    const val = profileData.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10;
+    setCustomMinutesInput(String(val));
+  }, [profileData.sessionTimeoutMinutes, sessionTimeoutMinutes]);
+
+  const applyCustomTimeout = (inputStr: string) => {
+    const parsed = parseInt(inputStr, 10);
+    const valid = isNaN(parsed) ? 10 : Math.max(1, Math.min(180, parsed));
+    setCustomMinutesInput(String(valid));
+    setProfileData((prev) => ({
+      ...prev,
+      sessionTimeoutMinutes: valid,
+      settings: { ...prev.settings, sessionTimeoutMinutes: valid },
+    }));
+    setSessionTimeoutMinutes(valid);
+    updateInstitute({
+      sessionTimeoutMinutes: valid,
+      settings: { ...(institute.settings || {}), sessionTimeoutMinutes: valid },
+    }).catch(() => {});
+    showToast(`Auto-logout inactivity duration set to ${valid} minutes.`, 'success');
+  };
 
   return (
     <>
@@ -428,16 +462,28 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               { mins: 30, label: '30 Mins', tag: 'Extended' },
               { mins: 60, label: '60 Mins', tag: 'Long' },
             ].map((preset) => {
-              const isSelected = (profileData.sessionTimeoutMinutes ?? 10) === preset.mins;
+              const isSelected = (profileData.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10) === preset.mins;
               return (
                 <button
                   key={preset.mins}
                   type="button"
                   id={`btn-timeout-preset-${preset.mins}`}
                   disabled={!hasPermission('settings.manage')}
-                  onClick={() =>
-                    setProfileData({ ...profileData, sessionTimeoutMinutes: preset.mins })
-                  }
+                  onClick={() => {
+                    const mins = preset.mins;
+                    setCustomMinutesInput(String(mins));
+                    setProfileData((prev) => ({
+                      ...prev,
+                      sessionTimeoutMinutes: mins,
+                      settings: { ...prev.settings, sessionTimeoutMinutes: mins },
+                    }));
+                    setSessionTimeoutMinutes(mins);
+                    updateInstitute({
+                      sessionTimeoutMinutes: mins,
+                      settings: { ...(institute.settings || {}), sessionTimeoutMinutes: mins },
+                    }).catch(() => {});
+                    showToast(`Auto-logout inactivity duration set to ${mins} minutes.`, 'success');
+                  }}
                   className={`p-3 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
                     isSelected
                       ? 'bg-teal-50 border-teal-500 text-teal-900 ring-2 ring-teal-500/20 shadow-xs'
@@ -466,35 +512,60 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                 Or enter custom timeout (1 - 180 minutes):
               </label>
-              <div className="relative max-w-xs">
-                <input
-                  type="number"
-                  id="input-custom-timeout-minutes"
-                  min={1}
-                  max={180}
-                  value={profileData.sessionTimeoutMinutes ?? 10}
+              <div className="relative max-w-xs flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    id="input-custom-timeout-minutes"
+                    min={1}
+                    max={180}
+                    value={customMinutesInput}
+                    disabled={!hasPermission('settings.manage')}
+                    onWheel={(e) => (e.target as HTMLElement).blur()}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setCustomMinutesInput(raw);
+                      const parsed = parseInt(raw, 10);
+                      if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
+                        setProfileData((prev) => ({
+                          ...prev,
+                          sessionTimeoutMinutes: parsed,
+                          settings: { ...prev.settings, sessionTimeoutMinutes: parsed },
+                        }));
+                      }
+                    }}
+                    onBlur={() => {
+                      applyCustomTimeout(customMinutesInput);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        applyCustomTimeout(customMinutesInput);
+                      }
+                    }}
+                    className="w-full pl-9 pr-14 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                  />
+                  <Clock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <span className="absolute right-3 top-2.5 text-[11px] text-slate-500 font-medium">
+                    mins
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  id="btn-apply-custom-timeout"
                   disabled={!hasPermission('settings.manage')}
-                  onWheel={(e) => (e.target as HTMLElement).blur()}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    setProfileData({
-                      ...profileData,
-                      sessionTimeoutMinutes: isNaN(val) ? 10 : Math.max(1, Math.min(180, val)),
-                    });
-                  }}
-                  className="w-full pl-9 pr-14 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900"
-                />
-                <Clock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <span className="absolute right-3 top-2.5 text-[11px] text-slate-500 font-medium">
-                  mins
-                </span>
+                  onClick={() => applyCustomTimeout(customMinutesInput)}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-teal-50 text-slate-700 hover:text-teal-700 border border-slate-200 hover:border-teal-300 font-bold text-xs rounded-xl transition cursor-pointer shrink-0 disabled:opacity-50"
+                >
+                  Apply
+                </button>
               </div>
             </div>
 
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 text-[11px] text-slate-600 sm:max-w-xs flex items-start gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
               <p className="leading-relaxed">
-                A 60-second warning countdown with a "Stay Logged In" button will alert the operator before automatic session logout occurs.
+                A countdown warning with a "Stay Logged In" button will alert the operator before automatic session logout occurs.
               </p>
             </div>
           </div>

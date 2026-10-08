@@ -14,6 +14,8 @@ import { VoucherParticularsEditor } from './VoucherParticularsEditor';
 import {
   AlertCircle,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -94,9 +96,31 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   }, [initialStudentId, students]);
 
   // Filters & Sorting
+  type LedgerSortColumn = 'month' | 'voucherNo' | 'collectionDate' | 'txnNo' | 'total' | 'deposit' | 'balance' | 'status' | 'sr';
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Paid' | 'Partial' | 'Unpaid'>('ALL');
+  const [sortColumn, setSortColumn] = useState<LedgerSortColumn>('month');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [tableSearch, setTableSearch] = useState('');
+
+  const handleSort = (col: LedgerSortColumn) => {
+    if (sortColumn === col) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(col);
+      setSortOrder(col === 'month' || col === 'total' || col === 'deposit' || col === 'balance' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderSortIcon = (col: LedgerSortColumn) => {
+    if (sortColumn !== col) {
+      return <ArrowUpDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return sortOrder === 'asc' ? (
+      <ArrowUp className="w-3 h-3 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3 h-3 text-teal-700 shrink-0 font-bold" />
+    );
+  };
 
   // Modals & UI States
   const [selectedVoucherForPrint, setSelectedVoucherForPrint] = useState<FeeVoucher | null>(null);
@@ -219,7 +243,38 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
     // Sort
     rawList.sort((a, b) => {
-      const comp = a.month.localeCompare(b.month);
+      let comp = 0;
+      switch (sortColumn) {
+        case 'month':
+          comp = a.month.localeCompare(b.month);
+          break;
+        case 'voucherNo':
+          comp = a.voucherNo.localeCompare(b.voucherNo, undefined, { numeric: true });
+          break;
+        case 'collectionDate':
+          comp = a.collectionDate.localeCompare(b.collectionDate);
+          break;
+        case 'txnNo':
+          comp = a.txnNo.localeCompare(b.txnNo);
+          break;
+        case 'total':
+          comp = a.total - b.total;
+          break;
+        case 'deposit':
+          comp = a.deposit - b.deposit;
+          break;
+        case 'balance':
+          comp = a.balance - b.balance;
+          break;
+        case 'status':
+          comp = a.status.localeCompare(b.status);
+          break;
+        case 'sr':
+          comp = a.month.localeCompare(b.month);
+          break;
+        default:
+          comp = 0;
+      }
       return sortOrder === 'desc' ? -comp : comp;
     });
 
@@ -246,7 +301,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
         ...item,
         serialNo: index + 1,
       }));
-  }, [studentVouchers, studentTransactions, sortOrder, statusFilter, tableSearch]);
+  }, [studentVouchers, studentTransactions, sortColumn, sortOrder, statusFilter, tableSearch]);
 
   // Overall Financial Totals
   const totalBilled = studentVouchers.reduce((s, v) => s + v.netDue, 0);
@@ -987,12 +1042,15 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
 
                 {/* Sort toggle */}
                 <button
-                  onClick={() => setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                  onClick={() => {
+                    setSortColumn('month');
+                    setSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+                  }}
                   className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold cursor-pointer"
                   title="Toggle Chronological / Reverse Order"
                 >
                   <ArrowUpDown className="w-3.5 h-3.5" />
-                  <span>{sortOrder === 'desc' ? 'Newest' : 'Oldest'}</span>
+                  <span>{sortColumn === 'month' ? (sortOrder === 'desc' ? 'Newest' : 'Oldest') : 'Sort: Month'}</span>
                 </button>
               </div>
             </div>
@@ -1001,16 +1059,97 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-700">
                 <thead className="bg-slate-100/90 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
-                  <tr>
-                    <th className="p-3 text-center w-12">Sr #</th>
-                    <th className="p-3">Fee Month</th>
-                    <th className="p-3">Voucher #</th>
-                    <th className="p-3">Collection Date</th>
-                    <th className="p-3">Receipt / Txn #</th>
-                    <th className="p-3 text-right">Total ({getCurrencyCode()})</th>
-                    <th className="p-3 text-right">Deposit ({getCurrencyCode()})</th>
-                    <th className="p-3 text-right">Balance ({getCurrencyCode()})</th>
-                    <th className="p-3 text-center">Status</th>
+                  <tr className="select-none">
+                    <th
+                      onClick={() => handleSort('sr')}
+                      className="p-3 text-center w-12 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Sr #"
+                    >
+                      <div className="inline-flex items-center justify-center gap-1">
+                        <span>Sr #</span>
+                        {renderSortIcon('sr')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('month')}
+                      className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Fee Month"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Fee Month</span>
+                        {renderSortIcon('month')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('voucherNo')}
+                      className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Voucher #"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Voucher #</span>
+                        {renderSortIcon('voucherNo')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('collectionDate')}
+                      className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Collection Date"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Collection Date</span>
+                        {renderSortIcon('collectionDate')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('txnNo')}
+                      className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Receipt / Txn #"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Receipt / Txn #</span>
+                        {renderSortIcon('txnNo')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('total')}
+                      className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Total Amount"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Total ({getCurrencyCode()})</span>
+                        {renderSortIcon('total')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('deposit')}
+                      className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Deposited Amount"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Deposit ({getCurrencyCode()})</span>
+                        {renderSortIcon('deposit')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('balance')}
+                      className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Remaining Balance"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Balance ({getCurrencyCode()})</span>
+                        {renderSortIcon('balance')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleSort('status')}
+                      className="p-3 text-center cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                      title="Click to sort by Payment Status"
+                    >
+                      <div className="inline-flex items-center justify-center gap-1">
+                        <span>Status</span>
+                        {renderSortIcon('status')}
+                      </div>
+                    </th>
                     <th className="p-3 text-center print:hidden">Action</th>
                   </tr>
                 </thead>

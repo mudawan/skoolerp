@@ -5,6 +5,15 @@ import { SortableTh } from '../SortableTh';
 import { useSortState, sortRows } from '../../hooks/useTableSort';
 import { Upload, X, Check, AlertCircle, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 
+export interface AbsentTransportStudent {
+  studentId: string;
+  student?: Student;
+  studentClass?: SchoolClass;
+  prevAssignment: TransportAssignment;
+  stop?: TransportStop;
+  bus?: TransportBus;
+}
+
 export interface BulkTransportPreviewRow {
   id: string;
   regNo: string;
@@ -19,6 +28,9 @@ export interface BulkTransportPreviewRow {
   discount: number;
   effectiveFare: number;
   existingAsgn?: TransportAssignment;
+  priorAssignment?: TransportAssignment;
+  isExactSameAsPrior?: boolean;
+  isChangedFromPrior?: boolean;
   isValid: boolean;
   isDuplicateInCsv: boolean;
   selected: boolean;
@@ -32,7 +44,9 @@ interface BulkTransportCsvModalProps {
   onClose: () => void;
   onClear: () => void;
   activeMonth: string;
+  prevMonth?: string;
   rows: BulkTransportPreviewRow[];
+  absentStudents?: AbsentTransportStudent[];
   previewFilter: PreviewFilter;
   setPreviewFilter: React.Dispatch<React.SetStateAction<PreviewFilter>>;
   importStatus: { message: string | null; error: string | null };
@@ -52,7 +66,9 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
   onClose,
   onClear,
   activeMonth,
+  prevMonth,
   rows,
+  absentStudents = [],
   previewFilter,
   setPreviewFilter,
   importStatus,
@@ -192,11 +208,52 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                 days: (r) => r.daysCharged,
                 discount: (r) => r.discount,
                 fare: (r) => (r.isValid && !r.isDuplicateInCsv ? r.effectiveFare : null),
-                status: (r) => r.errorMsg || (r.existingAsgn ? 'Updates Existing' : 'New Assignment'),
+                status: (r) =>
+                  r.errorMsg ||
+                  (r.isChangedFromPrior
+                    ? 'Route Updated'
+                    : r.isExactSameAsPrior
+                    ? 'Unchanged (Ongoing)'
+                    : r.existingAsgn
+                    ? 'Updates Existing'
+                    : 'New Assignment'),
               });
 
               return (
                 <>
+                  {/* Absent Students Warning Banner */}
+                  {absentStudents && absentStudents.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-2 shrink-0">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>{absentStudents.length} student(s) with transport in {formatMonthName(prevMonth || '')} are absent from this CSV</span>
+                        </div>
+                        <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded border border-amber-300">
+                          Discontinuing {absentStudents.length} Assignment(s)
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-800">
+                        These students had active transport last month but are omitted from this CSV. Upon confirmation, their transport will be discontinued for {formatMonthName(activeMonth)} and logged in their account history as <strong>Transport Removed</strong>.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-1">
+                        {absentStudents.map((abs) => (
+                          <span
+                            key={abs.studentId}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-slate-800 text-[11px] font-medium shadow-2xs"
+                          >
+                            <span className="font-bold text-slate-900">{abs.student?.name || 'Student'}</span>
+                            <span className="text-amber-800 font-mono text-[10px]">({abs.student?.regNo})</span>
+                            <span className="text-slate-300">&bull;</span>
+                            <span className="text-slate-600 text-[10px]">{abs.studentClass?.name || 'Class'}</span>
+                            <span className="text-slate-300">&bull;</span>
+                            <span className="text-slate-500 text-[10px]">{abs.stop?.name || 'Stop'} via {abs.bus?.busNumber || 'Bus'}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Compact Status & Action Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 px-3 py-2 rounded-xl border border-slate-200 text-xs shrink-0">
                     <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -224,6 +281,12 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                         <span className="text-rose-700 font-semibold text-[11px]">Invalid:</span>
                         <span className="font-bold text-rose-800">{invalidCount}</span>
                       </div>
+                      {absentStudents && absentStudents.length > 0 && (
+                        <div className="inline-flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300 shadow-2xs">
+                          <span className="text-amber-800 font-semibold text-[11px]">Absent in CSV:</span>
+                          <span className="font-bold text-amber-900">{absentStudents.length}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -448,17 +511,25 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                                         ? 'bg-rose-100 text-rose-800 border border-rose-200'
                                         : !row.isValid
                                         ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                        : row.isChangedFromPrior
+                                        ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                        : row.isExactSameAsPrior
+                                        ? 'bg-teal-50 text-teal-800 border border-teal-200'
                                         : row.existingAsgn
                                         ? 'bg-amber-100 text-amber-900 border border-amber-200'
                                         : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                                     }`}
                                   >
                                     {!row.isValid && <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />}
-                                    {row.existingAsgn && !row.isDuplicateInCsv && row.isValid && (
+                                    {(row.isChangedFromPrior || row.existingAsgn) && !row.isDuplicateInCsv && row.isValid && (
                                       <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
                                     )}
                                     {row.errorMsg
                                       ? row.errorMsg
+                                      : row.isChangedFromPrior
+                                      ? 'Route Updated'
+                                      : row.isExactSameAsPrior
+                                      ? 'Unchanged (Ongoing)'
                                       : row.existingAsgn
                                       ? 'Updates Existing'
                                       : 'New Assignment'}
@@ -490,7 +561,9 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                   <span>
                     Confirm & Save {
                       rows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length
-                    } Selected Assignment(s)
+                    } Selected Assignment(s){
+                      absentStudents && absentStudents.length > 0 ? ` (${absentStudents.length} Removed)` : ''
+                    }
                   </span>
                 </button>
               </div>

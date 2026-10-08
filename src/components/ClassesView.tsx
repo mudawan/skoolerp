@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { SchoolClass } from '../types';
@@ -7,6 +7,8 @@ import { ConfirmModal } from './ConfirmModal';
 import {
   AlertCircle,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   BookOpen,
   CheckCircle2,
   Edit2,
@@ -65,6 +67,60 @@ export const ClassesView: React.FC = () => {
   const filteredClasses = classes.filter((cls) =>
     cls.name.toLowerCase().includes(searchQuery.toLowerCase().trim())
   );
+
+  type ClassSortField = 'sortOrder' | 'name' | 'monthlyFee' | 'students' | 'status';
+  const [tableSortField, setTableSortField] = useState<ClassSortField>('sortOrder');
+  const [tableSortDirection, setTableSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleTableSort = (field: ClassSortField) => {
+    if (tableSortField === field) {
+      setTableSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTableSortField(field);
+      setTableSortDirection(field === 'monthlyFee' || field === 'students' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderTableSortIcon = (field: ClassSortField) => {
+    if (tableSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return tableSortDirection === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedClassesForTable = useMemo(() => {
+    return [...filteredClasses].sort((a, b) => {
+      let cmp = 0;
+      switch (tableSortField) {
+        case 'sortOrder':
+          cmp = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+          break;
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { numeric: true });
+          break;
+        case 'monthlyFee':
+          cmp = (a.monthlyFee || 0) - (b.monthlyFee || 0);
+          break;
+        case 'students': {
+          const countA = students.filter((s) => s.classId === a.id && s.status === 'Active').length;
+          const countB = students.filter((s) => s.classId === b.id && s.status === 'Active').length;
+          cmp = countA - countB;
+          break;
+        }
+        case 'status': {
+          const activeA = a.isActive !== false ? 1 : 0;
+          const activeB = b.isActive !== false ? 1 : 0;
+          cmp = activeA - activeB;
+          break;
+        }
+      }
+      return tableSortDirection === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredClasses, tableSortField, tableSortDirection, students]);
 
   const handleDragStart = (e: React.DragEvent, cls: SchoolClass) => {
     if (!hasPermission('classes.manage')) return;
@@ -455,19 +511,64 @@ export const ClassesView: React.FC = () => {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="p-3.5 text-center w-28 whitespace-nowrap">Sort Position</th>
-                  <th className="p-3.5">Class Name</th>
-                  <th className="p-3.5 text-right">Standard Monthly Fee</th>
-                  <th className="p-3.5 text-center">Enrolled Students</th>
-                  <th className="p-3.5 text-center">Status</th>
+                <tr className="select-none">
+                  <th
+                    onClick={() => handleTableSort('sortOrder')}
+                    className="p-3.5 text-center w-28 whitespace-nowrap cursor-pointer hover:bg-slate-100/90 transition group"
+                    title="Click to sort by sort position"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Sort Position</span>
+                      {renderTableSortIcon('sortOrder')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleTableSort('name')}
+                    className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                    title="Click to sort by Class Name"
+                  >
+                    <div className="inline-flex items-center gap-1">
+                      <span>Class Name</span>
+                      {renderTableSortIcon('name')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleTableSort('monthlyFee')}
+                    className="p-3.5 text-right cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                    title="Click to sort by Monthly Fee"
+                  >
+                    <div className="inline-flex items-center justify-end gap-1">
+                      <span>Standard Monthly Fee</span>
+                      {renderTableSortIcon('monthlyFee')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleTableSort('students')}
+                    className="p-3.5 text-center cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                    title="Click to sort by Enrolled Students"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Enrolled Students</span>
+                      {renderTableSortIcon('students')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleTableSort('status')}
+                    className="p-3.5 text-center cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                    title="Click to sort by Active Status"
+                  >
+                    <div className="inline-flex items-center justify-center gap-1">
+                      <span>Status</span>
+                      {renderTableSortIcon('status')}
+                    </div>
+                  </th>
                   {hasPermission('classes.manage') && (
                     <th className="p-3.5 text-right w-32">Actions</th>
                   )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredClasses.length === 0 ? (
+                {sortedClassesForTable.length === 0 ? (
                   <tr>
                     <td
                       colSpan={hasPermission('classes.manage') ? 6 : 5}
@@ -477,7 +578,7 @@ export const ClassesView: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredClasses.map((cls) => {
+                  sortedClassesForTable.map((cls) => {
                     const enrolledCount = students.filter(
                       (s) => s.classId === cls.id && s.status === 'Active'
                     ).length;

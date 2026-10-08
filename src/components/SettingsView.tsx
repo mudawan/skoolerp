@@ -143,6 +143,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     activeMonth,
     setActiveMonth,
     beforeMonthChange,
+    sessionTimeoutMinutes,
+    setSessionTimeoutMinutes,
     showToast,
   } = useApp();
 
@@ -294,10 +296,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [logoError, setLogoError] = useState<string | null>(null);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync profileData when institute changes in context
+  // Sync profileData when institute or sessionTimeoutMinutes changes in context
   useEffect(() => {
-    setProfileData({ ...institute });
-  }, [institute]);
+    const timeout = institute.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10;
+    setProfileData((prev) => ({
+      ...institute,
+      sessionTimeoutMinutes: timeout,
+      settings: {
+        ...(institute.settings || {}),
+        sessionTimeoutMinutes: timeout,
+      },
+    }));
+  }, [institute, sessionTimeoutMinutes]);
 
   const handleLogoFile = (file: File) => {
     setLogoError(null);
@@ -1801,10 +1811,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setBankToDelete(null);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateInstitute(profileData);
-    showToast('Institute profile updated successfully!', 'success');
+    const timeout = Math.max(1, Math.min(180, Number(profileData.sessionTimeoutMinutes) || 10));
+    const mergedData = {
+      ...profileData,
+      sessionTimeoutMinutes: timeout,
+      settings: {
+        ...(profileData.settings || {}),
+        sessionTimeoutMinutes: timeout,
+      },
+    };
+    await updateInstitute(mergedData);
+    setSessionTimeoutMinutes(timeout);
+    showToast('Institute profile and security settings saved successfully!', 'success');
   };
 
   const handleOpenBankModal = (bank?: BankAccount) => {

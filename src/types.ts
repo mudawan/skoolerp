@@ -177,6 +177,7 @@ export interface TransportAssignment {
   daysCharged: number;
   discount: number;
   active: boolean;
+  createdAt?: string;
 }
 
 export type ParticularKind =

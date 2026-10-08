@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { TransportAssignment, TransportBus, TransportStop } from '../types';
-import { calculateTransportFee, formatCurrency, getDaysInMonth } from '../utils/feeMath';
+import { calculateTransportFee, formatCurrency, formatMonthName, getDaysInMonth } from '../utils/feeMath';
 import { parseCsvLine, detectCsvDelimiter, downloadCsv } from '../utils/csv';
 import { mapCsvHeader, TRANSPORT_CSV, STOP_CSV } from '../utils/csvHeaders';
 import { StudentAvatar } from './StudentAvatar';
@@ -10,7 +10,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { BusModal } from './transport/BusModal';
 import { StopModal } from './transport/StopModal';
 import { AssignmentModal } from './transport/AssignmentModal';
-import { BulkTransportCsvModal, BulkTransportPreviewRow } from './transport/BulkTransportCsvModal';
+import { BulkTransportCsvModal, BulkTransportPreviewRow, AbsentTransportStudent } from './transport/BulkTransportCsvModal';
 import { BulkStopsCsvModal, BulkStopPreviewRow } from './transport/BulkStopsCsvModal';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Check, Upload, GripVertical } from 'lucide-react';
@@ -38,6 +38,7 @@ export const TransportView: React.FC = () => {
     copyTransportAssignmentsFromPreviousMonth,
     bulkUpdateTransportDaysForMonth,
     transportRoundingMultiple,
+    addStudentAccountHistory,
     hasPermission,
     showToast,
     themeConfig,
@@ -85,6 +86,7 @@ export const TransportView: React.FC = () => {
 
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [bulkPreviewRows, setBulkPreviewRows] = useState<BulkTransportPreviewRow[]>([]);
+  const [bulkAbsentStudents, setBulkAbsentStudents] = useState<AbsentTransportStudent[]>([]);
   const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'invalid' | 'duplicates' | 'updates'>('all');
   const [bulkImportStatus, setBulkImportStatus] = useState<{ message: string | null; error: string | null }>({
     message: null,
@@ -92,6 +94,18 @@ export const TransportView: React.FC = () => {
   });
   const [isBulkDragging, setIsBulkDragging] = useState(false);
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
+
+  const getPreviousMonth = (mStr: string): string => {
+    if (!mStr || !mStr.includes('-')) return '';
+    const [yStr, monthPart] = mStr.split('-');
+    let y = parseInt(yStr, 10);
+    let m = parseInt(monthPart, 10) - 1;
+    if (m < 1) {
+      m = 12;
+      y -= 1;
+    }
+    return `${y}-${String(m).padStart(2, '0')}`;
+  };
 
   // Deletion Confirmation States
   const [busToDelete, setBusToDelete] = useState<TransportBus | null>(null);
@@ -209,6 +223,107 @@ export const TransportView: React.FC = () => {
       (stop.landmark && stop.landmark.toLowerCase().includes(q))
     );
   });
+
+  // Bus table sorting state
+  type BusSortField = 'sortOrder' | 'busNumber' | 'model' | 'regNumber' | 'routeName' | 'driverName';
+  const [busSortField, setBusSortField] = useState<BusSortField>('sortOrder');
+  const [busSortDir, setBusSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const handleBusSort = (field: BusSortField) => {
+    if (busSortField === field) {
+      setBusSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setBusSortField(field);
+      setBusSortDir('asc');
+    }
+  };
+
+  const renderBusSortIcon = (field: BusSortField) => {
+    if (busSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return busSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedBusesForTable = useMemo(() => {
+    return [...filteredBuses].sort((a, b) => {
+      let cmp = 0;
+      switch (busSortField) {
+        case 'sortOrder':
+          cmp = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+          break;
+        case 'busNumber':
+          cmp = a.busNumber.localeCompare(b.busNumber, undefined, { numeric: true });
+          break;
+        case 'model':
+          cmp = a.model.localeCompare(b.model);
+          break;
+        case 'regNumber':
+          cmp = (a.regNumber || '').localeCompare(b.regNumber || '');
+          break;
+        case 'routeName':
+          cmp = (a.routeName || '').localeCompare(b.routeName || '');
+          break;
+        case 'driverName':
+          cmp = (a.driverName || '').localeCompare(b.driverName || '');
+          break;
+      }
+      return busSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredBuses, busSortField, busSortDir]);
+
+  // Stop table sorting state
+  type StopSortField = 'sortOrder' | 'name' | 'area' | 'landmark' | 'fare';
+  const [stopSortField, setStopSortField] = useState<StopSortField>('sortOrder');
+  const [stopSortDir, setStopSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const handleStopSort = (field: StopSortField) => {
+    if (stopSortField === field) {
+      setStopSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setStopSortField(field);
+      setStopSortDir(field === 'fare' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderStopSortIcon = (field: StopSortField) => {
+    if (stopSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return stopSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedStopsForTable = useMemo(() => {
+    return [...filteredStops].sort((a, b) => {
+      let cmp = 0;
+      switch (stopSortField) {
+        case 'sortOrder':
+          cmp = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+          break;
+        case 'name':
+          cmp = a.name.localeCompare(b.name, undefined, { numeric: true });
+          break;
+        case 'area':
+          cmp = (a.area || '').localeCompare(b.area || '');
+          break;
+        case 'landmark':
+          cmp = (a.landmark || '').localeCompare(b.landmark || '');
+          break;
+        case 'fare':
+          cmp = (a.monthlyFare || 0) - (b.monthlyFare || 0);
+          break;
+      }
+      return stopSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredStops, stopSortField, stopSortDir]);
 
   // Drag and drop handlers for Buses
   const handleBusDragStart = (e: React.DragEvent, bus: TransportBus) => {
@@ -687,10 +802,33 @@ export const TransportView: React.FC = () => {
             seenRegNos.add(cleanReg);
           }
 
-          // 8. Existing assignment check
+          // 8. Existing assignment check & prior assignment comparison
           const existingAsgn = student
             ? transportAssignments.find((a) => a.studentId === student.id && a.month === targetMonth)
             : undefined;
+
+          // Find student's most recent prior transport assignment with month < targetMonth
+          const priorAsgns = student
+            ? transportAssignments
+                .filter((a) => a.studentId === student.id && a.month < targetMonth && a.active !== false)
+                .sort((a, b) => b.month.localeCompare(a.month))
+            : [];
+          const priorAssignment = priorAsgns[0];
+          const isExactSameAsPrior = Boolean(
+            priorAssignment &&
+            bus &&
+            stop &&
+            priorAssignment.stopId === stop.id &&
+            priorAssignment.busId === bus.id &&
+            priorAssignment.tripType === tripType &&
+            (priorAssignment.discount || 0) === discount
+          );
+          const isChangedFromPrior = Boolean(
+            priorAssignment &&
+            bus &&
+            stop &&
+            !isExactSameAsPrior
+          );
 
           // 9. Validation & Error message
           let isValid = true;
@@ -741,6 +879,9 @@ export const TransportView: React.FC = () => {
             discount,
             effectiveFare,
             existingAsgn,
+            priorAssignment,
+            isExactSameAsPrior,
+            isChangedFromPrior,
             isValid,
             isDuplicateInCsv,
             selected: isValid,
@@ -752,6 +893,35 @@ export const TransportView: React.FC = () => {
           setBulkImportStatus({ message: null, error: 'No data rows found in CSV.' });
           return;
         }
+
+        // Find students having transport in previous month who are absent in this CSV
+        const prevMonth = getPreviousMonth(targetMonth);
+        const prevMonthAssignments = transportAssignments.filter(
+          (a) => a.month === prevMonth && a.active !== false
+        );
+        const csvStudentIds = new Set(
+          parsedRows.filter((r) => r.student && r.isValid).map((r) => r.student!.id)
+        );
+        const absentList: AbsentTransportStudent[] = [];
+        for (const prevAsgn of prevMonthAssignments) {
+          if (!csvStudentIds.has(prevAsgn.studentId)) {
+            const st = students.find((s) => s.id === prevAsgn.studentId);
+            if (st && st.status === 'Active') {
+              const sCls = classes.find((c) => c.id === st.classId);
+              const sp = stops.find((s) => s.id === prevAsgn.stopId);
+              const bs = buses.find((b) => b.id === prevAsgn.busId);
+              absentList.push({
+                studentId: st.id,
+                student: st,
+                studentClass: sCls,
+                prevAssignment: prevAsgn,
+                stop: sp,
+                bus: bs,
+              });
+            }
+          }
+        }
+        setBulkAbsentStudents(absentList);
 
         setBulkPreviewRows(parsedRows);
         const validCount = parsedRows.filter((r) => r.isValid && !r.isDuplicateInCsv).length;
@@ -805,6 +975,7 @@ export const TransportView: React.FC = () => {
   const handleClearBulkCsv = () => {
     setBulkCsvFile(null);
     setBulkPreviewRows([]);
+    setBulkAbsentStudents([]);
     setBulkImportStatus({ message: null, error: null });
     if (bulkFileInputRef.current) {
       bulkFileInputRef.current.value = '';
@@ -821,6 +992,11 @@ export const TransportView: React.FC = () => {
     }
 
     const targetMonth = activeMonth;
+    const prevMonth = getPreviousMonth(targetMonth);
+    const nowIso = new Date().toISOString();
+    const todayDate = nowIso.split('T')[0];
+    const monthName = formatMonthName(targetMonth);
+
     const assignmentsToSave = validSelected.map((r) => ({
       ...(r.existingAsgn ? { id: r.existingAsgn.id } : {}),
       studentId: r.student!.id,
@@ -831,19 +1007,104 @@ export const TransportView: React.FC = () => {
       daysCharged: r.daysCharged,
       discount: r.discount,
       active: true,
+      createdAt: r.existingAsgn?.createdAt || nowIso,
     }));
+
+    // Smart event logging for assignments in CSV:
+    // "CSV transport assignments should be smart - log a change entry and do not make new entry if exact same assignment already exists in any prior month."
+    for (const r of validSelected) {
+      const student = r.student!;
+      const bus = r.bus!;
+      const stop = r.stop!;
+
+      // Find student's most recent prior transport assignment with month < targetMonth
+      const priorAsgns = transportAssignments
+        .filter((a) => a.studentId === student.id && a.month < targetMonth && a.active !== false)
+        .sort((a, b) => b.month.localeCompare(a.month));
+      const prior = priorAsgns[0];
+
+      if (prior) {
+        const isIdentical =
+          prior.stopId === stop.id &&
+          prior.busId === bus.id &&
+          prior.tripType === r.tripType &&
+          (prior.discount || 0) === r.discount;
+
+        if (isIdentical) {
+          // Exact same assignment exists in prior month: DO NOT MAKE A NEW ENTRY!
+        } else {
+          // Changed assignment: log a change entry with actual event time
+          const priorStop = stops.find((s) => s.id === prior.stopId);
+          const priorBus = buses.find((b) => b.id === prior.busId);
+          addStudentAccountHistory({
+            studentId: student.id,
+            date: todayDate,
+            timestamp: nowIso,
+            category: 'transport',
+            actionTitle: `Transport Route Updated (${monthName})`,
+            description: `Transport route updated for ${monthName}: ${stop.name} via ${bus.busNumber} (${r.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}). Previous: ${priorStop?.name || 'Stop'} via ${priorBus?.busNumber || 'Bus'}. Net fare: ${formatCurrency(r.effectiveFare)}.`,
+            previousValue: `${priorStop?.name || 'Stop'} (${priorBus?.busNumber || 'Bus'})`,
+            newValue: `${stop.name} (${bus.busNumber})`,
+            month: targetMonth,
+          });
+        }
+      } else {
+        // No prior assignment in any month: this is brand new transport assignment
+        addStudentAccountHistory({
+          studentId: student.id,
+          date: todayDate,
+          timestamp: nowIso,
+          category: 'transport',
+          actionTitle: `Transport Added (${monthName})`,
+          description: `Transport route assigned for ${monthName}: ${stop.name} via ${bus.busNumber} (${bus.routeName || 'Route'}) - ${r.tripType === 'OneWay' ? 'One Way' : 'Round Trip'}. Monthly fare: ${formatCurrency(r.effectiveFare)}.`,
+          previousValue: 'No Transport',
+          newValue: `${stop.name} (${bus.busNumber})`,
+          month: targetMonth,
+        });
+      }
+    }
+
+    // Handle absent students who had transport in previous month:
+    // "students having a transport in previous month and absent in current month transport CSV will be summarily informed to user in preview modal and logged as transport removed."
+    for (const abs of bulkAbsentStudents) {
+      const prevStopName = abs.stop?.name || 'Stop';
+      const prevBusNum = abs.bus?.busNumber || 'Bus';
+      const prevMonthName = formatMonthName(prevMonth);
+
+      // Deactivate any existing assignment in targetMonth if present
+      const existingInTarget = transportAssignments.find(
+        (a) => a.studentId === abs.studentId && a.month === targetMonth
+      );
+      if (existingInTarget) {
+        deleteTransportAssignment(existingInTarget.id);
+      }
+
+      // Log as transport removed with actual event timestamp
+      addStudentAccountHistory({
+        studentId: abs.studentId,
+        date: todayDate,
+        timestamp: nowIso,
+        category: 'transport',
+        actionTitle: `Transport Removed (${monthName})`,
+        description: `Transport discontinued for ${monthName}. Student had active transport in ${prevMonthName} (${prevStopName} via ${prevBusNum}), but was omitted from ${monthName} transport CSV.`,
+        previousValue: `${prevStopName} (${prevBusNum})`,
+        newValue: 'Transport Discontinued / Absent in CSV',
+        month: targetMonth,
+      });
+    }
 
     bulkSaveTransportAssignments(assignmentsToSave);
 
     showToast(
       `Successfully recorded ${validSelected.length} transport assignment${
         validSelected.length === 1 ? '' : 's'
-      } for ${targetMonth}.`,
+      } for ${targetMonth}${bulkAbsentStudents.length > 0 ? ` (${bulkAbsentStudents.length} discontinued)` : ''}.`,
       'success'
     );
 
     setShowBulkCsvModal(false);
     setBulkPreviewRows([]);
+    setBulkAbsentStudents([]);
     setBulkCsvFile(null);
     setBulkImportStatus({ message: null, error: null });
   };
@@ -1578,20 +1839,74 @@ export const TransportView: React.FC = () => {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[700px]">
                   <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap">
-                    <tr>
-                      <th className="p-3.5 text-center w-28 whitespace-nowrap">Sort Position</th>
-                      <th className="p-3.5 w-28">Bus #</th>
-                      <th className="p-3.5">Model / Vehicle</th>
-                      <th className="p-3.5">Reg Number</th>
-                      <th className="p-3.5">Route Description</th>
-                      <th className="p-3.5">Driver Name & Phone</th>
+                    <tr className="select-none">
+                      <th
+                        onClick={() => handleBusSort('sortOrder')}
+                        className="p-3.5 text-center w-28 whitespace-nowrap cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by sort position"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <span>Sort Position</span>
+                          {renderBusSortIcon('sortOrder')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleBusSort('busNumber')}
+                        className="p-3.5 w-28 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Bus #"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Bus #</span>
+                          {renderBusSortIcon('busNumber')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleBusSort('model')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Model"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Model / Vehicle</span>
+                          {renderBusSortIcon('model')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleBusSort('regNumber')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Reg Number"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Reg Number</span>
+                          {renderBusSortIcon('regNumber')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleBusSort('routeName')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Route Description"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Route Description</span>
+                          {renderBusSortIcon('routeName')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleBusSort('driverName')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Driver Name"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Driver Name & Phone</span>
+                          {renderBusSortIcon('driverName')}
+                        </div>
+                      </th>
                       {hasPermission('transport.manage') && (
                         <th className="p-3.5 text-right w-24">Actions</th>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredBuses.length === 0 ? (
+                    {sortedBusesForTable.length === 0 ? (
                       <tr>
                         <td
                           colSpan={hasPermission('transport.manage') ? 7 : 6}
@@ -1601,7 +1916,7 @@ export const TransportView: React.FC = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredBuses.map((bus) => {
+                      sortedBusesForTable.map((bus) => {
                         const isDragged = draggedBusId === bus.id;
                         const isDragOver = dragOverBusId === bus.id && !isDragged;
 
@@ -1913,19 +2228,64 @@ export const TransportView: React.FC = () => {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs min-w-[650px]">
                   <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap">
-                    <tr>
-                      <th className="p-3.5 text-center w-28 whitespace-nowrap">Sort Position</th>
-                      <th className="p-3.5">Stop Name</th>
-                      <th className="p-3.5">Area / Sector</th>
-                      <th className="p-3.5">Landmark</th>
-                      <th className="p-3.5 text-right">Monthly Fare Rate</th>
+                    <tr className="select-none">
+                      <th
+                        onClick={() => handleStopSort('sortOrder')}
+                        className="p-3.5 text-center w-28 whitespace-nowrap cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by sort position"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1">
+                          <span>Sort Position</span>
+                          {renderStopSortIcon('sortOrder')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleStopSort('name')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Stop Name"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Stop Name</span>
+                          {renderStopSortIcon('name')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleStopSort('area')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Area / Sector"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Area / Sector</span>
+                          {renderStopSortIcon('area')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleStopSort('landmark')}
+                        className="p-3.5 cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Landmark"
+                      >
+                        <div className="inline-flex items-center gap-1">
+                          <span>Landmark</span>
+                          {renderStopSortIcon('landmark')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleStopSort('fare')}
+                        className="p-3.5 text-right cursor-pointer hover:bg-slate-100/90 transition group"
+                        title="Click to sort by Monthly Fare Rate"
+                      >
+                        <div className="inline-flex items-center justify-end gap-1">
+                          <span>Monthly Fare Rate</span>
+                          {renderStopSortIcon('fare')}
+                        </div>
+                      </th>
                       {hasPermission('transport.manage') && (
                         <th className="p-3.5 text-right w-24">Actions</th>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredStops.length === 0 ? (
+                    {sortedStopsForTable.length === 0 ? (
                       <tr>
                         <td
                           colSpan={hasPermission('transport.manage') ? 6 : 5}
@@ -1935,7 +2295,7 @@ export const TransportView: React.FC = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredStops.map((stop) => {
+                      sortedStopsForTable.map((stop) => {
                         const isDragged = draggedStopId === stop.id;
                         const isDragOver = dragOverStopId === stop.id && !isDragged;
 
@@ -2443,7 +2803,9 @@ export const TransportView: React.FC = () => {
         onClose={() => { setShowBulkCsvModal(false); handleClearBulkCsv(); }}
         onClear={handleClearBulkCsv}
         activeMonth={activeMonth}
+        prevMonth={getPreviousMonth(activeMonth)}
         rows={bulkPreviewRows}
+        absentStudents={bulkAbsentStudents}
         previewFilter={previewFilter}
         setPreviewFilter={setPreviewFilter}
         importStatus={bulkImportStatus}

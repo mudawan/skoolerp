@@ -21,6 +21,9 @@ import {
   Clock,
   Send,
   Building2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { formatMonthName, getNextMonthString, getPreviousMonthString, normalizeMonthString, getCurrencyCode, formatCurrency } from '../../utils/feeMath';
 import { PaymentMode } from '../../types';
@@ -212,7 +215,130 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     });
   }, [monthTransactions, txnModeFilter, txnSearch, students]);
 
+  // Step 2 Transaction sorting
+  type WizardTxnSortField = 'date' | 'txnNo' | 'student' | 'class' | 'mode' | 'reference' | 'amount';
+  const [txnSortField, setTxnSortField] = useState<WizardTxnSortField>('date');
+  const [txnSortDir, setTxnSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleTxnSort = (field: WizardTxnSortField) => {
+    if (txnSortField === field) {
+      setTxnSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTxnSortField(field);
+      setTxnSortDir(field === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderTxnSortIcon = (field: WizardTxnSortField) => {
+    if (txnSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return txnSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedFilteredTransactions = useMemo(() => {
+    return [...filteredTransactions].sort((a, b) => {
+      let cmp = 0;
+      switch (txnSortField) {
+        case 'date':
+          cmp = a.date.localeCompare(b.date);
+          break;
+        case 'txnNo':
+          cmp = a.txnNo.localeCompare(b.txnNo, undefined, { numeric: true });
+          break;
+        case 'student': {
+          const sA = students.find((s) => s.id === a.studentId)?.name || '';
+          const sB = students.find((s) => s.id === b.studentId)?.name || '';
+          cmp = sA.localeCompare(sB);
+          break;
+        }
+        case 'class': {
+          const studentA = students.find((s) => s.id === a.studentId);
+          const studentB = students.find((s) => s.id === b.studentId);
+          const cA = classes.find((c) => c.id === studentA?.classId)?.name || '';
+          const cB = classes.find((c) => c.id === studentB?.classId)?.name || '';
+          cmp = cA.localeCompare(cB);
+          break;
+        }
+        case 'mode':
+          cmp = a.paymentMode.localeCompare(b.paymentMode);
+          break;
+        case 'reference':
+          cmp = (a.referenceNo || '').localeCompare(b.referenceNo || '');
+          break;
+        case 'amount':
+          cmp = a.amount - b.amount;
+          break;
+      }
+      return txnSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredTransactions, txnSortField, txnSortDir, students, classes]);
+
   // Step 3 Carry-forward settings
+  type WizardDefaulterSortField = 'student' | 'class' | 'father' | 'voucherNo' | 'netDue' | 'paid' | 'balance';
+  const [defaulterSortField, setDefaulterSortField] = useState<WizardDefaulterSortField>('balance');
+  const [defaulterSortDir, setDefaulterSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleDefaulterSort = (field: WizardDefaulterSortField) => {
+    if (defaulterSortField === field) {
+      setDefaulterSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setDefaulterSortField(field);
+      setDefaulterSortDir(field === 'netDue' || field === 'paid' || field === 'balance' ? 'desc' : 'asc');
+    }
+  };
+
+  const renderDefaulterSortIcon = (field: WizardDefaulterSortField) => {
+    if (defaulterSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return defaulterSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedUncarriedDefaulters = useMemo(() => {
+    return [...uncarriedDefaulters].sort((a, b) => {
+      const studentA = students.find((s) => s.id === a.studentId);
+      const studentB = students.find((s) => s.id === b.studentId);
+      const clsA = classes.find((c) => c.id === studentA?.classId);
+      const clsB = classes.find((c) => c.id === studentB?.classId);
+      let cmp = 0;
+      switch (defaulterSortField) {
+        case 'student':
+          cmp = (studentA?.name || '').localeCompare(studentB?.name || '');
+          break;
+        case 'class':
+          cmp = (clsA?.name || '').localeCompare(clsB?.name || '');
+          break;
+        case 'father':
+          cmp = (studentA?.fatherName || '').localeCompare(studentB?.fatherName || '');
+          break;
+        case 'voucherNo':
+          cmp = a.voucherNo.localeCompare(b.voucherNo, undefined, { numeric: true });
+          break;
+        case 'netDue':
+          cmp = a.netDue - b.netDue;
+          break;
+        case 'paid':
+          cmp = a.amountPaid - b.amountPaid;
+          break;
+        case 'balance': {
+          const balA = Math.max(0, a.netDue - a.amountPaid);
+          const balB = Math.max(0, b.netDue - b.amountPaid);
+          cmp = balA - balB;
+          break;
+        }
+      }
+      return defaulterSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [uncarriedDefaulters, defaulterSortField, defaulterSortDir, students, classes]);
   const [addLateFine, setAddLateFine] = useState(true);
   const [lateFineAmount, setLateFineAmount] = useState<number>(defaultLateFeeRate || 500);
   const [isProcessingCarry, setIsProcessingCarry] = useState(false);
@@ -798,26 +924,89 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
             {/* Transactions Table */}
             <div className="overflow-x-auto max-h-80 overflow-y-auto border border-slate-200 rounded-2xl">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
+                <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 sticky top-0 select-none uppercase tracking-wider text-[11px]">
                   <tr>
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Receipt / Txn #</th>
-                    <th className="p-3">Student</th>
-                    <th className="p-3">Class</th>
-                    <th className="p-3">Mode</th>
-                    <th className="p-3">Reference / Notes</th>
-                    <th className="p-3 text-right">Amount</th>
+                    <th
+                      onClick={() => handleTxnSort('date')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Date"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Date</span>
+                        {renderTxnSortIcon('date')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('txnNo')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Receipt / Txn #"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Receipt / Txn #</span>
+                        {renderTxnSortIcon('txnNo')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('student')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Student Name"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Student</span>
+                        {renderTxnSortIcon('student')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('class')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Class"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Class</span>
+                        {renderTxnSortIcon('class')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('mode')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Payment Mode"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Mode</span>
+                        {renderTxnSortIcon('mode')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('reference')}
+                      className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Reference / Notes"
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Reference / Notes</span>
+                        {renderTxnSortIcon('reference')}
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleTxnSort('amount')}
+                      className="p-3 text-right cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                      title="Click to sort by Amount"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Amount</span>
+                        {renderTxnSortIcon('amount')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredTransactions.length === 0 ? (
+                  {sortedFilteredTransactions.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-6 text-center text-slate-400">
                         No transactions found matching this filter.
                       </td>
                     </tr>
                   ) : (
-                    filteredTransactions.map((t) => {
+                    sortedFilteredTransactions.map((t) => {
                       const student = students.find((s) => s.id === t.studentId);
                       const cls = classes.find((c) => c.id === student?.classId);
                       return (
@@ -943,20 +1132,83 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
 
               <div className="overflow-x-auto border border-slate-200 rounded-2xl">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                  <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 select-none uppercase tracking-wider text-[11px]">
                     <tr>
-                      <th className="p-3">Student & Reg #</th>
-                      <th className="p-3">Class</th>
-                      <th className="p-3">Father Contact</th>
-                      <th className="p-3">Voucher #</th>
-                      <th className="p-3 text-right">Net Due</th>
-                      <th className="p-3 text-right">Paid</th>
-                      <th className="p-3 text-right">Unpaid Arrears</th>
-                      <th className="p-3 text-center">Action</th>
+                      <th
+                        onClick={() => handleDefaulterSort('student')}
+                        className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Student Name"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Student & Reg #</span>
+                          {renderDefaulterSortIcon('student')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('class')}
+                        className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Class"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Class</span>
+                          {renderDefaulterSortIcon('class')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('father')}
+                        className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Father Name"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Father Contact</span>
+                          {renderDefaulterSortIcon('father')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('voucherNo')}
+                        className="p-3 cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Voucher #"
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Voucher #</span>
+                          {renderDefaulterSortIcon('voucherNo')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('netDue')}
+                        className="p-3 text-right cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Net Due"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Net Due</span>
+                          {renderDefaulterSortIcon('netDue')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('paid')}
+                        className="p-3 text-right cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Paid Amount"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Paid</span>
+                          {renderDefaulterSortIcon('paid')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleDefaulterSort('balance')}
+                        className="p-3 text-right cursor-pointer hover:bg-slate-100/90 transition group whitespace-nowrap"
+                        title="Click to sort by Unpaid Arrears"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Unpaid Arrears</span>
+                          {renderDefaulterSortIcon('balance')}
+                        </div>
+                      </th>
+                      <th className="p-3 text-center whitespace-nowrap">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {uncarriedDefaulters.map((v) => {
+                    {sortedUncarriedDefaulters.map((v) => {
                       const student = students.find((s) => s.id === v.studentId);
                       const cls = classes.find((c) => c.id === student?.classId);
                       const balance = Math.max(0, v.netDue - v.amountPaid);

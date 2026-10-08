@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { User, UserRole } from '../../types';
 import { ALL_PERMISSIONS } from '../../utils/permissions';
@@ -21,6 +21,9 @@ import {
   UserPlus,
   Users,
   X,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 
 export interface UsersPanelProps {
@@ -99,6 +102,110 @@ To activate your account:
     setTimeout(() => setCopiedInviteId(null), 3000);
   };
 
+  // User list sorting
+  type UserSortField = 'name' | 'role' | 'email' | 'permissions' | 'status';
+  const [userSortField, setUserSortField] = useState<UserSortField>('name');
+  const [userSortDir, setUserSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const handleUserSort = (field: UserSortField) => {
+    if (userSortField === field) {
+      setUserSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setUserSortField(field);
+      setUserSortDir('asc');
+    }
+  };
+
+  const renderUserSortIcon = (field: UserSortField) => {
+    if (userSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return userSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedUsers = useMemo(() => {
+    return [...users].sort((a, b) => {
+      let cmp = 0;
+      switch (userSortField) {
+        case 'name':
+          cmp = (a.name || '').localeCompare(b.name || '');
+          break;
+        case 'role':
+          cmp = (a.role || '').localeCompare(b.role || '');
+          break;
+        case 'email':
+          cmp = (a.email || '').localeCompare(b.email || '');
+          break;
+        case 'permissions': {
+          const permsA = Array.isArray(a.permissions) ? a.permissions.length : 0;
+          const permsB = Array.isArray(b.permissions) ? b.permissions.length : 0;
+          cmp = permsA - permsB;
+          break;
+        }
+        case 'status': {
+          const statusA = a.isActive !== false ? 1 : 0;
+          const statusB = b.isActive !== false ? 1 : 0;
+          cmp = statusA - statusB;
+          break;
+        }
+      }
+      return userSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [users, userSortField, userSortDir]);
+
+  // Invites sorting
+  type InviteSortField = 'name' | 'role' | 'code' | 'expires' | 'status';
+  const [inviteSortField, setInviteSortField] = useState<InviteSortField>('expires');
+  const [inviteSortDir, setInviteSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const handleInviteSort = (field: InviteSortField) => {
+    if (inviteSortField === field) {
+      setInviteSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setInviteSortField(field);
+      setInviteSortDir('asc');
+    }
+  };
+
+  const renderInviteSortIcon = (field: InviteSortField) => {
+    if (inviteSortField !== field) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 transition shrink-0" />;
+    }
+    return inviteSortDir === 'asc' ? (
+      <ArrowUp className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-teal-700 shrink-0 font-bold" />
+    );
+  };
+
+  const sortedInvites = useMemo(() => {
+    return [...invites].sort((a, b) => {
+      let cmp = 0;
+      switch (inviteSortField) {
+        case 'name':
+          cmp = (a.full_name || '').localeCompare(b.full_name || '');
+          break;
+        case 'role':
+          cmp = (a.assigned_role || '').localeCompare(b.assigned_role || '');
+          break;
+        case 'code':
+          cmp = (a.invite_code || '').localeCompare(b.invite_code || '');
+          break;
+        case 'expires':
+          cmp = (a.expires_at || '').localeCompare(b.expires_at || '');
+          break;
+        case 'status':
+          cmp = (a.status || '').localeCompare(b.status || '');
+          break;
+      }
+      return inviteSortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [invites, inviteSortField, inviteSortDir]);
+
   return (
     <div className="space-y-6">
       {/* Workspace Institution Header Badge */}
@@ -167,18 +274,63 @@ To activate your account:
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-700">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider select-none">
               <tr>
-                <th className="p-3">User & Username</th>
-                <th className="p-3">Role</th>
-                <th className="p-3">Email Address</th>
-                <th className="p-3">Permissions Scope</th>
-                <th className="p-3">Active Status</th>
+                <th
+                  onClick={() => handleUserSort('name')}
+                  className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                  title="Click to sort by User & Username"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>User & Username</span>
+                    {renderUserSortIcon('name')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleUserSort('role')}
+                  className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                  title="Click to sort by Role"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Role</span>
+                    {renderUserSortIcon('role')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleUserSort('email')}
+                  className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                  title="Click to sort by Email Address"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Email Address</span>
+                    {renderUserSortIcon('email')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleUserSort('permissions')}
+                  className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                  title="Click to sort by Permissions Scope"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Permissions Scope</span>
+                    {renderUserSortIcon('permissions')}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleUserSort('status')}
+                  className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                  title="Click to sort by Active Status"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Active Status</span>
+                    {renderUserSortIcon('status')}
+                  </div>
+                </th>
                 <th className="p-3 text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {users.map((u) => {
+              {sortedUsers.map((u) => {
                 const isSelf = currentUser.id === u.id;
                 const isOnlyUser = users.length <= 1;
                 const roleBadgeClass =
@@ -390,18 +542,63 @@ To activate your account:
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-700">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider select-none">
                 <tr>
-                  <th className="p-3">Staff Name</th>
-                  <th className="p-3">Assigned Role</th>
-                  <th className="p-3">Invite Code</th>
-                  <th className="p-3">Expires</th>
-                  <th className="p-3">Status</th>
+                  <th
+                    onClick={() => handleInviteSort('name')}
+                    className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                    title="Click to sort by Staff Name"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Staff Name</span>
+                      {renderInviteSortIcon('name')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleInviteSort('role')}
+                    className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                    title="Click to sort by Assigned Role"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Assigned Role</span>
+                      {renderInviteSortIcon('role')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleInviteSort('code')}
+                    className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                    title="Click to sort by Invite Code"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Invite Code</span>
+                      {renderInviteSortIcon('code')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleInviteSort('expires')}
+                    className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                    title="Click to sort by Expiration Date"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Expires</span>
+                      {renderInviteSortIcon('expires')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleInviteSort('status')}
+                    className="p-3 cursor-pointer hover:bg-slate-100/80 transition group whitespace-nowrap"
+                    title="Click to sort by Status"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Status</span>
+                      {renderInviteSortIcon('status')}
+                    </div>
+                  </th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {invites.map((inv) => {
+                {sortedInvites.map((inv) => {
                   const isClaimed = inv.status === 'claimed';
                   const isPending = inv.status === 'pending';
                   const isCopied = copiedInviteId === inv.invite_code;

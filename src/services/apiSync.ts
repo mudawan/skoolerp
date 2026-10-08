@@ -631,8 +631,8 @@ async function syncInstituteProfile(institute: any) {
         registrationNo: institute.regNo,
         currency: institute.currency || 'USD',
         settings: {
-          sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || 10,
           ...(institute.settings || {}),
+          sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || Number(institute.settings?.sessionTimeoutMinutes) || 10,
         },
       }),
     });
