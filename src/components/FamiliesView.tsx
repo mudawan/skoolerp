@@ -12,6 +12,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronUp,
   Copy,
   Download,
   Edit2,
@@ -66,6 +67,10 @@ export const FamiliesView: React.FC = () => {
   // New Visibility & Filter Controls
   const [hideNoActiveFamilies, setHideNoActiveFamilies] = useState(false);
   const [showInactiveStudents, setShowInactiveStudents] = useState(false);
+  // Card view: member lists are collapsed by default; ids here are expanded.
+  const [expandedFamilyIds, setExpandedFamilyIds] = useState<string[]>([]);
+  const toggleFamilyExpanded = (id: string) =>
+    setExpandedFamilyIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const [formData, setFormData] = useState({
     headName: '',
@@ -586,6 +591,7 @@ export const FamiliesView: React.FC = () => {
                 ? allMemberStudents
                 : activeMemberStudents;
               const isSelected = selectedFamilyIds.includes(family.id);
+              const isExpanded = expandedFamilyIds.includes(family.id);
 
               return (
                 <div
@@ -675,11 +681,22 @@ export const FamiliesView: React.FC = () => {
                     {/* Member Students */}
                     <div className="border-t border-slate-100 pt-3 space-y-2">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700 flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => toggleFamilyExpanded(family.id)}
+                          aria-expanded={isExpanded}
+                          title={isExpanded ? 'Hide students' : 'Show students'}
+                          className="font-bold text-slate-700 flex items-center gap-1 cursor-pointer hover:text-slate-900 text-left"
+                        >
                           <Users className="w-3.5 h-3.5 text-slate-500" />
-                          Family Members ({activeMemberStudents.length} active
+                          Students ({activeMemberStudents.length} active
                           {inactiveMemberStudents.length > 0 && `, ${inactiveMemberStudents.length} inactive`})
-                        </span>
+                          {isExpanded ? (
+                            <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                          )}
+                        </button>
                         {hasPermission('families.manage') && (
                           <button
                             onClick={() => handleOpenMemberModal(family)}
@@ -691,6 +708,7 @@ export const FamiliesView: React.FC = () => {
                         )}
                       </div>
 
+                    {isExpanded && (
                     <div className="flex flex-wrap gap-1.5">
                       {displayMemberStudents.length > 0 ? (
                         <>
@@ -743,6 +761,7 @@ export const FamiliesView: React.FC = () => {
                         <span className="text-[11px] text-slate-400 italic">No member students linked</span>
                       )}
                     </div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -1416,7 +1416,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Upload className="w-5 h-5 text-teal-600" />
                 {previewRows.length > 0
-                  ? 'Preview & Verify CSV Data'
+                  ? 'Preview & Verify Students'
                   : 'Import Students from CSV'}
               </h3>
               <button
@@ -1610,105 +1610,6 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
                       <span>Upload New File</span>
                     </button>
                   </div>
-                </div>
-
-                {/* Filter Selector Tabs */}
-                <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">
-                      Show Filter:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
-                        previewFilter === 'all'
-                          ? 'bg-slate-800 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      All ({previewCounts.total})
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('issues')}
-                      className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer flex items-center gap-1 ${
-                        previewFilter === 'issues'
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : previewCounts.issues > 0
-                          ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                      }`}
-                    >
-                      <AlertTriangle className="w-3 h-3" />
-                      <span>Caution & Invalid ({previewCounts.issues})</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('caution')}
-                      className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer flex items-center gap-1 ${
-                        previewFilter === 'caution'
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : previewCounts.caution > 0
-                          ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
-                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                      }`}
-                    >
-                      <span>Caution Only ({previewCounts.caution})</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('invalid')}
-                      className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer flex items-center gap-1 ${
-                        previewFilter === 'invalid'
-                          ? 'bg-rose-700 text-white shadow-xs'
-                          : previewCounts.invalid > 0
-                          ? 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
-                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                      }`}
-                    >
-                      <span>Invalid Only ({previewCounts.invalid})</span>
-                    </button>
-
-                    {previewCounts.duplicates > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setPreviewFilter('duplicates')}
-                        className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer flex items-center gap-1 ${
-                          previewFilter === 'duplicates'
-                            ? 'bg-rose-700 text-white shadow-xs'
-                            : 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-200'
-                        }`}
-                      >
-                        <span>Duplicates ({previewCounts.duplicates})</span>
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('valid')}
-                      className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
-                        previewFilter === 'valid'
-                          ? 'bg-emerald-700 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Valid Only ({previewCounts.valid})
-                    </button>
-                  </div>
-
-                  {previewFilter !== 'all' && (
-                    <button
-                      type="button"
-                      onClick={() => setPreviewFilter('all')}
-                      className="text-xs text-teal-700 hover:text-teal-900 font-bold underline cursor-pointer"
-                    >
-                      Reset Filter (Show All)
-                    </button>
-                  )}
                 </div>
 
                 {importStatus.error && (

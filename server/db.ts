@@ -857,23 +857,6 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_classes_institution ON classes(institution_id);
         CREATE INDEX IF NOT EXISTS idx_families_institution ON families(institution_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution ON students(institution_id);
-        -- One-time column renames (national-ID terminology). No-ops on fresh databases.
-        DO $$
-        BEGIN
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'father_cnic') THEN
-            ALTER TABLE students RENAME COLUMN father_cnic TO father_national_id;
-          END IF;
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'mother_cnic') THEN
-            ALTER TABLE students RENAME COLUMN mother_cnic TO mother_national_id;
-          END IF;
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'students' AND column_name = 'b_form_no') THEN
-            ALTER TABLE students RENAME COLUMN b_form_no TO student_national_id;
-          END IF;
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'families' AND column_name = 'father_cnic') THEN
-            ALTER TABLE families RENAME COLUMN father_cnic TO father_national_id;
-          END IF;
-        END $$;
-
         CREATE INDEX IF NOT EXISTS idx_students_institution_class ON students(institution_id, class_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_family ON students(institution_id, family_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_status ON students(institution_id, status);

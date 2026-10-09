@@ -77,7 +77,7 @@ export const StopModal: React.FC<StopModalProps> = ({
               required
               value={stopData.name}
               onChange={(e) => set('name', e.target.value)}
-              placeholder="e.g. Liberty Chowk, Main Market"
+              placeholder="e.g. Central Station, Main Street"
               className={inputClass}
             />
           </div>
@@ -99,7 +99,7 @@ export const StopModal: React.FC<StopModalProps> = ({
                 type="text"
                 value={stopData.landmark}
                 onChange={(e) => set('landmark', e.target.value)}
-                placeholder="e.g. Near Shell Pump"
+                placeholder="e.g. Opposite City Library"
                 className={inputClass}
               />
             </div>

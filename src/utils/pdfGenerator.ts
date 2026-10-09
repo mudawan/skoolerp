@@ -108,7 +108,7 @@ export async function preloadImageForPdf(url?: string): Promise<string | null> {
 }
 
 /**
- * Render RTL text (such as Arabic, Urdu, Persian or Hebrew) to a high-DPI PNG data URL using native browser canvas text shaping.
+ * Render RTL text (such as Arabic, Persian or Hebrew) to a high-DPI PNG data URL using native browser canvas text shaping.
  * This guarantees proper cursive-script ligature connections, right-to-left orientation, and zero glyph corruption in jsPDF.
  */
 function renderRtlTextToImage(

@@ -3700,7 +3700,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <input
                     type="text"
                     dir="ltr"
-                    placeholder="e.g. Fee can be paid at any online branch or via Mobile Banking App / 1Link."
+                    placeholder="e.g. Fee can be paid at any online branch or via the mobile banking app."
                     value={bankFormData.instructionsLtr}
                     onChange={(e) =>
                       setBankFormData({
@@ -3726,7 +3726,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <input
                     type="text"
                     dir="rtl"
-                    placeholder="Right-to-left instructions (e.g. Arabic, Urdu, Hebrew)"
+                    placeholder="Right-to-left instructions (e.g. Arabic, Persian, Hebrew)"
                     value={bankFormData.instructionsRtl}
                     onChange={(e) =>
                       setBankFormData({
@@ -3762,11 +3762,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* CSV Bulk Upload Modal */}
       {showCsvModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div
             className={`bg-white rounded-2xl ${
               parsedCsvRows.length > 0 ? 'max-w-4xl' : 'max-w-md'
-            } w-full p-6 shadow-2xl space-y-5 transition-all max-h-[90vh] flex flex-col border border-slate-200`}
+            } w-full p-6 shadow-2xl space-y-5 transition-all max-h-[90vh] flex flex-col`}
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
@@ -3878,26 +3878,60 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ) : (
               /* Preview View */
               <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
-                {/* Status Bar */}
-                {/* Compact Status & Action Bar */}
+                {/* Compact Status & Filter Bar */}
                 {(() => {
                   const validCount = parsedCsvRows.filter((r) => r.isValid).length;
                   const invalidCount = parsedCsvRows.length - validCount;
                   return (
                     <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 px-3 py-2 rounded-xl border border-slate-200 text-xs shrink-0">
                       <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                        <div className="inline-flex items-center gap-1.5 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
-                          <span className="text-slate-500 font-semibold text-[11px]">Total Rows:</span>
-                          <span className="font-bold text-slate-900">{parsedCsvRows.length}</span>
-                        </div>
-                        <div className="inline-flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80 shadow-2xs">
-                          <span className="text-emerald-700 font-semibold text-[11px]">Valid Matches:</span>
-                          <span className="font-bold text-emerald-800">{validCount}</span>
-                        </div>
-                        <div className="inline-flex items-center gap-1.5 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/80 shadow-2xs">
-                          <span className="text-rose-700 font-semibold text-[11px]">Invalid / Skipped:</span>
-                          <span className="font-bold text-rose-800">{invalidCount}</span>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCsvPreviewFilter('all')}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-left transition cursor-pointer ${
+                            csvPreviewFilter === 'all'
+                              ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                              : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-200 shadow-2xs'
+                          }`}
+                          title="Show all records"
+                        >
+                          <span className={csvPreviewFilter === 'all' ? 'text-slate-300 font-semibold text-[11px]' : 'text-slate-500 font-semibold text-[11px]'}>
+                            Total Rows:
+                          </span>
+                          <span className="font-bold">{parsedCsvRows.length}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCsvPreviewFilter(csvPreviewFilter === 'valid' ? 'all' : 'valid')}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-left transition cursor-pointer ${
+                            csvPreviewFilter === 'valid'
+                              ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                              : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border-emerald-200/80 shadow-2xs'
+                          }`}
+                          title="Filter valid records"
+                        >
+                          <span className={csvPreviewFilter === 'valid' ? 'text-emerald-100 font-semibold text-[11px]' : 'text-emerald-700 font-semibold text-[11px]'}>
+                            Valid Matches:
+                          </span>
+                          <span className="font-bold">{validCount}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCsvPreviewFilter(csvPreviewFilter === 'invalid' ? 'all' : 'invalid')}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-left transition cursor-pointer ${
+                            csvPreviewFilter === 'invalid'
+                              ? 'bg-rose-800 text-white border-rose-800 shadow-xs'
+                              : invalidCount > 0
+                              ? 'bg-rose-50 text-rose-800 hover:bg-rose-100 border-rose-200/80 shadow-2xs ring-1 ring-rose-300/60'
+                              : 'bg-rose-50/50 text-rose-700 hover:bg-rose-50 border-rose-200/50 shadow-2xs'
+                          }`}
+                          title="Show invalid records"
+                        >
+                          <span className={csvPreviewFilter === 'invalid' ? 'text-rose-100 font-semibold text-[11px]' : 'text-rose-700 font-semibold text-[11px]'}>
+                            Invalid / Skipped:
+                          </span>
+                          <span className="font-bold">{invalidCount}</span>
+                        </button>
                         <div className="inline-flex items-center gap-1.5 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200/80 shadow-2xs">
                           <span className="text-teal-700 font-semibold text-[11px]">Target Month:</span>
                           <span className="font-bold text-teal-800">
@@ -3905,61 +3939,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           </span>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setParsedCsvRows([]);
-                          setCsvFileName('');
-                          setCsvParseError(null);
-                          setCsvPreviewFilter('all');
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 rounded-lg font-semibold text-xs transition cursor-pointer shrink-0"
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>Upload New File</span>
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setParsedCsvRows([]);
+                            setCsvFileName('');
+                            setCsvParseError(null);
+                            setCsvPreviewFilter('all');
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 rounded-lg font-semibold text-xs transition cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload New File</span>
+                        </button>
+                      </div>
                     </div>
                   );
                 })()}
-
-                {/* Filter Selector Tabs */}
-                <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs shrink-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {([
-                      ['all', 'All', 'bg-slate-900'],
-                      ['valid', 'Valid Only', 'bg-emerald-700'],
-                      ['invalid', 'Issues', 'bg-rose-700'],
-                    ] as const).map(([key, label, activeCls]) => {
-                      const count =
-                        key === 'all'
-                          ? parsedCsvRows.length
-                          : key === 'valid'
-                          ? parsedCsvRows.filter((r) => r.isValid).length
-                          : parsedCsvRows.filter((r) => !r.isValid).length;
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setCsvPreviewFilter(key)}
-                          className={`px-2.5 py-1 rounded-lg font-bold text-xs transition cursor-pointer ${
-                            csvPreviewFilter === key ? `${activeCls} text-white shadow-xs` : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          {label} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {csvPreviewFilter !== 'all' && (
-                    <button
-                      type="button"
-                      onClick={() => setCsvPreviewFilter('all')}
-                      className="text-xs text-teal-700 hover:text-teal-900 font-bold underline cursor-pointer"
-                    >
-                      Reset Filter (Show All)
-                    </button>
-                  )}
-                </div>
 
                 {csvParseError && (
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs font-medium flex items-center gap-2">
@@ -3968,8 +3965,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
 
-                {/* Preview table (always visible) */}
-                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] flex-1">
+                {/* Table container */}
+                <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-auto max-h-[50vh] min-h-[14rem] flex-1">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                         <tr>
@@ -4083,34 +4080,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             )}
 
             {/* Modal Footer */}
-            <div className="flex justify-between items-center border-t border-slate-200 pt-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCsvModal(false);
-                  setParsedCsvRows([]);
-                  setCsvFileName('');
-                  setCsvParseError(null);
-                }}
-                className="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-100 transition cursor-pointer text-xs font-semibold"
-              >
-                {parsedCsvRows.length > 0 ? 'Cancel' : 'Close'}
-              </button>
-
-              {parsedCsvRows.length > 0 && (
+            {parsedCsvRows.length > 0 && (
+              <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
                 <button
                   type="button"
                   id="btn-commit-bulk-upload-csv"
                   disabled={parsedCsvRows.filter((r) => r.isValid).length === 0}
                   onClick={handleCommitCsvUpload}
-                  className="px-4 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  Import Overrides for {parsedCsvRows.filter((r) => r.isValid).length} Student
+                  <Check className="w-4 h-4" />
+                  Confirm & Import Overrides for {parsedCsvRows.filter((r) => r.isValid).length} Student
                   {parsedCsvRows.filter((r) => r.isValid).length === 1 ? '' : 's'}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       )}

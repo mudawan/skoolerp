@@ -853,6 +853,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const historyTenantRef = useRef<string>('');
   const historyInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   const studentHistoryLoadedRef = useRef<Set<string>>(new Set());
+  // Whenever the loaded voucher/collection/transaction rows are cleared (logout,
+  // institution switch, re-login), the record of how far back history was loaded
+  // must be cleared too; otherwise older months are believed to be in memory and
+  // are never fetched again (blank dashboard/vouchers for an older active month).
+  const resetHistoryTracking = () => {
+    historyTenantRef.current = '';
+    historyFromRef.current = '';
+    historyInFlightRef.current = new Map();
+    studentHistoryLoadedRef.current = new Set();
+    setHistoryFrom('');
+  };
 
   const [institute, setInstitute] = useState<InstituteProfile>(() => INITIAL_INSTITUTE);
   // Keep the shared money formatter on the institution's currency. Done during
@@ -1467,6 +1478,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const freshTemplates = createDefaultGlobalTemplates(res.institution.id);
       setTemplates(freshTemplates);
       setVouchers([]);
+      resetHistoryTracking();
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);
@@ -1524,6 +1536,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTransportAssignments([]);
       setTemplates(INITIAL_GLOBAL_TEMPLATES);
       setVouchers([]);
+      resetHistoryTracking();
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);
@@ -1703,6 +1716,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTransportAssignments([]);
         setTemplates(INITIAL_GLOBAL_TEMPLATES);
         setVouchers([]);
+        resetHistoryTracking();
         setCollections([]);
         setTransactions([]);
         setBankAccounts([]);
@@ -1756,6 +1770,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTransportAssignments([]);
         setTemplates(INITIAL_GLOBAL_TEMPLATES);
         setVouchers([]);
+        resetHistoryTracking();
         setCollections([]);
         setTransactions([]);
         setBankAccounts([]);
@@ -1819,6 +1834,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTransportAssignments([]);
     setTemplates(INITIAL_GLOBAL_TEMPLATES);
     setVouchers([]);
+    resetHistoryTracking();
     setCollections([]);
     setTransactions([]);
     setBankAccounts([]);
@@ -2027,6 +2043,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setTransportAssignments([]);
       setTemplates(INITIAL_GLOBAL_TEMPLATES);
       setVouchers([]);
+      resetHistoryTracking();
       setCollections([]);
       setTransactions([]);
       setBankAccounts([]);

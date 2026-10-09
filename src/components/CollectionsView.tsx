@@ -2005,7 +2005,7 @@ export const CollectionsView: React.FC = () => {
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Upload className="w-5 h-5 text-teal-600" />
                 {bulkPreviewRows.length > 0
-                  ? 'Preview & Verify CSV Data'
+                  ? 'Preview & Verify Fee Collections'
                   : 'Import Fee Collections from CSV'}
               </h3>
               <button

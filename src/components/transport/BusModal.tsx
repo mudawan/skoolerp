@@ -90,7 +90,7 @@ export const BusModal: React.FC<BusModalProps> = ({
                 type="text"
                 value={busData.regNumber}
                 onChange={(e) => set('regNumber', e.target.value)}
-                placeholder="e.g. LEA-1234"
+                placeholder="e.g. ABC-1234"
                 className={inputClass}
               />
             </div>
@@ -103,7 +103,7 @@ export const BusModal: React.FC<BusModalProps> = ({
                 type="text"
                 value={busData.model}
                 onChange={(e) => set('model', e.target.value)}
-                placeholder="e.g. Toyota Coaster"
+                placeholder="e.g. 30-Seat Coach"
                 className={inputClass}
               />
             </div>
@@ -126,7 +126,7 @@ export const BusModal: React.FC<BusModalProps> = ({
                 type="text"
                 value={busData.driverName}
                 onChange={(e) => set('driverName', e.target.value)}
-                placeholder="e.g. Muhammad Ali"
+                placeholder="e.g. Jordan Lee"
                 className={inputClass}
               />
             </div>
@@ -136,7 +136,7 @@ export const BusModal: React.FC<BusModalProps> = ({
                 type="tel"
                 value={busData.driverPhone}
                 onChange={(e) => set('driverPhone', e.target.value)}
-                placeholder="e.g. 0300-1234567"
+                placeholder="e.g. +1 555 010 1234"
                 className={inputClass}
               />
             </div>

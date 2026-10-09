@@ -985,6 +985,8 @@ export function normalizeMonthString(monthStr: string | undefined | null): strin
   return trimmed;
 }
 
+const MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 export function formatMonthName(monthStr: string): string {
   if (!monthStr || monthStr === 'all') return 'All Months';
   const normalized = normalizeMonthString(monthStr);
@@ -993,8 +995,8 @@ export function formatMonthName(monthStr: string): string {
     const year = parseInt(parts[0], 10);
     const monthNum = parseInt(parts[1], 10);
     if (!isNaN(year) && !isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
-      const date = new Date(year, monthNum - 1, 1);
-      return date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      // Fixed 3-letter English abbreviation: constant length and independent of the browser locale.
+      return `${MONTH_ABBREVIATIONS[monthNum - 1]} ${year}`;
     }
   }
   return monthStr;

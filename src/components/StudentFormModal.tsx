@@ -730,14 +730,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Date of Birth */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold text-slate-700">Date of Birth</label>
-                  {formData.dob && calculateAge(formData.dob) && (
-                    <span className="text-[11px] font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/80">
-                      Age: {calculateAge(formData.dob)?.fullText}
-                    </span>
-                  )}
-                </div>
+                <label className="block font-bold text-slate-700 mb-1">Date of Birth</label>
                 <DatePicker
                   value={formData.dob}
                   minYear={1960}
@@ -748,6 +741,11 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                   placeholder="Select Date of Birth"
                   className="w-full"
                 />
+                {formData.dob && calculateAge(formData.dob) && (
+                  <span className="inline-block mt-1 text-[11px] font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200/80">
+                    Age: {calculateAge(formData.dob)?.fullText}
+                  </span>
+                )}
               </div>
 
               {/* Gender */}
@@ -772,7 +770,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. 00000-1234567-1"
+                  placeholder="e.g. ID-123456"
                   value={formData.studentNationalId}
                   onChange={(e) => setFormData({ ...formData, studentNationalId: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -854,7 +852,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="00000-1234567-1"
+                  placeholder="e.g. ID-123456"
                   value={formData.fatherNationalId}
                   onChange={(e) => handleFatherNationalIdChange(e.target.value)}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
@@ -907,7 +905,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
                 <label className="block font-bold text-slate-700 mb-1">Mother’s National ID</label>
                 <input
                   type="text"
-                  placeholder="00000-1234567-1"
+                  placeholder="e.g. ID-123456"
                   value={formData.motherNationalId}
                   onChange={(e) => setFormData({ ...formData, motherNationalId: e.target.value })}
                   className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"

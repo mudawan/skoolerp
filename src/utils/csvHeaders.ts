@@ -130,7 +130,7 @@ export const TRANSPORT_CSV: CsvSpec<TransportCsvKey> = {
     days: 'Days Availed',
     discount: 'Discount',
   },
-  required: ['regNo'],
+  required: ['regNo', 'bus', 'stop', 'tripType', 'days', 'discount'],
 };
 
 export type StopCsvKey = 'name' | 'area' | 'landmark' | 'fare' | 'sortOrder';

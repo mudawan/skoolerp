@@ -33,6 +33,7 @@ import {
   FileSpreadsheet,
   Download,
   CalendarDays,
+  Scale,
   Copy,
   Check,
   Loader2,
@@ -383,6 +384,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const metrics = [
     {
       key: 'collection',
+      group: 'month' as const,
       label: 'This Month Collection',
       value: formatCurrency(thisMonthCollection),
       icon: Wallet,
@@ -394,19 +396,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       tab: 'quick' as FeeReportTab,
     },
     {
-      key: 'pending',
-      label: 'Total Pending',
-      value: formatCurrency(totalPending),
-      icon: AlertTriangle,
-      accent: 'text-rose-600',
-      iconBg: 'bg-rose-50 text-rose-600',
-      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''}`,
-      badge: 'Defaulters',
-      badgeClass: 'bg-rose-50 text-rose-700 border-rose-200/70',
-      tab: 'pending' as FeeReportTab,
-    },
-    {
       key: 'issued',
+      group: 'month' as const,
       label: 'Vouchers Issued',
       value: String(vouchersIssued),
       icon: FileText,
@@ -418,19 +409,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       tab: 'quick' as FeeReportTab,
     },
     {
-      key: 'receivable',
-      label: 'Vouchers w/ Balance',
-      value: String(vouchersWithReceivable.length),
-      icon: HandCoins,
-      accent: 'text-indigo-700',
-      iconBg: 'bg-indigo-50 text-indigo-600',
-      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''} · open vouchers`,
-      badge: 'Unsettled',
-      badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200/70',
-      tab: 'pending' as FeeReportTab,
-    },
-    {
       key: 'studentsPaid',
+      group: 'month' as const,
       label: 'Students Paid',
       value: String(studentsPaidThisMonth),
       icon: Users,
@@ -441,6 +421,32 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       badgeClass: 'bg-sky-50 text-sky-700 border-sky-200/70',
       tab: 'quick' as FeeReportTab,
     },
+    {
+      key: 'pending',
+      group: 'lifetime' as const,
+      label: 'Total Pending',
+      value: formatCurrency(totalPending),
+      icon: AlertTriangle,
+      accent: 'text-rose-600',
+      iconBg: 'bg-rose-50 text-rose-600',
+      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''}`,
+      badge: 'Defaulters',
+      badgeClass: 'bg-rose-50 text-rose-700 border-rose-200/70',
+      tab: 'pending' as FeeReportTab,
+    },
+    {
+      key: 'receivable',
+      group: 'lifetime' as const,
+      label: 'Vouchers w/ Balance',
+      value: String(vouchersWithReceivable.length),
+      icon: HandCoins,
+      accent: 'text-indigo-700',
+      iconBg: 'bg-indigo-50 text-indigo-600',
+      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''} · open vouchers`,
+      badge: 'Unsettled',
+      badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200/70',
+      tab: 'pending' as FeeReportTab,
+    },
   ];
 
   const activeMetric = (key: string) => {
@@ -450,6 +456,96 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     if (feeReportTab !== m.tab) setFeeReportTab(m.tab);
     if (m.tab === 'quick') setQuickPeriod('thisMonth');
   };
+
+  const renderMetricCard = (m) => {
+                const Icon = m.icon;
+                const isSelected = selectedMetricKey === m.key;
+
+                return (
+                  <button
+                    key={m.key}
+                    type="button"
+                    id={`metric-card-${m.key}`}
+                    onClick={() => activeMetric(m.key)}
+                    title={`Click to filter: ${METRIC_LABELS[m.tab]}`}
+                    style={
+                      isSelected
+                        ? {
+                            borderColor: preset.primaryColor,
+                            backgroundColor: `${preset.primaryColor}0d`,
+                            boxShadow: `0 0 0 1px ${preset.primaryColor}33`,
+                          }
+                        : undefined
+                    }
+                    className={`group text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer flex flex-col justify-between relative ${
+                      isSelected
+                        ? 'shadow-2xs'
+                        : 'bg-white border-slate-200/80 hover:border-slate-300 hover:bg-slate-50/60 hover:shadow-2xs'
+                    }`}
+                  >
+                    {/* Top Row: Metric Label & Icon */}
+                    <div className="flex items-start justify-between gap-1.5 mb-1.5">
+                      <span
+                        style={isSelected ? { color: preset.textColor } : undefined}
+                        className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors leading-tight line-clamp-1"
+                      >
+                        {m.label}
+                      </span>
+                      <span
+                        style={
+                          isSelected
+                            ? {
+                                backgroundColor: preset.primaryColor,
+                                color: '#ffffff',
+                              }
+                            : undefined
+                        }
+                        className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center transition-colors ${
+                          isSelected ? 'shadow-2xs' : m.iconBg
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                      </span>
+                    </div>
+
+                    {/* Middle Row: Primary Value */}
+                    <div className="mb-2">
+                      <div
+                        className={`text-lg sm:text-xl font-black font-mono tracking-tight leading-none truncate ${
+                          isSelected ? 'text-slate-900' : m.accent
+                        }`}
+                      >
+                        {m.value}
+                      </div>
+                    </div>
+
+                    {/* Bottom Row: Context Hint & Status Badge */}
+                    <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-medium pt-1.5 border-t border-slate-100/90">
+                      <span className="truncate text-slate-500">{m.hint}</span>
+                      {m.badge && (
+                        <span
+                          style={
+                            isSelected
+                              ? {
+                                  backgroundColor: `${preset.primaryColor}18`,
+                                  color: preset.textColor,
+                                  borderColor: `${preset.primaryColor}40`,
+                                }
+                              : undefined
+                          }
+                          className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded leading-none ${
+                            isSelected ? 'border' : m.badgeClass
+                          }`}
+                        >
+                          {m.badge}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              };
+  const monthMetrics = metrics.filter((m) => m.group === 'month');
+  const lifetimeMetrics = metrics.filter((m) => m.group === 'lifetime');
 
   const handleFeeReportTabChange = (tab: FeeReportTab) => {
     setFeeReportTab(tab);
@@ -1465,105 +1561,37 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </div>
 
               <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/70">
-                  <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span>Billing Month: <strong className="text-slate-800 font-semibold">{formatMonthName(activeMonth)}</strong></span>
-                </span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/70">
+                <span
+                  title={`Cash received in ${formatMonthName(activeMonth)} ÷ ${formatMonthName(activeMonth)} vouchers (fees plus carried balance)`}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200/70"
+                >
                   <span>Collection Rate:</span>
                   <strong className="text-emerald-700 font-bold font-mono">{collectionRate}%</strong>
                 </span>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5">
-              {metrics.map((m) => {
-                const Icon = m.icon;
-                const isSelected = selectedMetricKey === m.key;
-
-                return (
-                  <button
-                    key={m.key}
-                    type="button"
-                    id={`metric-card-${m.key}`}
-                    onClick={() => activeMetric(m.key)}
-                    title={`Click to filter: ${METRIC_LABELS[m.tab]}`}
-                    style={
-                      isSelected
-                        ? {
-                            borderColor: preset.primaryColor,
-                            backgroundColor: `${preset.primaryColor}0d`,
-                            boxShadow: `0 0 0 1px ${preset.primaryColor}33`,
-                          }
-                        : undefined
-                    }
-                    className={`group text-left rounded-xl p-3 border transition-all duration-150 cursor-pointer flex flex-col justify-between relative ${
-                      isSelected
-                        ? 'shadow-2xs'
-                        : 'bg-white border-slate-200/80 hover:border-slate-300 hover:bg-slate-50/60 hover:shadow-2xs'
-                    }`}
-                  >
-                    {/* Top Row: Metric Label & Icon */}
-                    <div className="flex items-start justify-between gap-1.5 mb-1.5">
-                      <span
-                        style={isSelected ? { color: preset.textColor } : undefined}
-                        className="text-[11px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors leading-tight line-clamp-1"
-                      >
-                        {m.label}
-                      </span>
-                      <span
-                        style={
-                          isSelected
-                            ? {
-                                backgroundColor: preset.primaryColor,
-                                color: '#ffffff',
-                              }
-                            : undefined
-                        }
-                        className={`w-6 h-6 shrink-0 rounded-lg flex items-center justify-center transition-colors ${
-                          isSelected ? 'shadow-2xs' : m.iconBg
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                      </span>
-                    </div>
-
-                    {/* Middle Row: Primary Value */}
-                    <div className="mb-2">
-                      <div
-                        className={`text-lg sm:text-xl font-black font-mono tracking-tight leading-none truncate ${
-                          isSelected ? 'text-slate-900' : m.accent
-                        }`}
-                      >
-                        {m.value}
-                      </div>
-                    </div>
-
-                    {/* Bottom Row: Context Hint & Status Badge */}
-                    <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-medium pt-1.5 border-t border-slate-100/90">
-                      <span className="truncate text-slate-500">{m.hint}</span>
-                      {m.badge && (
-                        <span
-                          style={
-                            isSelected
-                              ? {
-                                  backgroundColor: `${preset.primaryColor}18`,
-                                  color: preset.textColor,
-                                  borderColor: `${preset.primaryColor}40`,
-                                }
-                              : undefined
-                          }
-                          className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded leading-none ${
-                            isSelected ? 'border' : m.badgeClass
-                          }`}
-                        >
-                          {m.badge}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-x-4 gap-y-3">
+              <div className="xl:col-span-3">
+                <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-bold text-slate-600">
+                  <CalendarDays className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>{formatMonthName(activeMonth)}</span>
+                  <span className="font-medium text-slate-400">&middot; selected billing month</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+                  {monthMetrics.map(renderMetricCard)}
+                </div>
+              </div>
+              <div className="xl:col-span-2 xl:border-l xl:border-slate-200/80 xl:pl-4">
+                <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-bold text-slate-600">
+                  <Scale className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>All months</span>
+                  <span className="font-medium text-slate-400">&middot; outstanding as of today</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {lifetimeMetrics.map(renderMetricCard)}
+                </div>
+              </div>
             </div>
           </div>
 

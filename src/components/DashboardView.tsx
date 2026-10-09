@@ -163,10 +163,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   borderColor: preset.primaryColor + '70',
                   color: preset.lightBorder,
                 }}
-                className="text-[11px] font-bold tracking-wide px-2.5 py-0.5 rounded-lg border backdrop-blur-xs flex items-center gap-1.5 shadow-2xs"
+                className="text-[11px] font-bold tracking-wide px-2.5 py-0.5 rounded-lg border backdrop-blur-xs flex items-center gap-1.5 shadow-2xs min-w-[6.5rem]"
               >
                 <Calendar className="w-3.5 h-3.5" />
-                <span>{formatMonthName(activeMonth)}</span>
+                <span className="flex-1 text-center tabular-nums">{formatMonthName(activeMonth)}</span>
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-1">

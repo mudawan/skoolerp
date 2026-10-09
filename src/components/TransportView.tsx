@@ -736,10 +736,8 @@ export const TransportView: React.FC = () => {
             } else {
               busError = `Bus '${rawBus.trim()}' not found (must exactly match a Bus # or Route name)`;
             }
-          } else if (buses.length === 1) {
-            bus = buses[0];
           } else {
-            busError = `Bus is required (${buses.length} buses in fleet)`;
+            busError = 'Bus Number is required';
           }
 
           // 3. Match Stop: exact Stop name first, then exact Area. No substring guessing.
@@ -766,33 +764,45 @@ export const TransportView: React.FC = () => {
             } else {
               stopError = `Stop '${rawStop.trim()}' not found (must exactly match a Stop name or Area)`;
             }
-          } else if (stops.length === 1) {
-            stop = stops[0];
           } else {
-            stopError = `Stop is required (${stops.length} stops defined)`;
+            stopError = 'Stop Name is required';
           }
 
-          // 4. Trip Type
+          // 4. Trip Type: must be exactly RoundTrip or OneWay (case, spacing and punctuation ignored)
           let tripType: 'RoundTrip' | 'OneWay' = 'RoundTrip';
-          if (/one|1|single/i.test(rawTripType)) {
+          let tripError: string | undefined;
+          const tripKey = rawTripType.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!tripKey) {
+            tripError = 'Trip Type is required (RoundTrip or OneWay)';
+          } else if (tripKey === 'roundtrip') {
+            tripType = 'RoundTrip';
+          } else if (tripKey === 'oneway') {
             tripType = 'OneWay';
+          } else {
+            tripError = `Trip Type '${rawTripType.trim()}' is invalid (use RoundTrip or OneWay)`;
           }
 
-          // 5. Days Availed (assume default active days full month unless specified in CSV)
-          let daysCharged = targetMonthDays;
-          if (rawDays.trim()) {
-            const numDays = parseInt(rawDays.trim(), 10);
-            if (!isNaN(numDays)) {
-              daysCharged = Math.min(Math.max(numDays, 0), targetMonthDays);
-            }
+          // 5. Days Availed: whole number between 0 and the days in the month
+          let daysCharged = 0;
+          let daysError: string | undefined;
+          const daysRaw = rawDays.trim();
+          if (!daysRaw) {
+            daysError = 'Days Availed is required';
+          } else if (!/^\d+$/.test(daysRaw) || parseInt(daysRaw, 10) > targetMonthDays) {
+            daysError = `Days Availed '${daysRaw}' is invalid (whole number 0-${targetMonthDays})`;
+          } else {
+            daysCharged = parseInt(daysRaw, 10);
           }
 
-          // 6. Discount
+          // 6. Discount: a number >= 0; a blank cell means no discount
           let discount = 0;
-          if (rawDiscount.trim()) {
-            const numDisc = parseFloat(rawDiscount.replace(/[^0-9.]/g, ''));
-            if (!isNaN(numDisc) && numDisc >= 0) {
-              discount = numDisc;
+          let discountError: string | undefined;
+          const discountRaw = rawDiscount.trim();
+          if (discountRaw) {
+            if (!/^\d+(\.\d+)?$/.test(discountRaw)) {
+              discountError = `Discount '${discountRaw}' is invalid (number 0 or more)`;
+            } else {
+              discount = parseFloat(discountRaw);
             }
           }
 
@@ -846,6 +856,9 @@ export const TransportView: React.FC = () => {
           } else if (!stop) {
             isValid = false;
             errorMsg = stopError || (rawStop ? `Stop '${rawStop}' not found` : 'No bus stop available');
+          } else if (tripError || daysError || discountError) {
+            isValid = false;
+            errorMsg = (tripError || daysError || discountError) as string;
           } else if (isDuplicateInCsv) {
             isValid = false;
             errorMsg = 'Duplicate Reg # in CSV';

@@ -270,7 +270,7 @@ export interface InstituteProfile {
   email: string;
   website: string;
   regNo: string;
-  currency?: string; // ISO code, e.g. USD / PKR. Display & print label only.
+  currency?: string; // ISO code, e.g. USD / EUR. Display & print label only.
   sessionTimeoutMinutes?: number; // Inactivity auto-logout timeout in minutes (Default: 10)
   settings?: Record<string, any>;
 }
@@ -282,7 +282,7 @@ export interface BankAccount {
   accountNumber: string;
   branchCode: string;
   instructionsLtr?: string; // English / Left-to-Right reading instructions
-  instructionsRtl?: string; // Right-to-left reading instructions (Arabic, Urdu, Hebrew, ...)
+  instructionsRtl?: string; // Right-to-left reading instructions (Arabic, Persian, Hebrew, ...)
   instructionsLine1: string;
   instructionsLine2: string;
   logoUrl?: string;
