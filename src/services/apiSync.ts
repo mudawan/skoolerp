@@ -428,6 +428,13 @@ const STRIP_BEFORE_SYNC: Record<string, string[]> = {
   families: ['memberStudentIds'],
 };
 
+// Family numbers are issued by the server. When a newly created family comes back with a
+// different number than the client's provisional one, this handler lets the app adopt it.
+let familyNumberAssignedHandler: ((familyId: string, familyNo: string) => void) | null = null;
+export function setFamilyNumberAssignedHandler(handler: ((familyId: string, familyNo: string) => void) | null) {
+  familyNumberAssignedHandler = handler;
+}
+
 let lastSyncedSnapshots: Record<string, Map<string, string>> = {};
 // Permanently-failed ids (e.g. a 409 duplicate) are parked here so we don't
 // retry something that will never succeed by retrying identically forever.
@@ -500,7 +507,17 @@ async function diffAndSyncSimpleCollection(
         throw new Error(`HTTP ${res.status}`);
       }
       failedMap.delete(item.id);
-      nextMap.set(item.id, serialized);
+      let savedSerialized = serialized;
+      if (collectionName === 'families' && isNew) {
+        const body = await res.json().catch(() => null);
+        const assigned = body?.item?.familyNo;
+        if (typeof assigned === 'string' && assigned && assigned !== item.familyNo) {
+          // Track the server's version so adopting the number does not trigger another save.
+          savedSerialized = JSON.stringify({ ...item, familyNo: assigned });
+          familyNumberAssignedHandler?.(item.id, assigned);
+        }
+      }
+      nextMap.set(item.id, savedSerialized);
     } catch (err) {
       console.warn(`[Sync] Failed to persist ${collectionName}/${item.id}, will retry:`, err);
       // Leave it out of nextMap so it's retried on the next sync cycle.

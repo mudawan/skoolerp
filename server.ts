@@ -396,7 +396,17 @@ async function startServer() {
     app.post(path, requireAuth(managePermission), async (req: AuthenticatedRequest, res) => {
       try {
         const institutionId = req.institutionId as string;
-        const created = await dbService.createSimpleEntity(config, institutionId, req.body || {});
+        const body = { ...(req.body || {}) };
+        // Family numbers are issued by the server (atomic sequence) so they can never repeat.
+        // A caller-supplied number is kept only when it is a real one (e.g. a restore);
+        // blank or the client's provisional marker is replaced.
+        if (config.table === 'families') {
+          const given = typeof body.familyNo === 'string' ? body.familyNo.trim() : '';
+          if (!given || given === 'FAM-PENDING') {
+            body.familyNo = await dbService.allocateFamilyNumber(institutionId);
+          }
+        }
+        const created = await dbService.createSimpleEntity(config, institutionId, body);
         dbService.incrementRevision(institutionId);
         if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
           await recordAudit(req, {

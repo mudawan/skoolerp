@@ -857,6 +857,21 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_classes_institution ON classes(institution_id);
         CREATE INDEX IF NOT EXISTS idx_families_institution ON families(institution_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution ON students(institution_id);
+        -- Family numbers must be unique per institution. The index is only created
+        -- when no duplicates exist, so a database that still holds duplicate
+        -- numbers keeps starting; renumber them (see docs) and restart to enable it.
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM families WHERE family_no IS NOT NULL AND family_no <> ''
+            GROUP BY institution_id, family_no HAVING COUNT(*) > 1
+          ) THEN
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_families_institution_family_no
+              ON families(institution_id, family_no) WHERE family_no IS NOT NULL AND family_no <> '';
+          ELSE
+            RAISE NOTICE 'families: duplicate family_no values found; unique index not created until they are renumbered.';
+          END IF;
+        END $$;
         CREATE INDEX IF NOT EXISTS idx_students_institution_class ON students(institution_id, class_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_family ON students(institution_id, family_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_status ON students(institution_id, status);
@@ -1512,6 +1527,47 @@ class DatabaseService {
     // There is deliberately no in-memory fallback: a process-local counter would
     // restart from 1 and could issue duplicate numbers.
     throw new Error('Document numbering requires an active PostgreSQL connection.');
+  }
+
+  /**
+   * Atomically allocates the next family number (FAM<year>-NNNN) for an institution.
+   * The sequence is first raised to the highest number already stored for that year, so
+   * existing families can never be collided with, then advanced by one. A per-institution
+   * advisory lock makes the read-then-advance step safe across concurrent requests.
+   */
+  public async allocateFamilyNumber(institutionId: string): Promise<string> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) {
+      throw new Error('Family numbering requires an active PostgreSQL connection.');
+    }
+    const year = new Date().getFullYear().toString();
+    const client = await this.pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`family-no:${tenantId}`]);
+      const maxRes = await client.query(
+        `SELECT COALESCE(MAX(((regexp_match(family_no, '^FAM' || $2 || '-(\\d+)$'))[1])::bigint), 0) AS m
+           FROM families WHERE institution_id = $1`,
+        [tenantId, year]
+      );
+      const existingMax = Number(maxRes.rows[0]?.m || 0);
+      const seqRes = await client.query(
+        `INSERT INTO system_sequences (institution_id, prefix, year, last_value, updated_at)
+         VALUES ($1, 'FAM', $2, $3, $4)
+         ON CONFLICT (institution_id, prefix, year)
+         DO UPDATE SET last_value = GREATEST(system_sequences.last_value, $3 - 1) + 1, updated_at = $4
+         RETURNING last_value`,
+        [tenantId, year, existingMax + 1, new Date().toISOString()]
+      );
+      await client.query('COMMIT');
+      return `FAM${year}-${String(Number(seqRes.rows[0].last_value)).padStart(4, '0')}`;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /**

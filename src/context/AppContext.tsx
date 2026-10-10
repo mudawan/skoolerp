@@ -97,7 +97,11 @@ import {
   apiUpdateInstituteSettings,
   apiPostAuditEvent,
   setActionLockActive,
+  setFamilyNumberAssignedHandler,
 } from '../services/apiSync';
+
+// Marker for a family number that the server has not issued yet.
+const PENDING_FAMILY_NO = 'FAM-PENDING';
 import { DatabaseActionLockModal } from '../components/DatabaseActionLockModal';
 
 export interface LockedMonthInfo {
@@ -786,7 +790,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // start in sync with the students/families arrays computed above, then
   // increment independently of React's (batched, async) state updates.
   const studentSeqRef = useRef<number>(students.length);
-  const familySeqRef = useRef<number>(families.length);
 
   // Monotonic counter backing generateUniqueId below. Guarantees uniqueness
   // even when several ids are minted within the same millisecond (e.g. a
@@ -820,6 +823,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     familiesRef.current = families;
   }, [families]);
+
+  // Adopt the unique family number the server issues when a new family is saved.
+  useEffect(() => {
+    setFamilyNumberAssignedHandler((familyId, familyNo) => {
+      setFamilies((prev) => prev.map((f) => (f.id === familyId ? { ...f, familyNo } : f)));
+      familiesRef.current = familiesRef.current.map((f) => (f.id === familyId ? { ...f, familyNo } : f));
+    });
+    return () => setFamilyNumberAssignedHandler(null);
+  }, []);
 
   const [buses, setBuses] = useState<TransportBus[]>(() => []);
 
@@ -2261,8 +2273,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         // Create auto family strictly with fatherNationalId
         const newFamId = generateUniqueId('fam');
-        familySeqRef.current += 1;
-        const newFamNo = `FAM${year}-${familySeqRef.current.toString().padStart(4, '0')}`;
+        // Provisional number; the server issues the real, unique one when the family is saved.
+        const newFamNo = PENDING_FAMILY_NO;
         const newFam: Family = {
           id: newFamId,
           familyNo: newFamNo,
@@ -2507,17 +2519,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Family Management
+  // Father National ID identifies a family: it is required and must be unique.
+  // Returns an error message, or '' when the value is acceptable.
+  const validateFamilyNationalId = (value: string | undefined, excludeFamilyId?: string): string => {
+    const raw = (value || '').trim();
+    if (!raw) return 'Father National ID is required.';
+    const norm = normalizeNationalId(raw);
+    const clash = familiesRef.current.find((f) => {
+      if (f.id === excludeFamilyId || !f.fatherNationalId?.trim()) return false;
+      return (
+        f.fatherNationalId.trim().toLowerCase() === raw.toLowerCase() ||
+        (norm.length >= 5 && normalizeNationalId(f.fatherNationalId) === norm)
+      );
+    });
+    return clash ? `This Father National ID already belongs to family ${clash.familyNo} (${clash.headName}).` : '';
+  };
+
   const addFamily = (familyData: Omit<Family, 'id' | 'familyNo'>) => {
     const perm = ensureMutationAllowed('Family creation');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    const year = new Date().getFullYear();
-    familySeqRef.current += 1;
-    const familyNo = `FAM${year}-${familySeqRef.current.toString().padStart(4, '0')}`;
+    const idCheck = validateFamilyNationalId(familyData.fatherNationalId);
+    if (idCheck) return { success: false, error: idCheck };
+
     const newFamily: Family = {
       ...familyData,
       id: generateUniqueId('fam'),
-      familyNo,
+      // Provisional number; the server issues the real, unique one when the family is saved.
+      familyNo: PENDING_FAMILY_NO,
       fatherNationalId: familyData.fatherNationalId?.trim() || '',
     };
     setFamilies((prev) => [...prev, newFamily]);
@@ -2532,6 +2561,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const sanitized = { ...updates };
     if (sanitized.fatherNationalId !== undefined) {
       sanitized.fatherNationalId = sanitized.fatherNationalId.trim();
+      const idCheck = validateFamilyNationalId(sanitized.fatherNationalId, id);
+      if (idCheck) return { success: false, error: idCheck };
     }
     setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...sanitized } : f)));
     familiesRef.current = familiesRef.current.map((f) => (f.id === id ? { ...f, ...sanitized } : f));

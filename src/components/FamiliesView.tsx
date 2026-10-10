@@ -74,6 +74,7 @@ export const FamiliesView: React.FC = () => {
 
   const [formData, setFormData] = useState({
     headName: '',
+    fatherNationalId: '',
     contactPhone: '',
     address: '',
     notes: '',
@@ -117,6 +118,7 @@ export const FamiliesView: React.FC = () => {
         f.headName.toLowerCase().includes(search) ||
         f.familyNo.toLowerCase().includes(search) ||
         f.contactPhone.includes(search) ||
+        (f.fatherNationalId || '').toLowerCase().includes(search) ||
         (f.address && f.address.toLowerCase().includes(search));
 
       if (!matchesSearch) return false;
@@ -189,7 +191,7 @@ export const FamiliesView: React.FC = () => {
   };
 
   const handleOpenAddModal = () => {
-    setFormData({ headName: '', contactPhone: '', address: '', notes: '' });
+    setFormData({ headName: '', fatherNationalId: '', contactPhone: '', address: '', notes: '' });
     setFormError('');
     setShowAddModal(true);
   };
@@ -198,6 +200,7 @@ export const FamiliesView: React.FC = () => {
     setEditingFamily(family);
     setFormData({
       headName: family.headName,
+      fatherNationalId: family.fatherNationalId || '',
       contactPhone: family.contactPhone,
       address: family.address,
       notes: family.notes || '',
@@ -213,6 +216,10 @@ export const FamiliesView: React.FC = () => {
       setFormError('Family head name is required.');
       return;
     }
+    if (!formData.fatherNationalId.trim()) {
+      setFormError('Father National ID is required.');
+      return;
+    }
     if (!formData.contactPhone.trim()) {
       setFormError('Contact phone is required.');
       return;
@@ -221,20 +228,24 @@ export const FamiliesView: React.FC = () => {
     if (editingFamily) {
       const res = updateFamily(editingFamily.id, {
         headName: formData.headName.trim(),
+        fatherNationalId: formData.fatherNationalId.trim(),
         contactPhone: formData.contactPhone.trim(),
         address: formData.address.trim(),
         notes: formData.notes.trim() || undefined,
       });
       if (res.success) setEditingFamily(null);
+      else setFormError(res.error || 'Could not save the family.');
     } else {
       const res = addFamily({
         headName: formData.headName.trim(),
+        fatherNationalId: formData.fatherNationalId.trim(),
         contactPhone: formData.contactPhone.trim(),
         address: formData.address.trim(),
         notes: formData.notes.trim() || undefined,
         memberStudentIds: [],
       });
       if (res.success) setShowAddModal(false);
+      else setFormError(res.error || 'Could not create the family.');
     }
   };
 
@@ -675,6 +686,7 @@ export const FamiliesView: React.FC = () => {
                         <Phone className="w-3.5 h-3.5 text-slate-400" />
                         {family.contactPhone}
                       </p>
+                      <p className="text-slate-500 font-mono">ID: {family.fatherNationalId || '—'}</p>
                       <p className="text-slate-500 line-clamp-1">{family.address || '—'}</p>
                     </div>
 
@@ -689,7 +701,7 @@ export const FamiliesView: React.FC = () => {
                           className="font-bold text-slate-700 flex items-center gap-1 cursor-pointer hover:text-slate-900 text-left"
                         >
                           <Users className="w-3.5 h-3.5 text-slate-500" />
-                          Students ({activeMemberStudents.length} active
+                          Family Members ({activeMemberStudents.length} active
                           {inactiveMemberStudents.length > 0 && `, ${inactiveMemberStudents.length} inactive`})
                           {isExpanded ? (
                             <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
@@ -1023,6 +1035,19 @@ export const FamiliesView: React.FC = () => {
                   onChange={(e) => setFormData({ ...formData, headName: e.target.value })}
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Father National ID *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. ID-123456"
+                  value={formData.fatherNationalId}
+                  onChange={(e) => setFormData({ ...formData, fatherNationalId: e.target.value })}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Identifies the family; each ID can belong to only one family.</p>
               </div>
 
               <div>
