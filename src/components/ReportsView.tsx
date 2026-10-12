@@ -339,7 +339,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
   const totalFine = studentOutstandingRows.reduce((sum, r) => sum + (r.fineSincePayment ?? 0), 0);
 
-  type ArrearsSortField = 'name' | 'regNo' | 'status' | 'class' | 'father' | 'unpaidMonths' | 'outstanding' | 'fine';
+  type ArrearsSortField = 'name' | 'regNo' | 'status' | 'class' | 'father' | 'unpaidMonths' | 'outstanding';
   const [arrearsSortField, setArrearsSortField] = useState<ArrearsSortField>('outstanding');
   const [arrearsSortDir, setArrearsSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -348,7 +348,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       setArrearsSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setArrearsSortField(field);
-      setArrearsSortDir(field === 'outstanding' || field === 'unpaidMonths' || field === 'fine' ? 'desc' : 'asc');
+      setArrearsSortDir(field === 'outstanding' || field === 'unpaidMonths' ? 'desc' : 'asc');
     }
   };
 
@@ -387,9 +387,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           break;
         case 'outstanding':
           cmp = a.totalOutstanding - b.totalOutstanding;
-          break;
-        case 'fine':
-          cmp = (a.fineSincePayment ?? -1) - (b.fineSincePayment ?? -1);
           break;
       }
       return arrearsSortDir === 'asc' ? cmp : -cmp;
@@ -600,17 +597,34 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [isPrintingArrears, setIsPrintingArrears] = useState(false);
   const [isSavingArrearsPdf, setIsSavingArrearsPdf] = useState(false);
 
+  // One column definition feeds both Copy and CSV so they can never diverge.
+  // Names and order follow the on-screen table (Father Name & Contact is split
+  // into two columns, since a sheet needs them separately).
+  const buildArrearsTable = () => {
+    const columns: Array<{ header: string; text?: boolean; value: (r: (typeof sortedStudentOutstandingRows)[number], i: number) => string | number; total?: string | number }> = [
+      { header: 'Sr#', value: (_r, i) => i + 1, total: 'TOTAL' },
+      { header: 'Student Name', text: true, value: (r) => r.name || '' },
+      { header: CSV_REG_NO, text: true, value: (r) => r.regNo || '' },
+      { header: 'Class', text: true, value: (r) => r.className || '' },
+      { header: 'Status', text: true, value: (r) => (r.status === 'AutoDeactivated' ? 'Auto-Deactivated' : String(r.status || '')) },
+      { header: 'Father Name', text: true, value: (r) => r.fatherName || '' },
+      { header: 'Phone', text: true, value: (r) => r.fatherPhone || '' },
+      { header: 'Months Unpaid', value: (r) => r.unpaidMonthsCount },
+      { header: 'Fine Since Last Payment', value: (r) => r.fineSincePayment ?? '', total: totalFine },
+      { header: 'Arrears (Net)', value: (r) => r.totalOutstanding, total: totalPending },
+    ];
+    return {
+      columns,
+      headers: columns.map((c) => c.header),
+      rows: sortedStudentOutstandingRows.map((r, i) => columns.map((c) => c.value(r, i))),
+      totals: columns.map((c) => c.total ?? ''),
+    };
+  };
+
   const handleCopyArrears = async () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Fine Since Last Payment', 'Total Outstanding'];
-    const lines = [
-      headers.join('\t'),
-      ...sortedStudentOutstandingRows.map((r, i) =>
-        [i + 1, r.regNo, r.name, r.status, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.fineSincePayment ?? '', r.totalOutstanding].join('\t')
-      ),
-      ['TOTAL', '', '', '', '', '', '', '', totalFine, totalPending].join('\t'),
-    ];
-    const text = lines.join('\n');
+    const t = buildArrearsTable();
+    const text = [t.headers, ...t.rows, t.totals].map((cells) => cells.join('\t')).join('\n');
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -631,21 +645,12 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleExportArrearsCsv = () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Fine Since Last Payment', 'Total Outstanding'];
-    const csvRows = sortedStudentOutstandingRows.map((r, i) => [
-      i + 1,
-      `"${r.regNo || ''}"`,
-      `"${(r.name || '').replace(/"/g, '""')}"`,
-      `"${(r.status || '').replace(/"/g, '""')}"`,
-      `"${(r.className || '').replace(/"/g, '""')}"`,
-      `"${(r.fatherName || '').replace(/"/g, '""')}"`,
-      `"${(r.fatherPhone || '').replace(/"/g, '""')}"`,
-      r.unpaidMonthsCount,
-      r.fineSincePayment ?? '',
-      r.totalOutstanding,
-    ]);
-    const totalRow = ['TOTAL', '""', '""', '""', '""', '""', '""', '""', totalFine, totalPending];
-    const csvContent = '\uFEFF' + [headers.join(','), ...csvRows.map((e) => e.join(',')), totalRow.join(',')].join('\n');
+    const t = buildArrearsTable();
+    const quote = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const line = (cells: Array<string | number>) =>
+      cells.map((v, c) => (t.columns[c].text ? quote(v) : v)).join(',');
+    const csvContent =
+      '\uFEFF' + [t.headers.map(quote).join(','), ...t.rows.map(line), line(t.totals)].join('\n');
     downloadCsv(`Student_Fee_Arrears_${activeMonth}.csv`, csvContent);
     setArrearsCsvDownloaded(true);
     setTimeout(() => setArrearsCsvDownloaded(false), 2000);
@@ -1479,16 +1484,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </div>
                   </th>
                   <th
-                    onClick={() => handleArrearsSort('status')}
-                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
-                    title="Click to sort by Student Status"
-                  >
-                    <div className="flex items-center gap-1">
-                      <span>Status</span>
-                      {renderArrearsSortIcon('status')}
-                    </div>
-                  </th>
-                  <th
                     onClick={() => handleArrearsSort('class')}
                     className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
                     title="Click to sort by Academic Class"
@@ -1496,6 +1491,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     <div className="flex items-center gap-1">
                       <span>Class</span>
                       {renderArrearsSortIcon('class')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('status')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Status"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Status</span>
+                      {renderArrearsSortIcon('status')}
                     </div>
                   </th>
                   <th
@@ -1514,27 +1519,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     title="Click to sort by Months Unpaid"
                   >
                     <div className="flex items-center gap-1">
-                      <span>Months Unpaid (Streak)</span>
+                      <span>Months Unpaid</span>
                       {renderArrearsSortIcon('unpaidMonths')}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleArrearsSort('fine')}
-                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
-                    title="Late fine charged since the student's last payment (already included in Outstanding)"
-                  >
-                    <div className="flex items-center justify-end gap-1">
-                      <span>Fine Since Last Payment</span>
-                      {renderArrearsSortIcon('fine')}
                     </div>
                   </th>
                   <th
                     onClick={() => handleArrearsSort('outstanding')}
                     className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
-                    title="Click to sort by Outstanding Net Amount"
+                    title="Click to sort by Arrears (Net)"
                   >
                     <div className="flex items-center justify-end gap-1">
-                      <span>Outstanding (Net)</span>
+                      <span>Arrears (Net)</span>
                       {renderArrearsSortIcon('outstanding')}
                     </div>
                   </th>
@@ -1552,6 +1547,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         </div>
                       </td>
                       <td className="p-3 font-mono font-semibold text-slate-600 whitespace-nowrap">{r.regNo}</td>
+                      <td className="p-3 font-semibold text-slate-800">{r.className}</td>
                       <td className="p-3 whitespace-nowrap">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
@@ -1569,7 +1565,6 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           {r.status === 'AutoDeactivated' ? 'Auto-Deactivated' : r.status}
                         </span>
                       </td>
-                      <td className="p-3 font-semibold text-slate-800">{r.className}</td>
                       <td className="p-3">
                         <span className="font-semibold text-slate-900 block">{r.fatherName}</span>
                         <span className="text-[11px] text-slate-500">{r.fatherPhone}</span>
@@ -1586,22 +1581,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                             >
                               {r.unpaidMonthsCount} {r.unpaidMonthsCount === 1 ? 'Month' : 'Months'} Due
                             </span>
-                            {r.unpaidMonthsCount >= 3 && (
-                              <span className="text-[10px] font-bold bg-rose-600 text-white px-1.5 py-0.2 rounded">
-                                Streak
-                              </span>
-                            )}
                           </div>
                           <span className="text-[11px] text-slate-500 font-medium">
                             Due since {formatMonthName(r.oldestUnpaidMonth)}
                           </span>
                         </div>
                       </td>
-                      <td className="p-3 text-right font-semibold text-amber-700 whitespace-nowrap">
-                        {r.fineSincePayment === null ? '—' : formatCurrency(r.fineSincePayment)}
-                      </td>
-                      <td className="p-3 text-right font-bold text-rose-600">
-                        {formatCurrency(r.totalOutstanding)}
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <span className="font-bold text-rose-600 block">{formatCurrency(r.totalOutstanding)}</span>
+                        {r.fineSincePayment !== null && r.fineSincePayment > 0 && (
+                          <span className="text-[11px] text-slate-500 font-medium block">
+                            Fine {formatCurrency(r.fineSincePayment)}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-center">
                         <button
@@ -1618,7 +1610,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={8} className="p-8 text-center text-slate-400 italic">
                       Zero outstanding defaulter arrears found!
                     </td>
                   </tr>

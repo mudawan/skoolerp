@@ -1419,15 +1419,14 @@ export function buildOutstandingArrearsDoc(
 
   // 5. Table Configuration
   const colDefs = [
-    { title: 'STUDENT NAME', width: 38, align: 'left' as const },
-    { title: 'REG #', width: 16, align: 'left' as const },
-    { title: 'STATUS', width: 24, align: 'left' as const },
+    { title: 'STUDENT INFO', width: 54, align: 'left' as const },
     { title: 'CLASS', width: 18, align: 'left' as const },
-    { title: 'FATHER & GUARDIAN', width: 36, align: 'left' as const },
-    { title: 'DEFAULT DURATION', width: 28, align: 'left' as const },
+    { title: 'STATUS', width: 24, align: 'left' as const },
+    { title: 'FATHER NAME & CONTACT', width: 36, align: 'left' as const },
+    { title: 'MONTHS UNPAID', width: 28, align: 'left' as const },
     { title: 'ARREARS (NET)', width: 26, align: 'right' as const },
   ];
-  // 38 + 16 + 24 + 18 + 36 + 28 + 26 = 186 mm
+  // 54 + 18 + 24 + 36 + 28 + 26 = 186 mm
 
   const tableHeaderHeight = 7.2;
 
@@ -1504,18 +1503,22 @@ export function buildOutstandingArrearsDoc(
 
       let curX = margin;
 
-      // Col 0: Student Name
+      // Col 0: Student Info (name, Reg #)
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(truncatePdfText(doc, r.name, colDefs[0].width - 5), curX + 2.5, y + 5.5);
+      doc.text(truncatePdfText(doc, r.name, colDefs[0].width - 5), curX + 2.5, y + 4.2);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.3);
+      doc.setTextColor(100, 116, 139);
+      doc.text(truncatePdfText(doc, `Reg #: ${r.regNo}`, colDefs[0].width - 5), curX + 2.5, y + 7.8);
       curX += colDefs[0].width;
 
-      // Col 1: Reg #
-      doc.setFont('helvetica', 'normal');
+      // Col 1: Class
+      doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
-      doc.setTextColor(71, 85, 105);
-      doc.text(truncatePdfText(doc, r.regNo, colDefs[1].width - 4), curX + 2.5, y + 5.5);
+      doc.setTextColor(51, 65, 85);
+      doc.text(truncatePdfText(doc, r.className, colDefs[1].width - 4), curX + 2.5, y + 5.5);
       curX += colDefs[1].width;
 
       // Col 2: Status
@@ -1530,25 +1533,18 @@ export function buildOutstandingArrearsDoc(
       doc.text(truncatePdfText(doc, st, colDefs[2].width - 4), curX + 2.5, y + 5.5);
       curX += colDefs[2].width;
 
-      // Col 3: Class
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.2);
-      doc.setTextColor(51, 65, 85);
-      doc.text(truncatePdfText(doc, r.className, colDefs[3].width - 4), curX + 2.5, y + 5.0);
-      curX += colDefs[3].width;
-
-      // Col 4: Father & Guardian
+      // Col 3: Father Name & Contact
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.2);
       doc.setTextColor(15, 23, 42);
-      doc.text(truncatePdfText(doc, r.fatherName || '—', colDefs[4].width - 4), curX + 2.5, y + 4.2);
+      doc.text(truncatePdfText(doc, r.fatherName || '—', colDefs[3].width - 4), curX + 2.5, y + 4.2);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6.5);
       doc.setTextColor(100, 116, 139);
-      doc.text(truncatePdfText(doc, r.fatherPhone ? `Ph: ${r.fatherPhone}` : 'No contact recorded', colDefs[4].width - 4), curX + 2.5, y + 8.0);
-      curX += colDefs[4].width;
+      doc.text(truncatePdfText(doc, r.fatherPhone ? `Ph: ${r.fatherPhone}` : 'No contact recorded', colDefs[3].width - 4), curX + 2.5, y + 8.0);
+      curX += colDefs[3].width;
 
-      // Col 5: Default Duration
+      // Col 4: Months Unpaid
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.0);
       const isChronic = r.unpaidMonthsCount >= 3;
@@ -1558,20 +1554,20 @@ export function buildOutstandingArrearsDoc(
       doc.setFontSize(6.0);
       doc.setTextColor(100, 116, 139);
       if (r.oldestUnpaidMonth) {
-        doc.text(truncatePdfText(doc, `Due since ${formatMonthName(r.oldestUnpaidMonth)}`, colDefs[5].width - 4), curX + 2.5, y + 7.8);
+        doc.text(truncatePdfText(doc, `Due since ${formatMonthName(r.oldestUnpaidMonth)}`, colDefs[4].width - 4), curX + 2.5, y + 7.8);
       }
-      curX += colDefs[5].width;
+      curX += colDefs[4].width;
 
-      // Col 6: Arrears (Net)
+      // Col 5: Arrears (Net), with the fine since last payment underneath
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
       doc.setTextColor(225, 29, 72); // rose-600
-      doc.text(formatCurrency(r.totalOutstanding), curX + colDefs[6].width - 2.5, y + 4.6, { align: 'right' });
+      doc.text(formatCurrency(r.totalOutstanding), curX + colDefs[5].width - 2.5, y + 4.6, { align: 'right' });
       if (r.fineSincePayment && r.fineSincePayment > 0) {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(6.0);
         doc.setTextColor(100, 116, 139);
-        doc.text(`incl. fine ${formatCurrency(r.fineSincePayment)}`, curX + colDefs[6].width - 2.5, y + 8.0, { align: 'right' });
+        doc.text(`Fine ${formatCurrency(r.fineSincePayment)}`, curX + colDefs[5].width - 2.5, y + 8.0, { align: 'right' });
       }
 
       y += rowH;
@@ -1600,7 +1596,7 @@ export function buildOutstandingArrearsDoc(
   doc.setTextColor(15, 23, 42);
   doc.text(`TOTAL AUDITED DEFAULTERS: ${rows.length}`, margin + 4, y + 5.0);
 
-  doc.text('TOTAL OUTSTANDING ARREARS:', margin + contentWidth - colDefs[6].width - 4, y + 5.0, { align: 'right' });
+  doc.text('TOTAL OUTSTANDING ARREARS:', margin + contentWidth - colDefs[5].width - 4, y + 5.0, { align: 'right' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.8);
   doc.setTextColor(225, 29, 72); // rose-600
