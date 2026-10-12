@@ -51,7 +51,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -563,16 +562,21 @@ export const VouchersView: React.FC = () => {
   // Build preview data + auto-selected ids for a given scope. The single
   // 'student' scope maps onto the existing multi-student 'students' scope
   // restricted to the one chosen student id.
-  const buildGeneratorPreview = (newScope: typeof scope, newClassId: string, newMonth: string) => {
+  const buildGeneratorPreview = (
+    newScope: typeof scope,
+    newClassId: string,
+    newMonth: string,
+    singleStudentId: string = selectedSingleStudentId
+  ) => {
     let data: ReturnType<typeof previewVoucherGeneration>;
     if (newScope === 'student') {
-      data = previewVoucherGeneration(newMonth, 'students', undefined, selectedSingleStudentId ? [selectedSingleStudentId] : []);
+      data = previewVoucherGeneration(newMonth, 'students', undefined, singleStudentId ? [singleStudentId] : []);
     } else {
       data = previewVoucherGeneration(newMonth, newScope, newClassId);
     }
     let selected: string[] = [];
     if (newScope === 'student') {
-      selected = selectedSingleStudentId ? [selectedSingleStudentId] : [];
+      selected = singleStudentId ? [singleStudentId] : [];
     } else {
       selected = data.previews
         .filter((p) => !p.isAlreadyGenerated && !p.isBlockedByPriorRule && !p.isBlockedBySkippedRule && !p.isBeforeFirstBillingMonth)
@@ -610,7 +614,8 @@ export const VouchersView: React.FC = () => {
 
   const handleSingleStudentChange = (studentId: string) => {
     setSelectedSingleStudentId(studentId);
-    const { data, selected } = buildGeneratorPreview('student', scopeClassId, targetMonth);
+    // Pass the new id explicitly: the state update above has not applied yet.
+    const { data, selected } = buildGeneratorPreview('student', scopeClassId, targetMonth, studentId);
     setPreviewsData(data);
     setSelectedGenStudentIds(selected);
   };
@@ -1678,12 +1683,6 @@ export const VouchersView: React.FC = () => {
                   <div className="relative z-10">
                     <div className="flex items-center justify-between mb-0.5 sm:mb-1">
                       <label className="block text-[10px] sm:text-[11px] font-bold text-slate-600">Due Date</label>
-                      {defaultDueDateEnabled && dueDateInput && (
-                        <span className="text-[9px] leading-none font-semibold text-teal-700 bg-teal-50 px-1 py-0.5 rounded border border-teal-200/80 flex items-center gap-0.5">
-                          <Sparkles className="w-2.5 h-2.5" />
-                          Default
-                        </span>
-                      )}
                     </div>
                     <DatePicker
                       value={dueDateInput}

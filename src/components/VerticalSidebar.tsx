@@ -30,6 +30,8 @@ import {
   Settings,
   Shield,
   Sliders,
+  Printer,
+  Calculator,
   UserCheck,
   Users,
   Wrench,
@@ -198,8 +200,28 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             hasPermission('settings.manage'),
         },
         {
-          id: 'policies',
-          label: 'Voucher Policies',
+          id: 'voucherLayout',
+          label: 'Voucher Print Layout',
+          icon: Printer,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('fees.edit') ||
+            hasPermission('fees.view'),
+        },
+        {
+          id: 'feeDefaults',
+          label: 'Fee Calculation Settings',
+          icon: Calculator,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('fees.edit') ||
+            hasPermission('fees.view'),
+        },
+        {
+          id: 'voucherRules',
+          label: 'Voucher Rules',
           icon: Sliders,
           permission: () =>
             hasPermission('settings.view') ||
@@ -210,6 +232,16 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         {
           id: 'templates',
           label: 'Fee Templates',
+          icon: FileSpreadsheet,
+          permission: () =>
+            hasPermission('settings.view') ||
+            hasPermission('settings.manage') ||
+            hasPermission('fees.edit') ||
+            hasPermission('fees.view'),
+        },
+        {
+          id: 'templatesNew',
+          label: 'Fee Templates (new)',
           icon: FileSpreadsheet,
           permission: () =>
             hasPermission('settings.view') ||

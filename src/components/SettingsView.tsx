@@ -1,4 +1,5 @@
 import { SortableTh } from './SortableTh';
+import { RecordsPerPageSelector } from './RecordsPerPageSelector';
 import { CSV_STUDENT_NAME, CSV_CLASS } from '../utils/csvHeaders';
 import { useSortState, sortRows } from '../hooks/useTableSort';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
@@ -26,7 +27,9 @@ import { DataCleanupView } from './DataCleanupView';
 import { UserModal, UserModalSaveData } from './UserModal';
 import { AppearancePanel } from './settings/AppearancePanel';
 import { ProfilePanel } from './settings/ProfilePanel';
-import { PoliciesPanel } from './settings/PoliciesPanel';
+import { FeeDefaultsPanel } from './settings/FeeDefaultsPanel';
+import { VoucherRulesPanel } from './settings/VoucherRulesPanel';
+import { VoucherPrintLayoutPanel } from './settings/VoucherPrintLayoutPanel';
 import { BankAccountsPanel } from './settings/BankAccountsPanel';
 import { UsersPanel } from './settings/UsersPanel';
 import { MonthEndWizardPanel } from './settings/MonthEndWizardPanel';
@@ -49,6 +52,7 @@ import {
   Check,
   CheckCircle,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronUp,
   Clock,
@@ -70,6 +74,7 @@ import {
   Settings,
   ShieldCheck,
   Sliders,
+  Printer,
   Sparkles,
   Server,
   Trash2,
@@ -79,7 +84,7 @@ import {
 } from 'lucide-react';
 
 export interface SettingsViewProps {
-  initialSubTab?: 'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database';
+  initialSubTab?: 'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'templatesNew' | 'users' | 'cleanup' | 'monthEnd' | 'database';
   targetMonth?: string;
   viewMode?: 'settings' | 'policies';
   onNavigateToTab?: (tab: ActiveTab) => void;
@@ -148,17 +153,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     showToast,
   } = useApp();
 
-  const defaultSubTab = initialSubTab || (viewMode === 'policies' ? 'policies' : 'profile');
-  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'policies' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(defaultSubTab);
+  const defaultSubTab = initialSubTab || (viewMode === 'policies' ? 'feeDefaults' : 'profile');
+  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'templatesNew' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(defaultSubTab);
 
   useEffect(() => {
     if (initialSubTab) {
       setActiveSubTab(initialSubTab);
     } else if (viewMode === 'policies') {
-      setActiveSubTab('policies');
+      setActiveSubTab('feeDefaults');
     }
   }, [initialSubTab, viewMode]);
-  const [policyCategoryTab, setPolicyCategoryTab] = useState<'copies' | 'prior' | 'skipped' | 'deletion'>('copies');
   const [selectedPriorRule, setSelectedPriorRule] = useState<PriorMonthVoucherRule>(priorMonthRule);
   const [selectedSkippedRule, setSelectedSkippedRule] = useState<SkippedMonthVoucherRule>(skippedMonthRule);
   const [selectedDeletionResolution, setSelectedDeletionResolution] = useState<VoucherDeletionResolution>(voucherDeletionResolution);
@@ -171,6 +175,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [selectedVoucherCopyOrder, setSelectedVoucherCopyOrder] = useState<VoucherCopyType[]>(voucherCopyOrder);
   const [selectedVoucherDefaultCopies, setSelectedVoucherDefaultCopies] = useState<VoucherCopyType[]>(voucherDefaultCopies);
   const [showPolicyConfirmModal, setShowPolicyConfirmModal] = useState(false);
+  // Which policy view's draft is being confirmed (each view saves on its own)
+  const [policyScope, setPolicyScope] = useState<'defaults' | 'rules' | 'layout'>('defaults');
 
   // Month data availability and closure status for MonthPicker components
   const pickerWindowMonths = useMemo(
@@ -234,58 +240,76 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     selectedDefaultDueDateEnabled !== defaultDueDateEnabled ||
     (selectedDefaultDueDateEnabled && selectedDefaultDueDay !== defaultDueDay);
 
-  // Check for unsaved policy modifications
-  const hasPolicyChanges =
-    selectedPriorRule !== priorMonthRule ||
-    selectedSkippedRule !== skippedMonthRule ||
-    selectedDeletionResolution !== voucherDeletionResolution ||
+  // Unsaved modifications, tracked separately for each policy view
+  const defaultsChanged =
     selectedLateFeeRate !== defaultLateFeeRate ||
     selectedRoundingMultiple !== roundingMultiple ||
     selectedRoundingEnabled !== roundingEnabled ||
     selectedTransportRoundingMultiple !== transportRoundingMultiple ||
-    isDefaultDueDateModified ||
+    isDefaultDueDateModified;
+  const rulesChanged =
+    selectedPriorRule !== priorMonthRule ||
+    selectedSkippedRule !== skippedMonthRule ||
+    selectedDeletionResolution !== voucherDeletionResolution;
+  const layoutChanged =
     JSON.stringify(selectedVoucherCopyOrder) !== JSON.stringify(voucherCopyOrder) ||
     JSON.stringify(selectedVoucherDefaultCopies) !== JSON.stringify(voucherDefaultCopies);
 
-  const handleSavePolicyClick = () => {
-    if (!hasPolicyChanges) {
-      showToast('No changes detected in fee voucher policies.', 'info');
+  const policyScopeChanged = { defaults: defaultsChanged, rules: rulesChanged, layout: layoutChanged };
+  const policyScopeNames = { defaults: 'Fee Calculation Settings', rules: 'Voucher Rules', layout: 'Voucher Print Layout' };
+  const otherUnsavedFor = (scope: 'defaults' | 'rules' | 'layout') =>
+    (Object.keys(policyScopeChanged) as ('defaults' | 'rules' | 'layout')[])
+      .filter((k) => k !== scope && policyScopeChanged[k])
+      .map((k) => policyScopeNames[k]);
+
+  const handleSavePolicyClick = (scope: 'defaults' | 'rules' | 'layout') => {
+    if (!policyScopeChanged[scope]) {
+      showToast(`No changes detected in ${policyScopeNames[scope]}.`, 'info');
       return;
     }
+    setPolicyScope(scope);
     setShowPolicyConfirmModal(true);
   };
 
   const handleConfirmPolicyChanges = () => {
-    setPriorMonthRule(selectedPriorRule);
-    setSkippedMonthRule(selectedSkippedRule);
-    setVoucherDeletionResolution(selectedDeletionResolution);
-    setDefaultLateFeeRate(selectedLateFeeRate);
-    setRoundingMultiple(selectedRoundingMultiple);
-    setRoundingEnabled(selectedRoundingEnabled);
-    setTransportRoundingMultiple(selectedTransportRoundingMultiple);
-    setDefaultDueDateSettings({
-      enabled: selectedDefaultDueDateEnabled,
-      day: selectedDefaultDueDay,
-    });
-    setVoucherCopyOrder(selectedVoucherCopyOrder);
-    setVoucherDefaultCopies(selectedVoucherDefaultCopies);
+    if (policyScope === 'rules') {
+      setPriorMonthRule(selectedPriorRule);
+      setSkippedMonthRule(selectedSkippedRule);
+      setVoucherDeletionResolution(selectedDeletionResolution);
+    } else if (policyScope === 'defaults') {
+      setDefaultLateFeeRate(selectedLateFeeRate);
+      setRoundingMultiple(selectedRoundingMultiple);
+      setRoundingEnabled(selectedRoundingEnabled);
+      setTransportRoundingMultiple(selectedTransportRoundingMultiple);
+      setDefaultDueDateSettings({
+        enabled: selectedDefaultDueDateEnabled,
+        day: selectedDefaultDueDay,
+      });
+    } else {
+      setVoucherCopyOrder(selectedVoucherCopyOrder);
+      setVoucherDefaultCopies(selectedVoucherDefaultCopies);
+    }
     setShowPolicyConfirmModal(false);
-    showToast('Fee Voucher Policies & Print Layout updated and activated successfully!', 'success');
+    showToast(`${policyScopeNames[policyScope]} updated and activated successfully!`, 'success');
   };
 
-  const handleResetPolicyDrafts = () => {
-    setSelectedPriorRule(priorMonthRule);
-    setSelectedSkippedRule(skippedMonthRule);
-    setSelectedDeletionResolution(voucherDeletionResolution);
-    setSelectedLateFeeRate(defaultLateFeeRate);
-    setSelectedRoundingMultiple(roundingMultiple);
-    setSelectedRoundingEnabled(roundingEnabled);
-    setSelectedTransportRoundingMultiple(transportRoundingMultiple);
-    setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
-    setSelectedDefaultDueDay(defaultDueDay);
-    setSelectedVoucherCopyOrder(voucherCopyOrder);
-    setSelectedVoucherDefaultCopies(voucherDefaultCopies);
-    showToast('Policy selections reset to current saved configuration.', 'info');
+  const handleResetPolicyDrafts = (scope: 'defaults' | 'rules' | 'layout') => {
+    if (scope === 'rules') {
+      setSelectedPriorRule(priorMonthRule);
+      setSelectedSkippedRule(skippedMonthRule);
+      setSelectedDeletionResolution(voucherDeletionResolution);
+    } else if (scope === 'defaults') {
+      setSelectedLateFeeRate(defaultLateFeeRate);
+      setSelectedRoundingMultiple(roundingMultiple);
+      setSelectedRoundingEnabled(roundingEnabled);
+      setSelectedTransportRoundingMultiple(transportRoundingMultiple);
+      setSelectedDefaultDueDateEnabled(defaultDueDateEnabled);
+      setSelectedDefaultDueDay(defaultDueDay);
+    } else {
+      setSelectedVoucherCopyOrder(voucherCopyOrder);
+      setSelectedVoucherDefaultCopies(voucherDefaultCopies);
+    }
+    showToast(`${policyScopeNames[scope]} selections reset to the saved configuration.`, 'info');
   };
 
   // Institute Profile Form State
@@ -588,11 +612,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // 4-Way Hierarchy Fee Template Overrides State: Global | Class | Student | Overrides Directory
   const [templateScopeMode, setTemplateScopeMode] = useState<'global' | 'class' | 'student' | 'overrides'>('global');
+  const lastEditScopeRef = useRef<{ mode: 'global' | 'class' | 'student'; classId: string; studentId: string }>({
+    mode: 'global',
+    classId: '',
+    studentId: '',
+  });
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState<boolean>(false);
   const [isClassDropdownOpen, setIsClassDropdownOpen] = useState<boolean>(false);
+  const [classSearchQuery, setClassSearchQuery] = useState<string>('');
   const [isDueDayDropdownOpen, setIsDueDayDropdownOpen] = useState<boolean>(false);
   const [showResetAllModal, setShowResetAllModal] = useState<boolean>(false);
   const studentSearchDropdownRef = useRef<HTMLDivElement>(null);
@@ -1077,6 +1107,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
+  // Search filter for class dropdown
+  const filteredClasses = useMemo(() => {
+    const q = classSearchQuery.trim().toLowerCase();
+    return q ? classes.filter((c) => c.name.toLowerCase().includes(q)) : classes;
+  }, [classes, classSearchQuery]);
+
   // Search filter for student dropdown
   const filteredStudents = useMemo(() => {
     if (!studentSearchQuery.trim()) {
@@ -1099,6 +1135,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Overrides list scope filter: 'all' (all overrides) | 'target' (target month + all-months) | 'all_months' (recurring only) | 'billing' (active billing month + all-months)
   const [overridesFilter, setOverridesFilter] = useState<'all' | 'target' | 'active' | 'all_months' | 'billing'>('all');
 
+  // "Fee Templates (new)" directory: period dropdown, search, class filter and pagination
+  const newDirUi = activeSubTab === 'templatesNew';
+  const [dirPeriod, setDirPeriod] = useState<'billing' | 'month' | 'recurring' | 'all'>('billing');
+  const [dirMonth, setDirMonth] = useState<string>(activeMonth);
+  const [dirSearch, setDirSearch] = useState('');
+  const [dirClassId, setDirClassId] = useState('all');
+  const [dirPage, setDirPage] = useState(1);
+  const [dirPerPage, setDirPerPage] = useState(25);
+  const effectiveOverridesFilter: 'all' | 'target' | 'active' | 'all_months' | 'billing' = newDirUi
+    ? ({ billing: 'billing', month: 'target', recurring: 'all_months', all: 'all' } as const)[dirPeriod]
+    : overridesFilter;
+  const overridesFilterMonth = newDirUi && dirPeriod === 'month' ? dirMonth : templateSpecificMonth;
+
   // List of all classes with active custom overrides (Flex 1-4 and Fine)
   const activeClassOverridesList = useMemo(() => {
     const classOverrides = templates.filter(
@@ -1112,9 +1161,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     for (const t of classOverrides) {
       const m = !t.month || t.month === 'all' ? 'all' : t.month;
-      if (overridesFilter === 'all_months' && m !== 'all') continue;
-      if ((overridesFilter === 'target' || overridesFilter === 'active') && m !== templateSpecificMonth && m !== 'all') continue;
-      if (overridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'all_months' && m !== 'all') continue;
+      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && m !== overridesFilterMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
 
       const key = `${t.classId}:::${m}`;
       if (!map.has(key)) {
@@ -1139,7 +1188,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         };
       })
       .filter((item) => !!item.classObj && item.overrides.length > 0);
-  }, [templates, classes, overridesFilter, templateSpecificMonth, activeMonth]);
+  }, [templates, classes, effectiveOverridesFilter, overridesFilterMonth, activeMonth]);
 
   // List of all students with active custom overrides (Flex 1-4 and Fine)
   const activeStudentOverridesList = useMemo(() => {
@@ -1154,9 +1203,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
     for (const t of studentOverrides) {
       const m = !t.month || t.month === 'all' ? 'all' : t.month;
-      if (overridesFilter === 'all_months' && m !== 'all') continue;
-      if ((overridesFilter === 'target' || overridesFilter === 'active') && m !== templateSpecificMonth && m !== 'all') continue;
-      if (overridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'all_months' && m !== 'all') continue;
+      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && m !== overridesFilterMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
 
       const key = `${t.studentId}:::${m}`;
       if (!map.has(key)) {
@@ -1182,7 +1231,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         };
       })
       .filter((item) => !!item.student && item.overrides.length > 0);
-  }, [templates, students, classes, overridesFilter, templateSpecificMonth, activeMonth]);
+  }, [templates, students, classes, effectiveOverridesFilter, overridesFilterMonth, activeMonth]);
 
   // Month-specific GLOBAL templates (saved from the Global Default tab with a specific month selected)
   const activeGlobalOverridesList = useMemo(() => {
@@ -1190,9 +1239,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     for (const t of templates) {
       if (t.classId || t.studentId) continue;
       if (!t.month || t.month === 'all') continue;
-      if (overridesFilter === 'all_months') continue;
-      if ((overridesFilter === 'target' || overridesFilter === 'active') && t.month !== templateSpecificMonth) continue;
-      if (overridesFilter === 'billing' && t.month !== activeMonth) continue;
+      if (effectiveOverridesFilter === 'all_months') continue;
+      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && t.month !== overridesFilterMonth) continue;
+      if (effectiveOverridesFilter === 'billing' && t.month !== activeMonth) continue;
       if (!map.has(t.month)) map.set(t.month, []);
       map.get(t.month)!.push(t);
     }
@@ -1203,11 +1252,90 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         uniqueKey: `global:::${month}`,
         overrides: [...items].sort((a, b) => a.sortOrder - b.sortOrder),
       }));
-  }, [templates, overridesFilter, templateSpecificMonth, activeMonth]);
+  }, [templates, effectiveOverridesFilter, overridesFilterMonth, activeMonth]);
 
   // Total active overrides count across global (month-specific), class and student tiers
   const totalOverridesCount =
     activeGlobalOverridesList.length + activeClassOverridesList.length + activeStudentOverridesList.length;
+
+  // Stable counts across every period (used for badges / dropdown counts in the new layout)
+  const allPeriodCounts = useMemo(() => {
+    const flex = ['Flex1', 'Flex2', 'Flex3', 'Flex4', 'Fine'];
+    const g = new Set<string>();
+    const c = new Set<string>();
+    const st = new Set<string>();
+    for (const t of templates) {
+      const m = !t.month || t.month === 'all' ? 'all' : t.month;
+      if (!t.classId && !t.studentId) {
+        if (m !== 'all') g.add(m);
+      } else if (!!t.studentId && flex.includes(t.kind)) {
+        if (students.some((x) => x.id === t.studentId)) st.add(`${t.studentId}:::${m}`);
+      } else if (!!t.classId && flex.includes(t.kind)) {
+        if (classes.some((x) => x.id === t.classId)) c.add(`${t.classId}:::${m}`);
+      }
+    }
+    return { global: g.size, classes: c.size, students: st.size, total: g.size + c.size + st.size };
+  }, [templates, students, classes]);
+  const badgeTotal = newDirUi ? allPeriodCounts.total : totalOverridesCount;
+  const badgeGlobal = newDirUi ? allPeriodCounts.global : activeGlobalOverridesList.length;
+  const badgeClasses = newDirUi ? allPeriodCounts.classes : activeClassOverridesList.length;
+  const badgeStudents = newDirUi ? allPeriodCounts.students : activeStudentOverridesList.length;
+
+  // Sortable directory tables (old and new layouts)
+  const { sort: globalSort, toggleSort: toggleGlobalSort } = useSortState();
+  const { sort: classSort, toggleSort: toggleClassSort } = useSortState();
+  const { sort: studentSort, toggleSort: toggleStudentSort } = useSortState();
+
+  const globalRowsView = useMemo(
+    () => sortRows<(typeof activeGlobalOverridesList)[number]>(activeGlobalOverridesList, globalSort, { month: (r) => r.month }),
+    [activeGlobalOverridesList, globalSort]
+  );
+
+  const classRowsView = useMemo(() => {
+    let rows = activeClassOverridesList;
+    if (newDirUi) {
+      if (dirClassId !== 'all') rows = rows.filter((r) => r.classId === dirClassId);
+      const q = dirSearch.trim().toLowerCase();
+      if (q) rows = rows.filter((r) => r.className.toLowerCase().includes(q));
+    }
+    return sortRows<(typeof activeClassOverridesList)[number]>(rows, classSort, {
+      class: (r) => r.className,
+      schedule: (r) => (r.isAllMonths ? '0000-00' : r.month),
+      fee: (r) => r.classObj?.monthlyFee || 0,
+    });
+  }, [activeClassOverridesList, classSort, newDirUi, dirClassId, dirSearch]);
+
+  const studentRowsView = useMemo(() => {
+    let rows = activeStudentOverridesList;
+    if (newDirUi) {
+      if (dirClassId !== 'all') rows = rows.filter((r) => r.student?.classId === dirClassId);
+      const q = dirSearch.trim().toLowerCase();
+      if (q) {
+        rows = rows.filter(
+          (r) =>
+            (r.student?.name || '').toLowerCase().includes(q) ||
+            (r.student?.regNo || '').toLowerCase().includes(q) ||
+            r.className.toLowerCase().includes(q)
+        );
+      }
+    }
+    return sortRows<(typeof activeStudentOverridesList)[number]>(rows, studentSort, {
+      name: (r) => r.student?.name,
+      reg: (r) => r.student?.regNo,
+      class: (r) => r.className,
+      schedule: (r) => (r.isAllMonths ? '0000-00' : r.month),
+    });
+  }, [activeStudentOverridesList, studentSort, newDirUi, dirClassId, dirSearch]);
+
+  const dirTotalPages = newDirUi ? Math.max(1, Math.ceil(studentRowsView.length / dirPerPage)) : 1;
+  const dirSafePage = Math.min(dirPage, dirTotalPages);
+  const studentPageRows = newDirUi
+    ? studentRowsView.slice((dirSafePage - 1) * dirPerPage, dirSafePage * dirPerPage)
+    : studentRowsView;
+
+  useEffect(() => {
+    setDirPage(1);
+  }, [dirPeriod, dirMonth, dirSearch, dirClassId, studentSort]);
 
   // Everything "Reset All" will remove (unfiltered), for the confirmation modal
   const resetAllSummary = useMemo(() => {
@@ -1229,17 +1357,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Clear bulk selection when activeMonth, templateSpecificMonth or filter changes
   useEffect(() => {
     setSelectedOverrideKeys([]);
-  }, [activeMonth, templateSpecificMonth, overridesFilter]);
+  }, [activeMonth, templateSpecificMonth, overridesFilter, dirPeriod, dirMonth, dirSearch, dirClassId]);
 
+  // Header checkbox: selects / deselects the rows on the current page (all rows in the old layout)
   const handleToggleSelectAllOverrides = () => {
-    if (
-      selectedOverrideKeys.length === activeStudentOverridesList.length &&
-      activeStudentOverridesList.length > 0
-    ) {
-      setSelectedOverrideKeys([]);
-    } else {
-      setSelectedOverrideKeys(activeStudentOverridesList.map((item) => item.uniqueKey));
-    }
+    const keys = studentPageRows.map((item) => item.uniqueKey);
+    const allSelected = keys.length > 0 && keys.every((k) => selectedOverrideKeys.includes(k));
+    setSelectedOverrideKeys((prev) =>
+      allSelected ? prev.filter((k) => !keys.includes(k)) : Array.from(new Set([...prev, ...keys]))
+    );
   };
 
   const handleToggleSelectOverride = (uniqueKey: string) => {
@@ -1532,7 +1658,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const globalFlex4 =
       templates.find((t) => !t.studentId && !t.classId && t.kind === 'Flex4')?.label || 'Other';
 
-    const rowsToExport = activeStudentOverridesList.map((item) => {
+    const rowsToExport = studentRowsView.map((item) => {
       const student = item.student;
       const sTemplates = item.overrides;
       const fineTpl = sTemplates.find((t) => t.kind === 'Fine');
@@ -1918,10 +2044,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       icon: Database,
       iconColor: 'text-rose-600',
     },
-    policies: {
-      title: 'Fee Calculation & Voucher Policies',
-      subtitle: 'Default billing due dates, late payment surcharge rates, and downstream voucher recalculation rules.',
+    voucherLayout: {
+      title: 'Voucher Print Layout & Copies',
+      subtitle: 'Copy order, default copies, and the printed sheet layout for fee vouchers.',
+      icon: Printer,
+    },
+    feeDefaults: {
+      title: 'Fee Calculation Settings',
+      subtitle: 'Late payment surcharge, net due and transport rounding, and the default voucher due date.',
+      icon: Calculator,
+    },
+    voucherRules: {
+      title: 'Voucher Generation & Deletion Rules',
+      subtitle: 'How prior and skipped months are handled, and how voucher deletion resolves the chain.',
       icon: Sliders,
+    },
+    templatesNew: {
+      title: 'Fee Structure & Particulars Templates (new)',
+      subtitle: 'Same templates, with a period filter, search, sortable columns and pagination in the Overrides Directory.',
+      icon: FileSpreadsheet,
     },
     templates: {
       title: 'Fee Structure & Particulars Templates',
@@ -1976,8 +2117,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         />
       )}
 
-      {activeSubTab === 'policies' && (
-        <PoliciesPanel
+      {activeSubTab === 'feeDefaults' && (
+        <FeeDefaultsPanel
           selectedLateFeeRate={selectedLateFeeRate}
           setSelectedLateFeeRate={setSelectedLateFeeRate}
           defaultLateFeeRate={defaultLateFeeRate}
@@ -1998,21 +2139,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           dueDayDropdownRef={dueDayDropdownRef}
           isDueDayDropdownOpen={isDueDayDropdownOpen}
           setIsDueDayDropdownOpen={setIsDueDayDropdownOpen}
-          policyCategoryTab={policyCategoryTab}
-          setPolicyCategoryTab={setPolicyCategoryTab}
+          hasChanges={defaultsChanged}
+          otherUnsaved={otherUnsavedFor('defaults')}
+          onReset={() => handleResetPolicyDrafts('defaults')}
+          onSave={() => handleSavePolicyClick('defaults')}
+        />
+      )}
+
+      {activeSubTab === 'voucherRules' && (
+        <VoucherRulesPanel
+          priorMonthRule={priorMonthRule}
+          skippedMonthRule={skippedMonthRule}
+          voucherDeletionResolution={voucherDeletionResolution}
           selectedPriorRule={selectedPriorRule}
           setSelectedPriorRule={setSelectedPriorRule}
           selectedSkippedRule={selectedSkippedRule}
           setSelectedSkippedRule={setSelectedSkippedRule}
           selectedDeletionResolution={selectedDeletionResolution}
           setSelectedDeletionResolution={setSelectedDeletionResolution}
+          hasChanges={rulesChanged}
+          otherUnsaved={otherUnsavedFor('rules')}
+          onReset={() => handleResetPolicyDrafts('rules')}
+          onSave={() => handleSavePolicyClick('rules')}
+        />
+      )}
+
+      {activeSubTab === 'voucherLayout' && (
+        <VoucherPrintLayoutPanel
           selectedVoucherCopyOrder={selectedVoucherCopyOrder}
           setSelectedVoucherCopyOrder={setSelectedVoucherCopyOrder}
           selectedVoucherDefaultCopies={selectedVoucherDefaultCopies}
           setSelectedVoucherDefaultCopies={setSelectedVoucherDefaultCopies}
-          hasPolicyChanges={hasPolicyChanges}
-          handleResetPolicyDrafts={handleResetPolicyDrafts}
-          handleSavePolicyClick={handleSavePolicyClick}
+          hasChanges={layoutChanged}
+          otherUnsaved={otherUnsavedFor('layout')}
+          onReset={() => handleResetPolicyDrafts('layout')}
+          onSave={() => handleSavePolicyClick('layout')}
         />
       )}
 
@@ -2025,251 +2186,192 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* Subtab 3: Fee Particular Templates */}
-      {activeSubTab === 'templates' && (
+      {(activeSubTab === 'templates' || activeSubTab === 'templatesNew') && (
         <div className="space-y-4">
           {/* 4-Tier Fee Template Scope Switcher Card */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
-                  <h3 className="font-bold text-slate-900 text-sm">
-                    Fee Template Hierarchy & Overrides
-                  </h3>
+            <div className="space-y-3">
+                {/* Row 1: Edit Templates | Overrides Directory, plus Actions menu */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/70 gap-1">
+                    <button
+                      type="button"
+                      id="tab-tplnew-edit"
+                      onClick={() => {
+                        if (templateScopeMode !== 'overrides') return;
+                        const last = lastEditScopeRef.current;
+                        requestTransition({
+                          kind: 'scope',
+                          label: 'Edit Templates',
+                          apply: () => {
+                            setTemplateScopeMode(last.mode);
+                            setSelectedClassId(last.classId);
+                            setSelectedStudentId(last.studentId);
+                          },
+                        });
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        templateScopeMode !== 'overrides'
+                          ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Sliders className="w-3.5 h-3.5 text-teal-600" />
+                      Edit Templates
+                    </button>
+                    <button
+                      type="button"
+                      id="tab-tplnew-directory"
+                      onClick={() => {
+                        if (templateScopeMode === 'overrides') return;
+                        lastEditScopeRef.current = {
+                          mode: templateScopeMode,
+                          classId: selectedClassId,
+                          studentId: selectedStudentId,
+                        };
+                        requestTransition({
+                          kind: 'scope',
+                          label: 'Overrides Directory',
+                          apply: () => setTemplateScopeMode('overrides'),
+                        });
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        templateScopeMode === 'overrides'
+                          ? 'bg-white text-amber-950 shadow-xs border border-slate-200/80'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <ListFilter className="w-3.5 h-3.5 text-amber-600" />
+                      Overrides Directory
+                      <span
+                        className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                          templateScopeMode === 'overrides'
+                            ? 'bg-amber-100 text-amber-900'
+                            : badgeTotal > 0
+                            ? 'bg-amber-500 text-white'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {badgeTotal}
+                      </span>
+                    </button>
+                  </div>
+
                   {templateScopeMode !== 'overrides' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
-                      Target: {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}
-                    </span>
-                  )}
-                  {templateScopeMode === 'overrides' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
-                      {totalOverridesCount} Active Overrides Configured
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        id="btn-bulk-upload-template-csv"
+                        onClick={() => {
+                          setCsvParseError(null);
+                          setShowCsvModal(true);
+                        }}
+                        className="flex items-center gap-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer"
+                        title="Upload student fee template overrides from CSV"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-teal-600" />
+                        Bulk Upload CSV
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-reset-all-templates"
+                        onClick={() => setShowResetAllModal(true)}
+                        className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer"
+                        title="Reset global template to defaults and delete overrides for current month"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                        Reset All
+                      </button>
+                    </div>
                   )}
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  {templateScopeMode === 'overrides'
-                    ? 'Audit, filter, bulk-manage, and import/export month-specific global, class & student custom fee template overrides.'
-                    : 'Configure default fee particular templates and multi-tier override rules for billing vouchers.'}
-                </p>
-              </div>
 
-              {/* 4-Tier Scope Segmented Control */}
-              <div className="flex flex-wrap items-center bg-slate-100 p-1 rounded-xl gap-1 shrink-0 self-start md:self-auto border border-slate-200/70 max-w-full">
-                <button
-                  type="button"
-                  id="tab-scope-global"
-                  onClick={() =>
-                    requestTransition({
-                      kind: 'scope',
-                      label: 'Global Default',
-                      apply: () => {
-                        setTemplateScopeMode('global');
-                        setSelectedStudentId('');
-                        setSelectedClassId('');
-                      },
-                    })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'global' && !selectedStudentId && !selectedClassId
-                      ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Sliders className="w-3.5 h-3.5 text-teal-600" />
-                  <span>1. Global Default</span>
-                  {activeGlobalOverridesList.length > 0 && (
-                    <span
-                      className="px-1.5 py-0.2 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold"
-                      title="Months with their own global template set"
-                    >
-                      {activeGlobalOverridesList.length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  id="tab-scope-class"
-                  onClick={() =>
-                    requestTransition({
-                      kind: 'scope',
-                      label: 'Class Override',
-                      apply: () => {
-                        setTemplateScopeMode('class');
-                        setSelectedStudentId('');
-                        if (!selectedClassId && classes.length > 0) {
-                          setSelectedClassId(classes[0].id);
-                        }
-                      },
-                    })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'class'
-                      ? 'bg-white text-indigo-950 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>2. Class Override</span>
-                  {activeClassOverridesList.length > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-100 text-indigo-800 font-extrabold">
-                      {activeClassOverridesList.length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  id="tab-scope-student"
-                  onClick={() =>
-                    requestTransition({
-                      kind: 'scope',
-                      label: 'Student Override',
-                      apply: () => {
-                        setTemplateScopeMode('student');
-                        setSelectedClassId('');
-                      },
-                    })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'student'
-                      ? 'bg-white text-teal-950 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <GraduationCap className="w-3.5 h-3.5 text-teal-600" />
-                  <span>3. Student Override</span>
-                  {activeStudentOverridesList.length > 0 && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold">
-                      {activeStudentOverridesList.length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  id="tab-scope-overrides"
-                  onClick={() =>
-                    requestTransition({
-                      kind: 'scope',
-                      label: 'Overrides Directory',
-                      apply: () => {
-                        setTemplateScopeMode('overrides');
-                      },
-                    })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    templateScopeMode === 'overrides'
-                      ? 'bg-white text-amber-950 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <ListFilter className="w-3.5 h-3.5 text-amber-600" />
-                  <span>4. Overrides Directory</span>
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                      templateScopeMode === 'overrides'
-                        ? 'bg-amber-100 text-amber-900'
-                        : totalOverridesCount > 0
-                        ? 'bg-amber-500 text-white'
-                        : 'bg-slate-200 text-slate-600'
-                    }`}
-                  >
-                    {totalOverridesCount}
-                  </span>
-                </button>
-              </div>
+                {/* Row 2: Applies to / Month */}
+                {templateScopeMode !== 'overrides' && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 p-3 bg-slate-50/90 border border-slate-200/80 rounded-xl">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      Applies to
+                      <select
+                        id="select-tplnew-scope"
+                        value={templateScopeMode}
+                        onChange={(e) => {
+                          const next = e.target.value as 'global' | 'class' | 'student';
+                          if (next === templateScopeMode) return;
+                          requestTransition({
+                            kind: 'scope',
+                            label: next === 'global' ? 'Global Default' : next === 'class' ? 'Class Override' : 'Student Override',
+                            apply: () => {
+                              setTemplateScopeMode(next);
+                              if (next === 'global') {
+                                setSelectedStudentId('');
+                                setSelectedClassId('');
+                              } else if (next === 'class') {
+                                setSelectedStudentId('');
+                              } else {
+                                setSelectedClassId('');
+                              }
+                            },
+                          });
+                        }}
+                        className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                      >
+                        <option value="global">Global Default{badgeGlobal > 0 ? ` (${badgeGlobal} month sets)` : ''}</option>
+                        <option value="class">Class Override{badgeClasses > 0 ? ` (${badgeClasses})` : ''}</option>
+                        <option value="student">Student Override{badgeStudents > 0 ? ` (${badgeStudents})` : ''}</option>
+                      </select>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      Month
+                      <select
+                        id="select-tplnew-month-mode"
+                        value={templateMonthMode}
+                        onChange={(e) => {
+                          const next = e.target.value as 'all' | 'specific';
+                          if (next === templateMonthMode) return;
+                          requestTransition({
+                            kind: 'month',
+                            label: next === 'all' ? 'All Months (Recurring)' : formatMonthName(templateSpecificMonth),
+                            apply: () => setTemplateMonthMode(next),
+                          });
+                        }}
+                        className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                      >
+                        <option value="all">All Months (Recurring)</option>
+                        <option value="specific">Specific Month override</option>
+                      </select>
+                    </label>
+
+                    {templateMonthMode === 'specific' && (
+                      <div id="input-template-specific-month" className="inline-flex items-center">
+                        <MonthPicker
+                          value={templateSpecificMonth}
+                          onChange={(val) => {
+                            if (!val) return;
+                            requestTransition({
+                              kind: 'month',
+                              label: formatMonthName(val),
+                              apply: () => setTemplateSpecificMonth(val),
+                            });
+                          }}
+                          availableMonths={monthsWithData}
+                          closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+                          themeColor={themeConfig?.color || 'teal'}
+                          isLight={true}
+                          align="right"
+                          showSteppers={true}
+                          variant="pill"
+                          idPrefix="template-specific-month"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* Scope 1-3 Configuration: Application Period & Scope Target Controls */}
             {templateScopeMode !== 'overrides' && (
               <>
-
-            {/* Schedule / Application Period Selector */}
-            <div className="p-3 bg-slate-50/90 border border-slate-200/80 rounded-xl flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
-                <div className="text-xs min-w-0">
-                  <span className="font-bold text-slate-800">Application Schedule:</span>{' '}
-                  <span className="text-slate-600">
-                    {templateMonthMode === 'all'
-                      ? 'Applies recurringly to All Months across vouchers unless overridden'
-                      : `Applies as a dedicated override exclusively to ${formatMonthName(templateSpecificMonth)}`}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0 max-w-full">
-                <div className="inline-flex p-1 bg-white border border-slate-200 rounded-xl shadow-2xs">
-                  <button
-                    type="button"
-                    id="btn-template-mode-all"
-                    onClick={() => {
-                      if (templateMonthMode !== 'all') {
-                        requestTransition({
-                          kind: 'month',
-                          label: 'All Months (Recurring)',
-                          apply: () => setTemplateMonthMode('all'),
-                        });
-                      }
-                    }}
-                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer text-center ${
-                      templateMonthMode === 'all'
-                        ? 'bg-teal-600 text-white shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">All Months</span>
-                    <span className="hidden sm:inline text-[10px] opacity-90">(Recurring)</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="btn-template-mode-specific"
-                    onClick={() => {
-                      if (templateMonthMode !== 'specific') {
-                        requestTransition({
-                          kind: 'month',
-                          label: formatMonthName(templateSpecificMonth),
-                          apply: () => setTemplateMonthMode('specific'),
-                        });
-                      }
-                    }}
-                    className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer text-center ${
-                      templateMonthMode === 'specific'
-                        ? 'bg-teal-600 text-white shadow-2xs'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                    }`}
-                  >
-                    <Calendar className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">Specific Month</span>
-                    <span className="hidden sm:inline text-[10px] opacity-90">Override</span>
-                  </button>
-                </div>
-
-                {templateMonthMode === 'specific' && (
-                  <div id="input-template-specific-month" className="inline-flex items-center">
-                    <MonthPicker
-                      value={templateSpecificMonth}
-                      onChange={(val) => {
-                        if (!val) return;
-                        requestTransition({
-                          kind: 'month',
-                          label: formatMonthName(val),
-                          apply: () => setTemplateSpecificMonth(val),
-                        });
-                      }}
-                      availableMonths={monthsWithData}
-                      closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
-                      themeColor={themeConfig?.color || 'teal'}
-                      isLight={true}
-                      align="right"
-                      showSteppers={true}
-                      variant="pill"
-                      idPrefix="template-specific-month"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
 
             {/* Global Override Status Banner */}
             {templateScopeMode === 'global' && effectiveTemplateMonth !== 'all' && (
@@ -2310,9 +2412,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <h4 className="font-bold text-slate-900 text-sm">
                       Student Individual Fee Template • {selectedStudent.name}
                     </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Configure custom fee particulars and rates for {selectedStudent.name} ({selectedStudent.regNo} - {selectedStudentClass?.name || 'Class'}) for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. Overrides both Class and Global templates.
-                    </p>
+                  </div>
+                ) : templateScopeMode === 'student' ? (
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-teal-600" />
+                      Student Individual Fee Template
+                    </h4>
+                  </div>
+                ) : templateScopeMode === 'class' && !selectedClass ? (
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-indigo-600" />
+                      Class Fee Template Override
+                    </h4>
                   </div>
                 ) : selectedClass ? (
                   <div>
@@ -2320,64 +2433,157 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <BookOpen className="w-4 h-4 text-indigo-600" />
                       Class Fee Template Override • {selectedClass.name}
                     </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Configure default fee particulars for all students enrolled in <strong>{selectedClass.name}</strong> for {effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}. Overrides Global defaults for this class unless a student has an individual override.
-                    </p>
                   </div>
                 ) : (
                   <div>
                     <h4 className="font-bold text-slate-900 text-sm">
                       Global Fee Particulars & Base Line Items
                     </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Standardized fee roster applied to all students across vouchers and exports whenever class or student overrides are not specified ({effectiveTemplateMonth === 'all' ? 'Recurring Baseline' : `Override for ${formatMonthName(effectiveTemplateMonth)}`}). Drag ⠿ to reorder.
-                    </p>
                   </div>
                 )}
               </div>
 
               {/* Selector & Action Buttons */}
               <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-start lg:self-auto">
-                {/* Class Selector when in Class mode or Global mode */}
+                {/* Searchable Class Selector (same look as the student selector) */}
                 {(templateScopeMode === 'class' || (!selectedStudent && selectedClass)) && (
-                  <div className="relative">
+                  <div className="relative" ref={classSearchDropdownRef}>
                     <div className="relative flex items-center">
                       <BookOpen className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
-                      <select
+                      <input
                         id="select-override-class"
-                        value={selectedClassId}
+                        type="text"
+                        value={
+                          isClassDropdownOpen
+                            ? classSearchQuery
+                            : selectedClass
+                            ? selectedClass.name
+                            : ''
+                        }
                         onChange={(e) => {
-                          const nextId = e.target.value;
-                          requestTransition({
-                            kind: 'scope',
-                            label: `Class Override tier (${selectedClass?.name || ''})`,
-                            apply: () => {
-                              setSelectedClassId(nextId);
-                              setSelectedStudentId('');
-                              setTemplateScopeMode('class');
-                            },
-                          });
+                          setClassSearchQuery(e.target.value);
+                          setIsClassDropdownOpen(true);
                         }}
-                        className="pl-9 pr-8 py-2 bg-indigo-50/60 hover:bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-950 transition w-48 sm:w-56 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-                      >
-                        <option value="">-- Select Class --</option>
-                        {classes.map((c) => {
-                          const hasClassOverride = templates.some(
-                            (t) =>
-                              !t.studentId &&
-                              t.classId === c.id &&
-                              (effectiveTemplateMonth === 'all'
-                                ? !t.month || t.month === 'all'
-                                : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
-                          );
-                          return (
-                            <option key={c.id} value={c.id}>
-                              {c.name} {hasClassOverride ? '★ (Custom Overrides)' : ''}
-                            </option>
-                          );
-                        })}
-                      </select>
+                        onFocus={() => {
+                          setClassSearchQuery('');
+                          setIsClassDropdownOpen(true);
+                        }}
+                        placeholder="Search class or pick..."
+                        className={`pl-9 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 border rounded-xl text-xs font-semibold text-slate-800 transition w-56 sm:w-64 focus:bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 ${
+                          selectedClass
+                            ? 'border-teal-400 bg-teal-50/50 text-teal-900'
+                            : 'border-slate-200'
+                        }`}
+                      />
+                      {selectedClass ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedClassId('');
+                            setClassSearchQuery('');
+                            setIsClassDropdownOpen(false);
+                          }}
+                          className="absolute right-2.5 p-1 text-slate-400 hover:text-rose-600 rounded-md transition"
+                          title="Clear class selection"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsClassDropdownOpen((prev) => !prev)}
+                          className="absolute right-2.5 p-1 text-slate-400 hover:text-slate-600 rounded-md transition"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
+
+                    {isClassDropdownOpen && (
+                      <div className="absolute z-40 right-0 sm:left-0 sm:right-auto mt-1.5 w-72 sm:w-80 bg-white rounded-xl shadow-xl border border-slate-200 max-h-72 overflow-y-auto divide-y divide-slate-100">
+                        <div
+                          onClick={() => {
+                            setSelectedClassId('');
+                            setIsClassDropdownOpen(false);
+                            setClassSearchQuery('');
+                          }}
+                          className={`p-2.5 flex items-center justify-between hover:bg-teal-50/70 cursor-pointer transition text-xs ${
+                            !selectedClassId ? 'bg-teal-50/80 font-bold text-teal-900' : 'text-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-teal-100 text-teal-700 flex items-center justify-center shrink-0">
+                              <Sliders className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-900">Select Class</div>
+                              <div className="text-[11px] text-slate-500 font-normal">Choose a class for class-wide overrides</div>
+                            </div>
+                          </div>
+                          {!selectedClassId && <Check className="w-4 h-4 text-teal-600" />}
+                        </div>
+
+                        {filteredClasses.length > 0 ? (
+                          filteredClasses.map((c) => {
+                            const hasClassOverride = templates.some(
+                              (t) =>
+                                !t.studentId &&
+                                t.classId === c.id &&
+                                (effectiveTemplateMonth === 'all'
+                                  ? !t.month || t.month === 'all'
+                                  : t.month === effectiveTemplateMonth || !t.month || t.month === 'all')
+                            );
+                            const isCurrent = selectedClassId === c.id;
+                            return (
+                              <div
+                                key={c.id}
+                                onClick={() => {
+                                  requestTransition({
+                                    kind: 'scope',
+                                    label: `Class Override tier (${c.name})`,
+                                    apply: () => {
+                                      setSelectedClassId(c.id);
+                                      setSelectedStudentId('');
+                                      setTemplateScopeMode('class');
+                                      setIsClassDropdownOpen(false);
+                                      setClassSearchQuery('');
+                                    },
+                                  });
+                                }}
+                                className={`p-2.5 flex items-center justify-between hover:bg-teal-50/70 cursor-pointer transition text-xs ${
+                                  isCurrent ? 'bg-teal-50 font-bold' : ''
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div className="w-7 h-7 rounded-full bg-slate-800 text-teal-400 font-bold flex items-center justify-center text-[11px] shrink-0">
+                                    {c.name.substring(0, 2).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-slate-900 truncate">{c.name}</div>
+                                    <div className="text-slate-500 text-[11px] truncate">
+                                      Students: <span className="text-slate-700 font-medium">{students.filter((st) => st.classId === c.id).length}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                                  {hasClassOverride && (
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                                      Custom
+                                    </span>
+                                  )}
+                                  {isCurrent && <Check className="w-3.5 h-3.5 text-teal-600" />}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="p-3 text-center text-xs text-slate-500">
+                            No classes found matching "{classSearchQuery}".
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2532,32 +2738,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                 )}
 
-                {/* Bulk Upload CSV Button */}
-                <button
-                  type="button"
-                  id="btn-bulk-upload-template-csv"
-                  onClick={() => {
-                    setCsvParseError(null);
-                    setShowCsvModal(true);
-                  }}
-                  className="flex items-center gap-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer"
-                  title="Upload student fee template overrides from CSV"
-                >
-                  <Upload className="w-3.5 h-3.5 text-teal-600" />
-                  Bulk Upload CSV
-                </button>
-
-                {/* Reset All Button */}
-                <button
-                  type="button"
-                  id="btn-reset-all-templates"
-                  onClick={() => setShowResetAllModal(true)}
-                  className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer"
-                  title="Reset global template to defaults and delete overrides for current month"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                  Reset All
-                </button>
               </div>
             </div>
             </>
@@ -2812,7 +2992,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <th className="p-3 w-12 text-center">#</th>
                       <th className="p-3">Fee Particular / Label</th>
                       <th className="p-3">Calculation / Description</th>
-                      <th className="p-3 text-right w-44">Default Amount ({getCurrencyCode()})</th>
+                      <th className="p-3 text-right w-52">Amount ({getCurrencyCode()})</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -2935,8 +3115,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           </td>
                           <td className="p-3 text-right">
                             {isFlexField ? (
-                              <div className="inline-flex items-center gap-1.5">
-                                <span className="text-slate-400 font-semibold text-xs">{getCurrencyCode()}</span>
+                              <div className="inline-flex items-center">
                                 <input
                                   type="number"
                                   value={currentAmount === 0 ? '0' : (currentAmount ?? '')}
@@ -2954,11 +3133,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                   }}
                                   placeholder="0"
                                   disabled={isInputDisabled}
-                                  className="w-24 p-1.5 text-right bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 text-xs transition disabled:opacity-60 disabled:cursor-not-allowed"
+                                  className="w-40 p-1.5 text-right bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-lg font-bold text-slate-900 text-xs transition disabled:opacity-60 disabled:cursor-not-allowed"
                                 />
                               </div>
                             ) : (
-                              <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                              <span className="inline-flex items-center justify-center w-40 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                 {spec.isDynamic ? 'Auto-Calculated' : 'On Trigger / Voucher'}
                               </span>
                             )}
@@ -3072,39 +3251,88 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
             </div>
           </form>
-
-          {/* Quick link to Overrides Directory if overrides exist */}
-          {totalOverridesCount > 0 && (
-            <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs">
-              <div className="flex items-center gap-2 text-slate-600">
-                <ListFilter className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>
-                  <strong>{totalOverridesCount}</strong> custom fee override{totalOverridesCount === 1 ? '' : 's'} active ({activeGlobalOverridesList.length} global month{activeGlobalOverridesList.length === 1 ? '' : 's'}, {activeClassOverridesList.length} class, {activeStudentOverridesList.length} student).
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  requestTransition({
-                    kind: 'scope',
-                    label: 'Overrides Directory',
-                    apply: () => setTemplateScopeMode('overrides'),
-                  })
-                }
-                className="font-bold text-teal-700 hover:text-teal-900 hover:underline cursor-pointer flex items-center gap-1"
-              >
-                <span>Switch to 4. Overrides Directory</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
         </>
       )}
 
       {/* Scope 4: Active Overrides Directory */}
       {templateScopeMode === 'overrides' && (
         <div className="space-y-4">
-          {/* Overrides Management Filter Bar */}
+          {newDirUi ? (
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                  Period
+                  <select
+                    id="select-dir-period"
+                    value={dirPeriod}
+                    onChange={(e) => setDirPeriod(e.target.value as 'billing' | 'month' | 'recurring' | 'all')}
+                    className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  >
+                    <option value="billing">Billing month + recurring ({formatMonthName(activeMonth)})</option>
+                    <option value="month">Specific month + recurring</option>
+                    <option value="recurring">Recurring only</option>
+                    <option value="all">All periods</option>
+                  </select>
+                </label>
+                {dirPeriod === 'month' && (
+                  <div id="input-dir-month" className="inline-flex items-center">
+                    <MonthPicker
+                      value={dirMonth}
+                      onChange={(val) => {
+                        if (val) setDirMonth(val);
+                      }}
+                      availableMonths={monthsWithData}
+                      closedMonths={pickerWindowMonths.filter((m) => getMonthClosureStatus(m).isClosed)}
+                      themeColor={themeConfig?.color || 'teal'}
+                      isLight={true}
+                      align="left"
+                      showSteppers={true}
+                      variant="pill"
+                      idPrefix="dir-month"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="input-dir-search"
+                    type="text"
+                    value={dirSearch}
+                    onChange={(e) => setDirSearch(e.target.value)}
+                    placeholder="Search name, reg # or class..."
+                    className="w-56 pl-8 pr-8 py-2 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+                  />
+                  {dirSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setDirSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-md cursor-pointer"
+                      title="Clear search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select
+                  id="select-dir-class"
+                  value={dirClassId}
+                  onChange={(e) => setDirClassId(e.target.value)}
+                  className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900 cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="all">All Classes</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
             <div className="flex items-center gap-2">
               <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
@@ -3169,6 +3397,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
             </div>
           </div>
+            </>
+          )}
 
           {/* Month-specific Global Templates */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
@@ -3193,13 +3423,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <table className="w-full text-left text-xs text-slate-700">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                       <tr>
-                        <th className="p-3">Month</th>
+                        <SortableTh label="Month" sortKey="month" sort={globalSort} onSort={toggleGlobalSort} />
                         <th className="p-3">Particulars</th>
                         <th className="p-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {activeGlobalOverridesList.map((item) => (
+                      {globalRowsView.map((item) => (
                         <tr key={item.uniqueKey} className="hover:bg-teal-50/40 transition">
                           <td className="p-3">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
@@ -3285,25 +3515,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </p>
               </div>
               <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-auto">
-                {activeClassOverridesList.length} class override{activeClassOverridesList.length === 1 ? '' : 's'}
+                {classRowsView.length} class override{classRowsView.length === 1 ? '' : 's'}
               </span>
             </div>
 
-            {activeClassOverridesList.length > 0 ? (
+            {classRowsView.length > 0 ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-700">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider">
                       <tr>
-                        <th className="p-3">Class Name</th>
-                        <th className="p-3">Schedule</th>
-                        <th className="p-3">Base Fee</th>
-                        <th className="p-3">Overridden Particulars (Fine & Flex 1–4)</th>
+                        <SortableTh label="Class Name" sortKey="class" sort={classSort} onSort={toggleClassSort} />
+                        <SortableTh label="Schedule" sortKey="schedule" sort={classSort} onSort={toggleClassSort} />
+                        <SortableTh label="Base Fee" sortKey="fee" sort={classSort} onSort={toggleClassSort} />
+                        <th className="p-3">Overridden Particulars</th>
                         <th className="p-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {activeClassOverridesList.map((item) => (
+                      {classRowsView.map((item) => (
                         <tr key={item.uniqueKey} className="hover:bg-indigo-50/40 transition">
                           <td className="p-3 font-bold text-slate-900 flex items-center gap-2">
                             <BookOpen className="w-4 h-4 text-indigo-600 shrink-0" />
@@ -3449,12 +3679,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </>
                 )}
                 <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
-                  {activeStudentOverridesList.length} override{activeStudentOverridesList.length === 1 ? '' : 's'}
+                  {studentRowsView.length} override{studentRowsView.length === 1 ? '' : 's'}
                 </span>
               </div>
             </div>
 
-            {activeStudentOverridesList.length > 0 ? (
+            {newDirUi && selectedOverrideKeys.length > 0 && hasPermission('settings.manage') && (
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs">
+                <span className="font-bold text-amber-950">{selectedOverrideKeys.length} selected</span>
+                {selectedOverrideKeys.length < studentRowsView.length && (
+                  <>
+                    <span className="text-amber-700">&bull;</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOverrideKeys(studentRowsView.map((r) => r.uniqueKey))}
+                      className="text-teal-700 hover:text-teal-900 font-bold hover:underline cursor-pointer"
+                    >
+                      Select all {studentRowsView.length} matching
+                    </button>
+                  </>
+                )}
+                <span className="text-amber-700">&bull;</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedOverrideKeys([])}
+                  className="text-slate-600 hover:text-slate-900 font-semibold cursor-pointer"
+                >
+                  Clear selection
+                </button>
+              </div>
+            )}
+
+            {studentRowsView.length > 0 ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs text-slate-700">
@@ -3465,25 +3721,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             <input
                               type="checkbox"
                               checked={
-                                activeStudentOverridesList.length > 0 &&
-                                selectedOverrideKeys.length === activeStudentOverridesList.length
+                                studentPageRows.length > 0 &&
+                                studentPageRows.every((r) => selectedOverrideKeys.includes(r.uniqueKey))
                               }
                               onChange={handleToggleSelectAllOverrides}
-                              title="Select all"
+                              title={newDirUi ? 'Select all on this page' : 'Select all'}
                               className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
                             />
                           </th>
                         )}
-                        <th className="p-3">Student Name</th>
-                        <th className="p-3">Reg #</th>
-                        <th className="p-3">Class</th>
-                        <th className="p-3">Schedule</th>
-                        <th className="p-3">Overridden Particulars (Fine & Flex 1–4)</th>
+                        <SortableTh label="Student Name" sortKey="name" sort={studentSort} onSort={toggleStudentSort} />
+                        <SortableTh label="Reg #" sortKey="reg" sort={studentSort} onSort={toggleStudentSort} />
+                        <SortableTh label="Class" sortKey="class" sort={studentSort} onSort={toggleStudentSort} />
+                        <SortableTh label="Schedule" sortKey="schedule" sort={studentSort} onSort={toggleStudentSort} />
+                        <th className="p-3">Overridden Particulars</th>
                         <th className="p-3 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {activeStudentOverridesList.map((item) => {
+                      {studentPageRows.map((item) => {
                         const isSelected = selectedOverrideKeys.includes(item.uniqueKey);
                         return (
                           <tr
@@ -3580,6 +3836,49 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </tbody>
                   </table>
                 </div>
+                {newDirUi && (
+                  <div className="p-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 bg-white">
+                    <div className="flex items-center gap-3">
+                      <RecordsPerPageSelector
+                        value={dirPerPage}
+                        onChange={(n) => {
+                          setDirPerPage(n);
+                          setDirPage(1);
+                        }}
+                        totalRecords={studentRowsView.length}
+                        presetOptions={[25, 50, 100]}
+                        idPrefix="dir-per-page"
+                      />
+                      <span className="text-slate-400">&bull;</span>
+                      <span>
+                        Total: <strong>{studentRowsView.length}</strong> overrides
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setDirPage((p) => Math.max(1, p - 1))}
+                        disabled={dirSafePage === 1}
+                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                        title="Previous Page"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="px-2 font-medium">
+                        Page {dirSafePage} of {dirTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDirPage((p) => Math.min(dirTotalPages, p + 1))}
+                        disabled={dirSafePage === dirTotalPages}
+                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                        title="Next Page"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
@@ -4236,7 +4535,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 leading-tight">
-                    Confirm Policy Changes
+                    Confirm {policyScopeNames[policyScope]} Changes
                   </h3>
                   <p className="text-[11px] text-slate-500">
                     Review modified rules & operational impacts
@@ -4255,7 +4554,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Modal Body: Compact List of Modified Policies */}
             <div className="p-4 overflow-y-auto space-y-2.5 text-xs divide-y divide-slate-100">
               {/* Late Fee Rate (Promoted to Top) */}
-              {selectedLateFeeRate !== defaultLateFeeRate && (
+              {policyScope === 'defaults' && selectedLateFeeRate !== defaultLateFeeRate && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4273,7 +4572,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Default Due Date Policy */}
-              {isDefaultDueDateModified && (
+              {policyScope === 'defaults' && isDefaultDueDateModified && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4298,7 +4597,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Net Due Rounding Multiple */}
-              {(selectedRoundingMultiple !== roundingMultiple || selectedRoundingEnabled !== roundingEnabled) && (
+              {policyScope === 'defaults' && (selectedRoundingMultiple !== roundingMultiple || selectedRoundingEnabled !== roundingEnabled) && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4323,7 +4622,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Transport Fee Rounding Multiple */}
-              {selectedTransportRoundingMultiple !== transportRoundingMultiple && (
+              {policyScope === 'defaults' && selectedTransportRoundingMultiple !== transportRoundingMultiple && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4348,7 +4647,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Prior Month Rule */}
-              {selectedPriorRule !== priorMonthRule && (
+              {policyScope === 'rules' && selectedPriorRule !== priorMonthRule && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4369,7 +4668,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Skipped Month Rule */}
-              {selectedSkippedRule !== skippedMonthRule && (
+              {policyScope === 'rules' && selectedSkippedRule !== skippedMonthRule && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4390,7 +4689,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               )}
 
               {/* Voucher Deletion Policy */}
-              {selectedDeletionResolution !== voucherDeletionResolution && (
+              {policyScope === 'rules' && selectedDeletionResolution !== voucherDeletionResolution && (
                 <div className="pt-2 first:pt-0 space-y-1.5">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -4406,6 +4705,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     {selectedDeletionResolution === 'cascade' && 'Deleting a prior voucher permanently deletes all newer subsequent vouchers.'}
                     {selectedDeletionResolution === 'auto-heal' && 'Deleting a voucher auto-heals subsequent vouchers and recalculates balances.'}
                     {selectedDeletionResolution === 'manual' && 'Deleting prior vouchers is blocked until newer vouchers are deleted in reverse order.'}
+                  </div>
+                </div>
+              )}
+
+              {/* Voucher Print Layout */}
+              {policyScope === 'layout' && layoutChanged && (
+                <div className="pt-2 first:pt-0 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                      Copies &amp; Print Layout
+                    </span>
+                  </div>
+                  <div className="p-2 bg-indigo-50/80 border border-indigo-200/70 rounded-lg text-[11px] text-indigo-900 leading-relaxed space-y-1">
+                    <div>
+                      <strong>Order:</strong> {voucherCopyOrder.join(', ')} &rarr;{' '}
+                      <span className="font-extrabold">{selectedVoucherCopyOrder.join(', ')}</span>
+                    </div>
+                    <div>
+                      <strong>Default copies:</strong> {voucherDefaultCopies.join(', ') || 'none'} &rarr;{' '}
+                      <span className="font-extrabold">{selectedVoucherDefaultCopies.join(', ') || 'none'}</span>
+                    </div>
+                    <div>
+                      <strong>Impact:</strong> Applies to newly printed or exported voucher sheets.
+                    </div>
                   </div>
                 </div>
               )}

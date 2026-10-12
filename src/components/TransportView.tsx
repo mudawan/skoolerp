@@ -12,6 +12,7 @@ import { StopModal } from './transport/StopModal';
 import { AssignmentModal } from './transport/AssignmentModal';
 import { BulkTransportCsvModal, BulkTransportPreviewRow, AbsentTransportStudent } from './transport/BulkTransportCsvModal';
 import { BulkStopsCsvModal, BulkStopPreviewRow } from './transport/BulkStopsCsvModal';
+import { CopyPreviousMonthModal, CopyPreviewRow, CopyFilter } from './transport/CopyPreviousMonthModal';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { Bus, CalendarDays, Copy, CheckCircle, AlertCircle, LayoutGrid, List, MapPin, Pencil, Plus, Trash2, X, ArrowUpDown, ArrowUp, ArrowDown, Search, Check, Upload, GripVertical } from 'lucide-react';
 
@@ -35,7 +36,6 @@ export const TransportView: React.FC = () => {
     saveTransportAssignment,
     bulkSaveTransportAssignments,
     deleteTransportAssignment,
-    copyTransportAssignmentsFromPreviousMonth,
     bulkUpdateTransportDaysForMonth,
     transportRoundingMultiple,
     addStudentAccountHistory,
@@ -114,6 +114,11 @@ export const TransportView: React.FC = () => {
 
   // Copy status feedback
   const [copyFeedback, setCopyFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Copy Previous Month preview modal
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [copyRows, setCopyRows] = useState<CopyPreviewRow[]>([]);
+  const [copyFilter, setCopyFilter] = useState<CopyFilter>('all');
 
   // Selected assignment IDs for checkbox selection
   const [selectedAsgnIds, setSelectedAsgnIds] = useState<string[]>([]);
@@ -598,22 +603,155 @@ export const TransportView: React.FC = () => {
     }
   };
 
+  // Builds the Copy Previous Month preview from current data. Every previous
+  // month assignment becomes one row, either copyable or skipped with a reason.
+  const buildCopyPreview = () => {
+    const prevMonth = getPreviousMonth(activeMonth);
+    const monthDays = getDaysInMonth(activeMonth);
+    const days = Math.min(Math.max(globalMonthDays, 0), monthDays);
+    const tripLabel = (t: string) => (t === 'OneWay' ? 'One Way' : 'Round Trip');
+
+    const rows: CopyPreviewRow[] = transportAssignments
+      .filter((a) => a.month === prevMonth && a.active)
+      .map((prev) => {
+        const student = students.find((st) => st.id === prev.studentId);
+        const studentClass = student ? classes.find((c) => c.id === student.classId) : undefined;
+        const bus = buses.find((b) => b.id === prev.busId);
+        const stop = stops.find((st) => st.id === prev.stopId);
+        const existing = transportAssignments.find((a) => a.studentId === prev.studentId && a.month === activeMonth);
+        const fare = stop
+          ? calculateTransportFee(
+              { ...prev, id: 'preview', month: activeMonth, daysCharged: days, discount: prev.discount || 0, active: true },
+              stop,
+              transportRoundingMultiple
+            )
+          : 0;
+
+        let status: CopyPreviewRow['status'] = 'copy';
+        let reason = `Will copy from ${formatMonthName(prevMonth)}`;
+        if (!student) {
+          status = 'inactive';
+          reason = 'Student record not found';
+        } else if (student.status !== 'Active') {
+          status = 'inactive';
+          reason = `Student is ${student.status}`;
+        } else if (existing) {
+          status = 'exists';
+          const eBus = buses.find((b) => b.id === existing.busId);
+          const eStop = stops.find((st) => st.id === existing.stopId);
+          const same =
+            existing.busId === prev.busId &&
+            existing.stopId === prev.stopId &&
+            existing.tripType === prev.tripType &&
+            (existing.discount || 0) === (prev.discount || 0);
+          reason = `Already assigned in ${formatMonthName(activeMonth)}${existing.active ? '' : ' (inactive record)'}: ${
+            eStop?.name || 'Stop'
+          } via ${eBus?.busNumber || 'Bus'}, ${tripLabel(existing.tripType)}. Kept as is${
+            same ? ' (same as last month)' : ' (differs from last month)'
+          }`;
+        } else if (!bus) {
+          status = 'missing';
+          reason = 'Bus no longer exists';
+        } else if (bus.active === false) {
+          status = 'missing';
+          reason = `Bus ${bus.busNumber} is inactive`;
+        } else if (!stop) {
+          status = 'missing';
+          reason = 'Stop no longer exists';
+        } else if (student.firstBillingMonth && student.firstBillingMonth > activeMonth) {
+          status = 'billing';
+          reason = `Billing starts ${formatMonthName(student.firstBillingMonth)}`;
+        }
+
+        return {
+          id: prev.id,
+          student,
+          studentClass,
+          bus,
+          stop,
+          tripType: prev.tripType,
+          daysCharged: days,
+          discount: prev.discount || 0,
+          fare,
+          status,
+          reason,
+          existing,
+          selected: status === 'copy',
+        };
+      })
+      .sort((x, y) => (x.student?.regNo || '').localeCompare(y.student?.regNo || '', undefined, { numeric: true }));
+
+    return { rows };
+  };
+
   const handleCopyPreviousMonth = () => {
     setCopyFeedback(null);
-    const res = copyTransportAssignmentsFromPreviousMonth(activeMonth, globalMonthDays);
-    if (res.success) {
-      setCopyFeedback({
-        type: 'success',
-        message: `Successfully copied ${res.copiedCount} active student assignment${res.copiedCount === 1 ? '' : 's'} with ${globalMonthDays} active days.${
-          res.skippedCount > 0 ? ` (${res.skippedCount} already assigned)` : ''
-        }${res.inactiveSkippedCount > 0 ? ` (${res.inactiveSkippedCount} inactive students skipped)` : ''}`,
-      });
-    } else {
-      setCopyFeedback({
-        type: 'error',
-        message: res.error || 'Failed to copy previous month assignments.',
-      });
+    const { rows } = buildCopyPreview();
+    setCopyRows(rows);
+    setCopyFilter('all');
+    setShowCopyModal(true);
+  };
+
+  const handleToggleCopyRow = (rowId: string) => {
+    setCopyRows((prev) => prev.map((r) => (r.id === rowId && r.status === 'copy' ? { ...r, selected: !r.selected } : r)));
+  };
+
+  const handleToggleCopyAll = () => {
+    setCopyRows((prev) => {
+      const copyable = prev.filter((r) => r.status === 'copy');
+      const allSelected = copyable.length > 0 && copyable.every((r) => r.selected);
+      return prev.map((r) => (r.status === 'copy' ? { ...r, selected: !allSelected } : r));
+    });
+  };
+
+  const handleCommitCopy = () => {
+    // Re-evaluate against current data so nothing assigned in the meantime is overwritten.
+    const fresh = buildCopyPreview();
+    const chosen = new Set(copyRows.filter((r) => r.status === 'copy' && r.selected).map((r) => r.id));
+    const toSave = fresh.rows.filter((r) => r.status === 'copy' && chosen.has(r.id));
+    const nowIso = new Date().toISOString();
+
+    if (toSave.length > 0) {
+      const sourceById = new Map<string, TransportAssignment>(transportAssignments.map((a): [string, TransportAssignment] => [a.id, a]));
+      // Copied unchanged from the student's latest assignment, so the smart rule
+      // applies: no new account-history entry for an unchanged ongoing route.
+      bulkSaveTransportAssignments(
+        toSave.map((r) => {
+          const src = sourceById.get(r.id)!;
+          return {
+            studentId: src.studentId,
+            month: activeMonth,
+            busId: src.busId,
+            stopId: src.stopId,
+            tripType: src.tripType,
+            daysCharged: r.daysCharged,
+            discount: src.discount || 0,
+            active: true,
+            createdAt: nowIso,
+          };
+        })
+      );
     }
+
+    const count = (st: CopyPreviewRow['status']) => fresh.rows.filter((r) => r.status === st).length;
+    const unselected = fresh.rows.filter((r) => r.status === 'copy' && !chosen.has(r.id)).length;
+    const lateExists = copyRows.filter((r) => r.status === 'copy' && r.selected).length - toSave.length;
+    const skipped: string[] = [];
+    if (count('exists') > 0) skipped.push(`${count('exists')} already assigned in ${formatMonthName(activeMonth)} (left unchanged)`);
+    if (count('inactive') > 0) skipped.push(`${count('inactive')} inactive or missing student(s)`);
+    if (count('missing') > 0) skipped.push(`${count('missing')} with a missing or inactive bus or stop`);
+    if (count('billing') > 0) skipped.push(`${count('billing')} with billing not yet started`);
+    if (unselected > 0) skipped.push(`${unselected} left unselected`);
+    if (lateExists > 0) skipped.push(`${lateExists} assigned while the preview was open`);
+
+    setShowCopyModal(false);
+    setCopyRows([]);
+    setCopyFeedback({
+      type: toSave.length > 0 ? 'success' : 'error',
+      message: `Copied ${toSave.length} assignment${toSave.length === 1 ? '' : 's'} to ${formatMonthName(activeMonth)} with ${globalMonthDays} active days.${
+        skipped.length > 0 ? ` Skipped: ${skipped.join('; ')}.` : ''
+      }`,
+    });
   };
 
   // Bulk CSV Handlers
@@ -2507,7 +2645,7 @@ export const TransportView: React.FC = () => {
                   type="button"
                   onClick={handleCopyPreviousMonth}
                   className="flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold px-3 py-2 rounded-xl text-xs shadow-xs cursor-pointer transition-colors whitespace-nowrap flex-1 xs:flex-initial"
-                  title={`Copy transport assignments from previous month with ${globalMonthDays} active days`}
+                  title={`Preview and copy transport assignments from the previous month with ${globalMonthDays} active days`}
                 >
                   <Copy className="w-3.5 h-3.5 text-teal-600" />
                   <span>Copy Previous Month</span>
@@ -2831,6 +2969,23 @@ export const TransportView: React.FC = () => {
         onToggleSelectAllValid={handleToggleSelectAllValid}
         onToggleSelectRow={handleToggleSelectRow}
         onCommit={handleCommitBulkImport}
+      />
+
+      <CopyPreviousMonthModal
+        show={showCopyModal}
+        onClose={() => {
+          setShowCopyModal(false);
+          setCopyRows([]);
+        }}
+        activeMonth={activeMonth}
+        prevMonth={getPreviousMonth(activeMonth)}
+        daysCharged={Math.min(Math.max(globalMonthDays, 0), totalDaysInMonth)}
+        rows={copyRows}
+        filter={copyFilter}
+        setFilter={setCopyFilter}
+        onToggleRow={handleToggleCopyRow}
+        onToggleAll={handleToggleCopyAll}
+        onCommit={handleCommitCopy}
       />
 
             {/* Bulk Bus Stops CSV Import Modal */}

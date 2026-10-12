@@ -625,13 +625,13 @@ export const FamiliesView: React.FC = () => {
                 >
                   {/* Subtle Theme Accent Bar */}
                   <div
-                    className="h-1.5 w-full"
+                    className="h-1 w-full"
                     style={{
                       background: `linear-gradient(90deg, ${preset.primaryColor} 0%, ${preset.hoverColor} 100%)`,
                     }}
                   />
 
-                  <div className="p-5 space-y-4">
+                  <div className="px-4 py-3 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2.5">
                         <input
@@ -653,7 +653,7 @@ export const FamiliesView: React.FC = () => {
                           >
                             {family.familyNo}
                           </span>
-                          <h3 className="font-bold text-slate-900 text-base mt-1">
+                          <h3 className="font-bold text-slate-900 text-sm mt-0.5">
                             {family.headName}
                           </h3>
                         </div>
@@ -681,17 +681,19 @@ export const FamiliesView: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="space-y-1 text-xs text-slate-600 border-t border-slate-100 pt-3">
-                      <p className="flex items-center gap-1.5 font-medium text-slate-800">
-                        <Phone className="w-3.5 h-3.5 text-slate-400" />
-                        {family.contactPhone}
+                    <div className="space-y-0.5 text-xs text-slate-600 border-t border-slate-100 pt-2">
+                      <p className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 font-medium text-slate-800">
+                          <Phone className="w-3.5 h-3.5 text-slate-400" />
+                          {family.contactPhone}
+                        </span>
+                        <span className="text-slate-500 font-mono truncate">ID: {family.fatherNationalId || '—'}</span>
                       </p>
-                      <p className="text-slate-500 font-mono">ID: {family.fatherNationalId || '—'}</p>
                       <p className="text-slate-500 line-clamp-1">{family.address || '—'}</p>
                     </div>
 
                     {/* Member Students */}
-                    <div className="border-t border-slate-100 pt-3 space-y-2">
+                    <div className="border-t border-slate-100 pt-2 space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
                         <button
                           type="button"

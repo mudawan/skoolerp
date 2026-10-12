@@ -477,15 +477,15 @@ export const ClassesView: React.FC = () => {
                     )}
                   </div>
 
-                  <div className="p-3 bg-slate-50/90 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="text-slate-400 block font-medium">Standard Monthly Fee:</span>
+                  <div className="px-3 py-2.5 bg-slate-50/90 rounded-xl border border-slate-100 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-400 font-medium">Standard Monthly Fee</span>
                       <span className="font-bold text-slate-900 text-sm">
                         {formatCurrency(cls.monthlyFee)} / mo
                       </span>
                     </div>
-                    <div className="text-right">
-                      <span className="text-slate-400 block font-medium">Enrolled Students:</span>
+                    <div className="flex items-center justify-between gap-2 border-t border-slate-200/70 pt-1.5">
+                      <span className="text-slate-400 font-medium">Enrolled Students</span>
                       <span
                         className="font-bold text-xs flex items-center justify-end gap-1"
                         style={{ color: cls.active ? preset.textColor : '#64748b' }}

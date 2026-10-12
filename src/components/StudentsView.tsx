@@ -183,7 +183,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('all');
-  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedStatus, setSelectedStatus] = useState('Active');
 
   // Sorting state (default regNo ascending)
   const [sortField, setSortField] = useState<'regNo' | 'name' | 'class' | 'father' | 'family' | 'status'>('regNo');

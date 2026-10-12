@@ -286,7 +286,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const vouchersWithReceivable = arrearsByStudent.flatMap((x) => x.arrears.openVouchers);
 
   // Student Outstanding Balances (per student, active receivables)
-  const studentOutstandingRows = arrearsByStudent
+  const allOutstandingRows = arrearsByStudent
     .filter(({ arrears }) => arrears.outstanding > 0)
     .map(({ student: s, arrears }) => {
       const cls = classes.find((c) => c.id === s.classId);
@@ -295,6 +295,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         studentNo: s.studentNo,
         regNo: s.regNo,
         name: s.name,
+        status: s.status,
         photoUrl: s.photoUrl,
         dob: s.dob,
         ageStr: formatStudentAge(s.dob),
@@ -310,9 +311,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       };
     });
 
+  const totalPendingAll = allOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
+
+  // Status filter for the arrears audit (affects table, totals, copy/CSV/PDF)
+  const [arrearsStatusFilter, setArrearsStatusFilter] = useState<'all' | 'Active' | 'nonActive'>('all');
+  const studentOutstandingRows = allOutstandingRows.filter((r) =>
+    arrearsStatusFilter === 'all' ? true : arrearsStatusFilter === 'Active' ? r.status === 'Active' : r.status !== 'Active'
+  );
   const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
 
-  type ArrearsSortField = 'name' | 'class' | 'father' | 'unpaidMonths' | 'outstanding';
+  type ArrearsSortField = 'name' | 'status' | 'class' | 'father' | 'unpaidMonths' | 'outstanding';
   const [arrearsSortField, setArrearsSortField] = useState<ArrearsSortField>('outstanding');
   const [arrearsSortDir, setArrearsSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -343,6 +351,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         case 'name':
           cmp = a.name.localeCompare(b.name);
           break;
+        case 'status':
+          cmp = String(a.status).localeCompare(String(b.status));
+          break;
         case 'class':
           cmp = a.className.localeCompare(b.className);
           break;
@@ -360,7 +371,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     });
   }, [studentOutstandingRows, arrearsSortField, arrearsSortDir]);
 
-  const pendingRows: ReportRow[] = studentOutstandingRows.flatMap((r) =>
+  const pendingRows: ReportRow[] = allOutstandingRows.flatMap((r) =>
     r.openVouchers.map((v) => ({
       date: v.dueDate,
       regNo: r.regNo,
@@ -425,11 +436,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       key: 'pending',
       group: 'lifetime' as const,
       label: 'Total Pending',
-      value: formatCurrency(totalPending),
+      value: formatCurrency(totalPendingAll),
       icon: AlertTriangle,
       accent: 'text-rose-600',
       iconBg: 'bg-rose-50 text-rose-600',
-      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''}`,
+      hint: `${allOutstandingRows.length} student${allOutstandingRows.length !== 1 ? 's' : ''}`,
       badge: 'Defaulters',
       badgeClass: 'bg-rose-50 text-rose-700 border-rose-200/70',
       tab: 'pending' as FeeReportTab,
@@ -442,7 +453,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       icon: HandCoins,
       accent: 'text-indigo-700',
       iconBg: 'bg-indigo-50 text-indigo-600',
-      hint: `${studentOutstandingRows.length} student${studentOutstandingRows.length !== 1 ? 's' : ''} · open vouchers`,
+      hint: `${allOutstandingRows.length} student${allOutstandingRows.length !== 1 ? 's' : ''} · open vouchers`,
       badge: 'Unsettled',
       badgeClass: 'bg-indigo-50 text-indigo-700 border-indigo-200/70',
       tab: 'pending' as FeeReportTab,
@@ -566,13 +577,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleCopyArrears = async () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
     const lines = [
       headers.join('\t'),
       ...sortedStudentOutstandingRows.map((r, i) =>
-        [i + 1, r.regNo, r.name, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.totalOutstanding].join('\t')
+        [i + 1, r.regNo, r.name, r.status, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.totalOutstanding].join('\t')
       ),
-      ['TOTAL', '', '', '', '', '', '', totalPending].join('\t'),
+      ['TOTAL', '', '', '', '', '', '', '', totalPending].join('\t'),
     ];
     const text = lines.join('\n');
     try {
@@ -595,18 +606,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleExportArrearsCsv = () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
     const csvRows = sortedStudentOutstandingRows.map((r, i) => [
       i + 1,
       `"${r.regNo || ''}"`,
       `"${(r.name || '').replace(/"/g, '""')}"`,
+      `"${(r.status || '').replace(/"/g, '""')}"`,
       `"${(r.className || '').replace(/"/g, '""')}"`,
       `"${(r.fatherName || '').replace(/"/g, '""')}"`,
       `"${(r.fatherPhone || '').replace(/"/g, '""')}"`,
       r.unpaidMonthsCount,
       r.totalOutstanding,
     ]);
-    const totalRow = ['TOTAL', '""', '""', '""', '""', '""', '""', totalPending];
+    const totalRow = ['TOTAL', '""', '""', '""', '""', '""', '""', '""', totalPending];
     const csvContent = '\uFEFF' + [headers.join(','), ...csvRows.map((e) => e.join(',')), totalRow.join(',')].join('\n');
     downloadCsv(`Student_Fee_Arrears_${activeMonth}.csv`, csvContent);
     setArrearsCsvDownloaded(true);
@@ -1222,10 +1234,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <BarChart3 className="w-6 h-6 text-teal-600 shrink-0" />
-            Financial & Fee Audit Reports
+            Financial Reports
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Fee collection metrics, generated fee reports, and outstanding balance audits.
+            Collections, student ledgers and outstanding arrears.
           </p>
         </div>
 
@@ -1249,7 +1261,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          Fee Collection Report
+          Fee Collection
         </button>
         <button
           onClick={() => handleTabChange('studentLedger')}
@@ -1260,7 +1272,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <History className="w-4 h-4" />
-          Student Fee Collections Ledger
+          Student Ledger
         </button>
         <button
           onClick={() => handleTabChange('outstanding')}
@@ -1271,7 +1283,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           }`}
         >
           <Users className="w-4 h-4" />
-          Student Outstanding Balances Arrears ({studentOutstandingRows.length})
+          Outstanding Arrears ({allOutstandingRows.length})
         </button>
       </div>
 
@@ -1284,6 +1296,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
                 Student Unpaid Fee Arrears Audit ({studentOutstandingRows.length} Defaulters)
               </h3>
+              <label className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
+                Student Status:
+                <select
+                  id="select-arrears-status"
+                  value={arrearsStatusFilter}
+                  onChange={(e) => setArrearsStatusFilter(e.target.value as 'all' | 'Active' | 'nonActive')}
+                  className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-800 cursor-pointer focus:outline-none"
+                >
+                  <option value="all">All Statuses ({allOutstandingRows.length})</option>
+                  <option value="Active">Active Only ({allOutstandingRows.filter((r) => r.status === 'Active').length})</option>
+                  <option value="nonActive">Not Active ({allOutstandingRows.filter((r) => r.status !== 'Active').length})</option>
+                </select>
+              </label>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 Total Pending Arrears:{' '}
                 <strong className="text-rose-700 font-bold font-mono">
@@ -1418,6 +1443,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </div>
                   </th>
                   <th
+                    onClick={() => handleArrearsSort('status')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Student Status"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Status</span>
+                      {renderArrearsSortIcon('status')}
+                    </div>
+                  </th>
+                  <th
                     onClick={() => handleArrearsSort('class')}
                     className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
                     title="Click to sort by Academic Class"
@@ -1480,6 +1515,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           </div>
                         </div>
                       </td>
+                      <td className="p-3 whitespace-nowrap">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            r.status === 'Active'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : r.status === 'Graduated'
+                              ? 'bg-indigo-100 text-indigo-800'
+                              : r.status === 'Withdrawn'
+                              ? 'bg-rose-100 text-rose-800'
+                              : r.status === 'AutoDeactivated'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {r.status === 'AutoDeactivated' ? 'Auto-Deactivated' : r.status}
+                        </span>
+                      </td>
                       <td className="p-3 font-semibold text-slate-800">{r.className}</td>
                       <td className="p-3">
                         <span className="font-semibold text-slate-900 block">{r.fatherName}</span>
@@ -1526,7 +1578,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
                       Zero outstanding defaulter arrears found!
                     </td>
                   </tr>
@@ -1582,7 +1634,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   {monthMetrics.map(renderMetricCard)}
                 </div>
               </div>
-              <div className="xl:col-span-2 xl:border-l xl:border-slate-200/80 xl:pl-4">
+              <div
+                className="xl:col-span-2 border-t-2 xl:border-t-0 xl:border-l-2 pt-3 xl:pt-0 xl:pl-5"
+                style={{ borderColor: preset.primaryColor }}
+              >
                 <div className="flex items-center gap-1.5 mb-1.5 text-[11px] font-bold text-slate-600">
                   <Scale className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <span>All months</span>

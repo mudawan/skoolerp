@@ -355,11 +355,11 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                 compact ? 'px-2.5 py-1' : 'px-3 py-1.5'
               } ${
                 isFlexField
-                  ? 'bg-teal-50/20 hover:bg-teal-50/40'
+                  ? 'bg-teal-50 hover:bg-teal-100/70'
                   : isFine
-                  ? 'bg-amber-50/20 hover:bg-amber-50/40'
+                  ? 'bg-amber-50 hover:bg-amber-100/70'
                   : isDiscount
-                  ? 'bg-rose-50/20 hover:bg-rose-50/40'
+                  ? 'bg-rose-50 hover:bg-rose-100/70'
                   : 'hover:bg-slate-50/80'
               }`}
             >
@@ -371,12 +371,13 @@ export const VoucherParticularsEditor: React.FC<VoucherParticularsEditorProps> =
                     value={item.label}
                     onChange={(e) => handleLabelChange(item.kind, e.target.value)}
                     placeholder={spec?.defaultLabel || 'Fee Head'}
-                    className={`w-full bg-white border border-slate-200 focus:border-teal-500 rounded text-slate-800 font-semibold focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                      compact ? 'px-1.5 py-0.5 text-[11px] h-6' : 'px-1.5 py-0.5 text-xs'
+                    title="Click to rename this fee head"
+                    className={`w-full bg-transparent border border-transparent hover:border-b-slate-300 focus:bg-white focus:border-teal-500 rounded text-slate-700 font-semibold placeholder:text-slate-400 placeholder:font-normal focus:outline-none focus:ring-1 focus:ring-teal-500 transition ${
+                      compact ? 'px-1 py-0.5 text-[11px] h-6' : 'px-1 py-0.5 text-xs'
                     }`}
                   />
                 ) : (
-                  <span className={`font-semibold text-slate-700 truncate ${compact ? 'text-[11px]' : 'text-xs'}`}>
+                  <span className={`block w-full border border-transparent font-semibold text-slate-700 truncate ${compact ? 'px-1 h-6 text-[11px] leading-[22px]' : 'px-1 py-0.5 text-xs'}`}>
                     {item.label}
                   </span>
                 )}

@@ -295,7 +295,7 @@ export const CollectionsView: React.FC = () => {
       setSelectedVoucherId(preSelectedVoucher.id);
       setDirectItems(preSelectedVoucher.particulars.map((p) => ({ ...p })));
       const remaining = Math.max(0, preSelectedVoucher.netDue - preSelectedVoucher.amountPaid);
-      setDirectAmount(remaining > 0 ? remaining : preSelectedVoucher.netDue);
+      setDirectAmount(remaining);
       setIsChangingVoucher(false);
       setIsVoucherPickerOpen(false);
     } else {
@@ -324,7 +324,7 @@ export const CollectionsView: React.FC = () => {
     if (v) {
       setDirectItems(v.particulars.map((p) => ({ ...p })));
       const remaining = Math.max(0, v.netDue - v.amountPaid);
-      setDirectAmount(remaining > 0 ? remaining : v.netDue);
+      setDirectAmount(remaining);
     } else {
       setDirectItems([]);
       setDirectAmount('');
@@ -1434,9 +1434,6 @@ export const CollectionsView: React.FC = () => {
                     <h3 className="text-sm sm:text-base font-bold text-slate-900 truncate">Record Fee Collection</h3>
                     {selectedVoucher && (
                       <>
-                        <span className="font-mono font-bold text-[11px] sm:text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md">
-                          {selectedVoucher.voucherNo}
-                        </span>
                         <span
                           className={`text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                             selectedVoucher.status === 'Paid'
@@ -1710,32 +1707,25 @@ export const CollectionsView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 3 Metric Pills */}
-                <div className="grid grid-cols-3 gap-1 sm:gap-1.5 font-mono text-center shrink-0">
-                  <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
-                    <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Original Due</div>
-                    <div className="font-bold text-slate-800 text-[10px] sm:text-xs truncate">
-                      {formatCurrency(selectedVoucher.netDue)}
-                    </div>
-                  </div>
-                  <div className="bg-white px-1.5 sm:px-2 py-1 rounded-md border border-slate-200 min-w-0">
-                    <div className="text-[8px] sm:text-[9px] text-slate-500 font-sans font-medium">Already Paid</div>
-                    <div className="font-bold text-emerald-700 text-[10px] sm:text-xs truncate">
-                      {formatCurrency(selectedVoucher.amountPaid)}
-                    </div>
-                  </div>
-                  <div className="bg-emerald-50 px-1.5 sm:px-2 py-1 rounded-md border border-emerald-200 min-w-0">
-                    <div className="text-[8px] sm:text-[9px] text-emerald-800 font-sans font-bold">
-                      {selectedVoucher.amountPaid >= dynamicNetDue ? 'Settlement' : 'Remaining'}
-                    </div>
-                    <div className="font-black text-emerald-800 text-[10px] sm:text-xs truncate">
-                      {selectedVoucher.amountPaid >= dynamicNetDue
-                        ? selectedVoucher.amountPaid > dynamicNetDue
-                          ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Adv`
-                          : 'Settled'
-                        : formatCurrency(dynamicRemaining)}
-                    </div>
-                  </div>
+                {/* Inline summary: Due · Paid · Balance */}
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 font-mono text-[11px] sm:text-xs shrink-0">
+                  <span className="text-slate-500 font-sans">
+                    Due <span className="font-bold text-slate-800 font-mono">{formatCurrency(selectedVoucher.netDue)}</span>
+                  </span>
+                  <span className="text-slate-500 font-sans">
+                    Paid <span className="font-bold text-emerald-700 font-mono">{formatCurrency(selectedVoucher.amountPaid)}</span>
+                  </span>
+                  {selectedVoucher.amountPaid >= dynamicNetDue ? (
+                    <span className="font-black text-emerald-800">
+                      {selectedVoucher.amountPaid > dynamicNetDue
+                        ? `+${formatCurrency(selectedVoucher.amountPaid - dynamicNetDue)} Advance`
+                        : '✓ Settled'}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500 font-sans">
+                      Balance <span className="font-black text-rose-700 font-mono">{formatCurrency(dynamicRemaining)}</span>
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -1771,7 +1761,7 @@ export const CollectionsView: React.FC = () => {
                     onResetToOriginal={() => {
                       setDirectItems(selectedVoucher.particulars.map((p) => ({ ...p })));
                       const rem = Math.max(0, selectedVoucher.netDue - selectedVoucher.amountPaid);
-                      setDirectAmount(rem > 0 ? rem : selectedVoucher.netDue);
+                      setDirectAmount(rem);
                     }}
                     onSaveLineItems={handleSaveLineItemsOnly}
                     amountPaid={selectedVoucher.amountPaid}
@@ -1801,11 +1791,6 @@ export const CollectionsView: React.FC = () => {
                       <Receipt className="w-3.5 h-3.5 text-emerald-600" />
                       <span className="font-bold text-xs text-slate-800">Collection & Payment Details</span>
                     </div>
-                    {selectedVoucher && (
-                      <span className="text-[10px] font-medium text-slate-500 font-mono">
-                        {formatMonthName(selectedVoucher.month)}
-                      </span>
-                    )}
                   </div>
 
                   {/* Form Content */}
@@ -1823,15 +1808,7 @@ export const CollectionsView: React.FC = () => {
                               onClick={() => setDirectAmount(dynamicRemaining)}
                               className="text-[10px] sm:text-[11px] text-teal-600 hover:text-teal-800 font-bold hover:underline cursor-pointer"
                             >
-                              Auto-fill Remaining ({formatCurrency(dynamicRemaining)})
-                            </button>
-                          ) : selectedVoucher ? (
-                            <button
-                              type="button"
-                              onClick={() => setDirectAmount(dynamicNetDue)}
-                              className="text-[10px] sm:text-[11px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline cursor-pointer"
-                            >
-                              Fill Voucher Fee ({formatCurrency(dynamicNetDue)})
+                              Fill balance ({formatCurrency(dynamicRemaining)})
                             </button>
                           ) : null}
                         </div>
@@ -1857,34 +1834,10 @@ export const CollectionsView: React.FC = () => {
                           />
                         </div>
 
-                        {/* Quick suggestion chips */}
-                        {selectedVoucher && (
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {dynamicRemaining > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => setDirectAmount(dynamicRemaining)}
-                                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
-                              >
-                                Full Balance: {formatCurrency(dynamicRemaining)}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setDirectAmount(dynamicNetDue)}
-                                className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md text-[10px] font-bold transition cursor-pointer"
-                              >
-                                Fill Fee: {formatCurrency(dynamicNetDue)}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setDirectAmount(dynamicNetDue)}
-                              className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-semibold transition cursor-pointer"
-                            >
-                              Net Due: {formatCurrency(dynamicNetDue)}
-                            </button>
-                          </div>
+                        {selectedVoucher && dynamicRemaining <= 0 && (
+                          <p className="mt-1.5 text-[10px] text-slate-500">
+                            Fully paid. Any amount entered is held as advance.
+                          </p>
                         )}
 
                         {selectedVoucher &&

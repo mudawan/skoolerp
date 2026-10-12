@@ -229,10 +229,6 @@ interface AppContextType {
     assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>
   ) => { success: boolean; count: number };
   deleteTransportAssignment: (id: string) => void;
-  copyTransportAssignmentsFromPreviousMonth: (
-    targetMonth: string,
-    daysChargedOverride?: number
-  ) => { success: boolean; copiedCount: number; skippedCount: number; inactiveSkippedCount: number; error?: string };
   bulkUpdateTransportDaysForMonth: (
     targetMonth: string,
     daysCharged: number
@@ -2985,95 +2981,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
     setTransportAssignments((prev) => prev.filter((a) => a.id !== id));
-  };
-
-  const copyTransportAssignmentsFromPreviousMonth = (
-    targetMonth: string,
-    daysChargedOverride?: number
-  ) => {
-    const perm = ensureMutationAllowed('Copy transport assignments');
-    if (!perm.allowed) {
-      return { success: false, copiedCount: 0, skippedCount: 0, inactiveSkippedCount: 0, error: perm.error };
-    }
-
-    if (!targetMonth || !targetMonth.includes('-')) {
-      return { success: false, copiedCount: 0, skippedCount: 0, inactiveSkippedCount: 0, error: 'Invalid target month' };
-    }
-
-    // Determine previous month YYYY-MM
-    const [yStr, mStr] = targetMonth.split('-');
-    let y = parseInt(yStr, 10);
-    let m = parseInt(mStr, 10) - 1;
-    if (m < 1) {
-      m = 12;
-      y -= 1;
-    }
-    const prevMonth = `${y}-${String(m).padStart(2, '0')}`;
-
-    const prevAssignments = transportAssignments.filter((a) => a.month === prevMonth && a.active);
-    if (prevAssignments.length === 0) {
-      return {
-        success: false,
-        copiedCount: 0,
-        skippedCount: 0,
-        inactiveSkippedCount: 0,
-        error: `No active transport assignments found in previous month (${prevMonth}).`,
-      };
-    }
-
-    const currentMonthDays = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0).getDate();
-    const effectiveDays =
-      daysChargedOverride !== undefined && !isNaN(daysChargedOverride) && daysChargedOverride >= 0
-        ? Math.min(daysChargedOverride, currentMonthDays)
-        : currentMonthDays;
-
-    let copiedCount = 0;
-    let skippedCount = 0;
-    let inactiveSkippedCount = 0;
-    const newAssignmentsToAdd: TransportAssignment[] = [];
-
-    prevAssignments.forEach((prevAsgn) => {
-      // 1. Verify student exists and is active
-      const student = students.find((s) => s.id === prevAsgn.studentId);
-      if (!student || student.status !== 'Active') {
-        inactiveSkippedCount++;
-        return;
-      }
-
-      // 2. Check if student already has an assignment in target month
-      const alreadyHas = transportAssignments.some(
-        (a) => a.studentId === prevAsgn.studentId && a.month === targetMonth
-      );
-      if (alreadyHas) {
-        skippedCount++;
-        return;
-      }
-
-      // 3. Create cloned assignment for target month with specified or full active days
-      newAssignmentsToAdd.push({
-        id: generateUniqueId('asgn'),
-        studentId: prevAsgn.studentId,
-        month: targetMonth,
-        busId: prevAsgn.busId,
-        stopId: prevAsgn.stopId,
-        tripType: prevAsgn.tripType,
-        daysCharged: effectiveDays,
-        discount: prevAsgn.discount || 0,
-        active: true,
-      });
-      copiedCount++;
-    });
-
-    if (newAssignmentsToAdd.length > 0) {
-      setTransportAssignments((prev) => [...prev, ...newAssignmentsToAdd]);
-    }
-
-    return {
-      success: true,
-      copiedCount,
-      skippedCount,
-      inactiveSkippedCount,
-    };
   };
 
   const bulkUpdateTransportDaysForMonth = (targetMonth: string, daysCharged: number) => {
@@ -5958,7 +5865,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveTransportAssignment,
         bulkSaveTransportAssignments,
         deleteTransportAssignment,
-        copyTransportAssignmentsFromPreviousMonth,
         bulkUpdateTransportDaysForMonth,
         templates,
         saveGlobalTemplate,
