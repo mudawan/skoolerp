@@ -45,7 +45,7 @@ function MainApp() {
   const [reportStudentId, setReportStudentId] = useState<string | undefined>(undefined);
   const [reportType, setReportType] = useState<'feeCollection' | 'studentLedger' | 'outstanding'>('feeCollection');
   const [settingsInitialTab, setSettingsInitialTab] = useState<
-    'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'templatesNew' | 'users' | 'cleanup' | 'monthEnd'
+    'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd'
   >('profile');
   const [settingsTargetMonth, setSettingsTargetMonth] = useState<string | undefined>(undefined);
 
@@ -89,7 +89,6 @@ function MainApp() {
       case 'feeDefaults':
       case 'voucherRules':
       case 'templates':
-      case 'templatesNew':
         return (
           hasPermission('settings.view') ||
           hasPermission('settings.manage') ||
@@ -142,7 +141,6 @@ function MainApp() {
     'feeDefaults',
     'voucherRules',
     'templates',
-    'templatesNew',
     'transport',
     'reports',
     'audit',
@@ -361,7 +359,7 @@ function MainApp() {
                   }}
                 />
               )}
-              {(activeTab === 'voucherLayout' || activeTab === 'feeDefaults' || activeTab === 'voucherRules' || activeTab === 'templates' || activeTab === 'templatesNew') && (
+              {(activeTab === 'voucherLayout' || activeTab === 'feeDefaults' || activeTab === 'voucherRules' || activeTab === 'templates') && (
                 <SettingsView
                   viewMode="policies"
                   initialSubTab={activeTab}

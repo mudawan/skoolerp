@@ -239,16 +239,6 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             hasPermission('fees.edit') ||
             hasPermission('fees.view'),
         },
-        {
-          id: 'templatesNew',
-          label: 'Fee Templates (new)',
-          icon: FileSpreadsheet,
-          permission: () =>
-            hasPermission('settings.view') ||
-            hasPermission('settings.manage') ||
-            hasPermission('fees.edit') ||
-            hasPermission('fees.view'),
-        },
       ],
     },
     {

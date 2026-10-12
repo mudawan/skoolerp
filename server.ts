@@ -1758,6 +1758,16 @@ async function startServer() {
 
   // --- Locked Months (month-end close) ---
 
+  // Fine charged since each student's last payment (derived, stored on vouchers).
+  app.get('/api/reports/fine-since-payment', requireAuth('fees.report'), async (req: AuthenticatedRequest, res) => {
+    try {
+      const fines = await dbService.listFineSincePayment(req.institutionId as string);
+      res.json({ success: true, fines });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Failed to load fines.' });
+    }
+  });
+
   app.get('/api/locked-months', requireAuth('fees.view'), async (req: AuthenticatedRequest, res) => {
     try {
       const institutionId = req.institutionId as string;

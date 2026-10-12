@@ -3,6 +3,7 @@ import { CSV_REG_NO } from '../utils/csvHeaders';
 import { useApp } from '../context/AppContext';
 import { formatCurrency, formatMonthName, formatStudentAge, getArrearsByStudent, type StudentArrears } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
+import { apiFetchFineSincePayment } from '../services/apiSync';
 import { StudentFeeLedger } from './StudentFeeLedger';
 import { StudentAvatar } from './StudentAvatar';
 import { DatePicker } from './DatePicker';
@@ -283,6 +284,22 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const NO_ARREARS: StudentArrears = { openVouchers: [], outstanding: 0, oldestOpenMonth: '', arrearsMonths: [] };
   const arrearsByStudent = students.map((s) => ({ student: s, arrears: arrearsMap.get(s.id) || NO_ARREARS }));
 
+  // Late fine since each student's last payment: derived and stored by the
+  // server, so it is correct even for history that is not loaded here.
+  const [fineByStudent, setFineByStudent] = useState<Record<string, number> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(() => {
+      apiFetchFineSincePayment().then((f) => {
+        if (!cancelled && f) setFineByStudent(f);
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [vouchers, transactions.length]);
+
   const vouchersWithReceivable = arrearsByStudent.flatMap((x) => x.arrears.openVouchers);
 
   // Student Outstanding Balances (per student, active receivables)
@@ -307,6 +324,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         oldestUnpaidMonth: arrears.oldestOpenMonth,
         formattedMonthsList: arrears.arrearsMonths.map((m) => formatMonthName(m)).join(', '),
         totalOutstanding: arrears.outstanding,
+        fineSincePayment: fineByStudent ? fineByStudent[s.id] ?? 0 : null,
         openVouchers: arrears.openVouchers,
       };
     });
@@ -319,8 +337,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     arrearsStatusFilter === 'all' ? true : arrearsStatusFilter === 'Active' ? r.status === 'Active' : r.status !== 'Active'
   );
   const totalPending = studentOutstandingRows.reduce((sum, r) => sum + r.totalOutstanding, 0);
+  const totalFine = studentOutstandingRows.reduce((sum, r) => sum + (r.fineSincePayment ?? 0), 0);
 
-  type ArrearsSortField = 'name' | 'status' | 'class' | 'father' | 'unpaidMonths' | 'outstanding';
+  type ArrearsSortField = 'name' | 'regNo' | 'status' | 'class' | 'father' | 'unpaidMonths' | 'outstanding' | 'fine';
   const [arrearsSortField, setArrearsSortField] = useState<ArrearsSortField>('outstanding');
   const [arrearsSortDir, setArrearsSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -329,7 +348,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       setArrearsSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
       setArrearsSortField(field);
-      setArrearsSortDir(field === 'outstanding' || field === 'unpaidMonths' ? 'desc' : 'asc');
+      setArrearsSortDir(field === 'outstanding' || field === 'unpaidMonths' || field === 'fine' ? 'desc' : 'asc');
     }
   };
 
@@ -351,6 +370,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         case 'name':
           cmp = a.name.localeCompare(b.name);
           break;
+        case 'regNo':
+          cmp = a.regNo.localeCompare(b.regNo, undefined, { numeric: true });
+          break;
         case 'status':
           cmp = String(a.status).localeCompare(String(b.status));
           break;
@@ -365,6 +387,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           break;
         case 'outstanding':
           cmp = a.totalOutstanding - b.totalOutstanding;
+          break;
+        case 'fine':
+          cmp = (a.fineSincePayment ?? -1) - (b.fineSincePayment ?? -1);
           break;
       }
       return arrearsSortDir === 'asc' ? cmp : -cmp;
@@ -577,13 +602,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleCopyArrears = async () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Fine Since Last Payment', 'Total Outstanding'];
     const lines = [
       headers.join('\t'),
       ...sortedStudentOutstandingRows.map((r, i) =>
-        [i + 1, r.regNo, r.name, r.status, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.totalOutstanding].join('\t')
+        [i + 1, r.regNo, r.name, r.status, r.className, r.fatherName, r.fatherPhone, r.unpaidMonthsCount, r.fineSincePayment ?? '', r.totalOutstanding].join('\t')
       ),
-      ['TOTAL', '', '', '', '', '', '', '', totalPending].join('\t'),
+      ['TOTAL', '', '', '', '', '', '', '', totalFine, totalPending].join('\t'),
     ];
     const text = lines.join('\n');
     try {
@@ -606,7 +631,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
   const handleExportArrearsCsv = () => {
     if (sortedStudentOutstandingRows.length === 0) return;
-    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Total Outstanding'];
+    const headers = ['Sr#', CSV_REG_NO, 'Student Name', 'Status', 'Class', 'Father Name', 'Phone', 'Unpaid Months', 'Fine Since Last Payment', 'Total Outstanding'];
     const csvRows = sortedStudentOutstandingRows.map((r, i) => [
       i + 1,
       `"${r.regNo || ''}"`,
@@ -616,9 +641,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       `"${(r.fatherName || '').replace(/"/g, '""')}"`,
       `"${(r.fatherPhone || '').replace(/"/g, '""')}"`,
       r.unpaidMonthsCount,
+      r.fineSincePayment ?? '',
       r.totalOutstanding,
     ]);
-    const totalRow = ['TOTAL', '""', '""', '""', '""', '""', '""', '""', totalPending];
+    const totalRow = ['TOTAL', '""', '""', '""', '""', '""', '""', '""', totalFine, totalPending];
     const csvContent = '\uFEFF' + [headers.join(','), ...csvRows.map((e) => e.join(',')), totalRow.join(',')].join('\n');
     downloadCsv(`Student_Fee_Arrears_${activeMonth}.csv`, csvContent);
     setArrearsCsvDownloaded(true);
@@ -632,14 +658,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const pdfRows: OutstandingArrearsPdfRow[] = sortedStudentOutstandingRows.map((r) => ({
         regNo: r.regNo,
         name: r.name,
-        dob: r.dob,
-        ageStr: r.ageStr,
+        status: r.status === 'AutoDeactivated' ? 'Auto-Deactivated' : String(r.status),
         className: r.className,
         fatherName: r.fatherName,
         fatherPhone: r.fatherPhone,
         unpaidMonthsCount: r.unpaidMonthsCount,
         oldestUnpaidMonth: r.oldestUnpaidMonth,
         totalOutstanding: r.totalOutstanding,
+        fineSincePayment: r.fineSincePayment ?? 0,
       }));
       const monthLabel = formatMonthName(activeMonth);
       await exportOutstandingArrearsPdf(
@@ -665,14 +691,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const pdfRows: OutstandingArrearsPdfRow[] = sortedStudentOutstandingRows.map((r) => ({
         regNo: r.regNo,
         name: r.name,
-        dob: r.dob,
-        ageStr: r.ageStr,
+        status: r.status === 'AutoDeactivated' ? 'Auto-Deactivated' : String(r.status),
         className: r.className,
         fatherName: r.fatherName,
         fatherPhone: r.fatherPhone,
         unpaidMonthsCount: r.unpaidMonthsCount,
         oldestUnpaidMonth: r.oldestUnpaidMonth,
         totalOutstanding: r.totalOutstanding,
+        fineSincePayment: r.fineSincePayment ?? 0,
       }));
       const monthLabel = formatMonthName(activeMonth);
       await printOutstandingArrearsPdf(
@@ -1438,8 +1464,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     title="Click to sort by Student Name"
                   >
                     <div className="flex items-center gap-1">
-                      <span>Student Info</span>
+                      <span>Student Name</span>
                       {renderArrearsSortIcon('name')}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleArrearsSort('regNo')}
+                    className="p-3 cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Click to sort by Registration Number"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Reg #</span>
+                      {renderArrearsSortIcon('regNo')}
                     </div>
                   </th>
                   <th
@@ -1483,6 +1519,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </div>
                   </th>
                   <th
+                    onClick={() => handleArrearsSort('fine')}
+                    className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
+                    title="Late fine charged since the student's last payment (already included in Outstanding)"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Fine Since Last Payment</span>
+                      {renderArrearsSortIcon('fine')}
+                    </div>
+                  </th>
+                  <th
                     onClick={() => handleArrearsSort('outstanding')}
                     className="p-3 text-right cursor-pointer hover:bg-slate-200/70 transition group text-slate-700 whitespace-nowrap"
                     title="Click to sort by Outstanding Net Amount"
@@ -1502,19 +1548,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="p-3">
                         <div className="flex items-center gap-2.5">
                           <StudentAvatar photoUrl={r.photoUrl} name={r.name} size="xs" />
-                          <div>
-                            <span className="font-bold text-slate-900 block">{r.name}</span>
-                            <span className="text-[11px] text-slate-500 font-mono font-semibold block">
-                              Reg #: {r.regNo}
-                            </span>
-                            {r.dob && (
-                              <span className="text-[10px] text-slate-400 font-medium block">
-                                DOB: {r.dob} ({r.ageStr})
-                              </span>
-                            )}
-                          </div>
+                          <span className="font-bold text-slate-900">{r.name}</span>
                         </div>
                       </td>
+                      <td className="p-3 font-mono font-semibold text-slate-600 whitespace-nowrap">{r.regNo}</td>
                       <td className="p-3 whitespace-nowrap">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${
@@ -1560,6 +1597,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           </span>
                         </div>
                       </td>
+                      <td className="p-3 text-right font-semibold text-amber-700 whitespace-nowrap">
+                        {r.fineSincePayment === null ? '—' : formatCurrency(r.fineSincePayment)}
+                      </td>
                       <td className="p-3 text-right font-bold text-rose-600">
                         {formatCurrency(r.totalOutstanding)}
                       </td>
@@ -1578,7 +1618,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={9} className="p-8 text-center text-slate-400 italic">
                       Zero outstanding defaulter arrears found!
                     </td>
                   </tr>

@@ -84,7 +84,7 @@ import {
 } from 'lucide-react';
 
 export interface SettingsViewProps {
-  initialSubTab?: 'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'templatesNew' | 'users' | 'cleanup' | 'monthEnd' | 'database';
+  initialSubTab?: 'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database';
   targetMonth?: string;
   viewMode?: 'settings' | 'policies';
   onNavigateToTab?: (tab: ActiveTab) => void;
@@ -154,7 +154,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   } = useApp();
 
   const defaultSubTab = initialSubTab || (viewMode === 'policies' ? 'feeDefaults' : 'profile');
-  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'templatesNew' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(defaultSubTab);
+  const [activeSubTab, setActiveSubTab] = useState<'profile' | 'appearance' | 'voucherLayout' | 'feeDefaults' | 'voucherRules' | 'banks' | 'templates' | 'users' | 'cleanup' | 'monthEnd' | 'database'>(defaultSubTab);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -1132,21 +1132,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       .slice(0, 30);
   }, [students, classes, studentSearchQuery]);
 
-  // Overrides list scope filter: 'all' (all overrides) | 'target' (target month + all-months) | 'all_months' (recurring only) | 'billing' (active billing month + all-months)
-  const [overridesFilter, setOverridesFilter] = useState<'all' | 'target' | 'active' | 'all_months' | 'billing'>('all');
-
-  // "Fee Templates (new)" directory: period dropdown, search, class filter and pagination
-  const newDirUi = activeSubTab === 'templatesNew';
+  // Overrides Directory: period dropdown, search, class filter and pagination
   const [dirPeriod, setDirPeriod] = useState<'billing' | 'month' | 'recurring' | 'all'>('billing');
   const [dirMonth, setDirMonth] = useState<string>(activeMonth);
   const [dirSearch, setDirSearch] = useState('');
   const [dirClassId, setDirClassId] = useState('all');
+  const [dirTab, setDirTab] = useState<'students' | 'classes' | 'global'>('students');
   const [dirPage, setDirPage] = useState(1);
   const [dirPerPage, setDirPerPage] = useState(25);
-  const effectiveOverridesFilter: 'all' | 'target' | 'active' | 'all_months' | 'billing' = newDirUi
-    ? ({ billing: 'billing', month: 'target', recurring: 'all_months', all: 'all' } as const)[dirPeriod]
-    : overridesFilter;
-  const overridesFilterMonth = newDirUi && dirPeriod === 'month' ? dirMonth : templateSpecificMonth;
+  const effectiveOverridesFilter = ({ billing: 'billing', month: 'target', recurring: 'all_months', all: 'all' } as const)[dirPeriod];
+  const overridesFilterMonth = dirMonth;
 
   // List of all classes with active custom overrides (Flex 1-4 and Fine)
   const activeClassOverridesList = useMemo(() => {
@@ -1162,7 +1157,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     for (const t of classOverrides) {
       const m = !t.month || t.month === 'all' ? 'all' : t.month;
       if (effectiveOverridesFilter === 'all_months' && m !== 'all') continue;
-      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && m !== overridesFilterMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'target' && m !== overridesFilterMonth && m !== 'all') continue;
       if (effectiveOverridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
 
       const key = `${t.classId}:::${m}`;
@@ -1204,7 +1199,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     for (const t of studentOverrides) {
       const m = !t.month || t.month === 'all' ? 'all' : t.month;
       if (effectiveOverridesFilter === 'all_months' && m !== 'all') continue;
-      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && m !== overridesFilterMonth && m !== 'all') continue;
+      if (effectiveOverridesFilter === 'target' && m !== overridesFilterMonth && m !== 'all') continue;
       if (effectiveOverridesFilter === 'billing' && m !== activeMonth && m !== 'all') continue;
 
       const key = `${t.studentId}:::${m}`;
@@ -1240,7 +1235,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (t.classId || t.studentId) continue;
       if (!t.month || t.month === 'all') continue;
       if (effectiveOverridesFilter === 'all_months') continue;
-      if ((effectiveOverridesFilter === 'target' || effectiveOverridesFilter === 'active') && t.month !== overridesFilterMonth) continue;
+      if (effectiveOverridesFilter === 'target' && t.month !== overridesFilterMonth) continue;
       if (effectiveOverridesFilter === 'billing' && t.month !== activeMonth) continue;
       if (!map.has(t.month)) map.set(t.month, []);
       map.get(t.month)!.push(t);
@@ -1253,10 +1248,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         overrides: [...items].sort((a, b) => a.sortOrder - b.sortOrder),
       }));
   }, [templates, effectiveOverridesFilter, overridesFilterMonth, activeMonth]);
-
-  // Total active overrides count across global (month-specific), class and student tiers
-  const totalOverridesCount =
-    activeGlobalOverridesList.length + activeClassOverridesList.length + activeStudentOverridesList.length;
 
   // Stable counts across every period (used for badges / dropdown counts in the new layout)
   const allPeriodCounts = useMemo(() => {
@@ -1276,12 +1267,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
     return { global: g.size, classes: c.size, students: st.size, total: g.size + c.size + st.size };
   }, [templates, students, classes]);
-  const badgeTotal = newDirUi ? allPeriodCounts.total : totalOverridesCount;
-  const badgeGlobal = newDirUi ? allPeriodCounts.global : activeGlobalOverridesList.length;
-  const badgeClasses = newDirUi ? allPeriodCounts.classes : activeClassOverridesList.length;
-  const badgeStudents = newDirUi ? allPeriodCounts.students : activeStudentOverridesList.length;
+  const badgeTotal = allPeriodCounts.total;
+  const badgeGlobal = allPeriodCounts.global;
+  const badgeClasses = allPeriodCounts.classes;
+  const badgeStudents = allPeriodCounts.students;
 
-  // Sortable directory tables (old and new layouts)
+  // Sortable directory tables
   const { sort: globalSort, toggleSort: toggleGlobalSort } = useSortState();
   const { sort: classSort, toggleSort: toggleClassSort } = useSortState();
   const { sort: studentSort, toggleSort: toggleStudentSort } = useSortState();
@@ -1293,31 +1284,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const classRowsView = useMemo(() => {
     let rows = activeClassOverridesList;
-    if (newDirUi) {
-      if (dirClassId !== 'all') rows = rows.filter((r) => r.classId === dirClassId);
-      const q = dirSearch.trim().toLowerCase();
-      if (q) rows = rows.filter((r) => r.className.toLowerCase().includes(q));
-    }
+    if (dirClassId !== 'all') rows = rows.filter((r) => r.classId === dirClassId);
+    const q = dirSearch.trim().toLowerCase();
+    if (q) rows = rows.filter((r) => r.className.toLowerCase().includes(q));
     return sortRows<(typeof activeClassOverridesList)[number]>(rows, classSort, {
       class: (r) => r.className,
       schedule: (r) => (r.isAllMonths ? '0000-00' : r.month),
       fee: (r) => r.classObj?.monthlyFee || 0,
     });
-  }, [activeClassOverridesList, classSort, newDirUi, dirClassId, dirSearch]);
+  }, [activeClassOverridesList, classSort, dirClassId, dirSearch]);
 
   const studentRowsView = useMemo(() => {
     let rows = activeStudentOverridesList;
-    if (newDirUi) {
-      if (dirClassId !== 'all') rows = rows.filter((r) => r.student?.classId === dirClassId);
-      const q = dirSearch.trim().toLowerCase();
-      if (q) {
-        rows = rows.filter(
-          (r) =>
-            (r.student?.name || '').toLowerCase().includes(q) ||
-            (r.student?.regNo || '').toLowerCase().includes(q) ||
-            r.className.toLowerCase().includes(q)
-        );
-      }
+    if (dirClassId !== 'all') rows = rows.filter((r) => r.student?.classId === dirClassId);
+    const q = dirSearch.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(
+        (r) =>
+          (r.student?.name || '').toLowerCase().includes(q) ||
+          (r.student?.regNo || '').toLowerCase().includes(q) ||
+          r.className.toLowerCase().includes(q)
+      );
     }
     return sortRows<(typeof activeStudentOverridesList)[number]>(rows, studentSort, {
       name: (r) => r.student?.name,
@@ -1325,13 +1312,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       class: (r) => r.className,
       schedule: (r) => (r.isAllMonths ? '0000-00' : r.month),
     });
-  }, [activeStudentOverridesList, studentSort, newDirUi, dirClassId, dirSearch]);
+  }, [activeStudentOverridesList, studentSort, dirClassId, dirSearch]);
 
-  const dirTotalPages = newDirUi ? Math.max(1, Math.ceil(studentRowsView.length / dirPerPage)) : 1;
+  const dirTotalPages = Math.max(1, Math.ceil(studentRowsView.length / dirPerPage));
   const dirSafePage = Math.min(dirPage, dirTotalPages);
-  const studentPageRows = newDirUi
-    ? studentRowsView.slice((dirSafePage - 1) * dirPerPage, dirSafePage * dirPerPage)
-    : studentRowsView;
+  const studentPageRows = studentRowsView.slice((dirSafePage - 1) * dirPerPage, dirSafePage * dirPerPage);
 
   useEffect(() => {
     setDirPage(1);
@@ -1357,7 +1342,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Clear bulk selection when activeMonth, templateSpecificMonth or filter changes
   useEffect(() => {
     setSelectedOverrideKeys([]);
-  }, [activeMonth, templateSpecificMonth, overridesFilter, dirPeriod, dirMonth, dirSearch, dirClassId]);
+  }, [activeMonth, templateSpecificMonth, dirPeriod, dirMonth, dirSearch, dirClassId]);
 
   // Header checkbox: selects / deselects the rows on the current page (all rows in the old layout)
   const handleToggleSelectAllOverrides = () => {
@@ -2059,14 +2044,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       subtitle: 'How prior and skipped months are handled, and how voucher deletion resolves the chain.',
       icon: Sliders,
     },
-    templatesNew: {
-      title: 'Fee Structure & Particulars Templates (new)',
-      subtitle: 'Same templates, with a period filter, search, sortable columns and pagination in the Overrides Directory.',
-      icon: FileSpreadsheet,
-    },
     templates: {
       title: 'Fee Structure & Particulars Templates',
-      subtitle: 'Standard monthly tuition templates, class-level rate sheets, and individualized student fee overrides.',
+      subtitle: 'Standard monthly tuition templates, class-level rate sheets, and individualized student fee overrides, with a filterable, paginated Overrides Directory.',
       icon: FileSpreadsheet,
     },
     monthEnd: {
@@ -2186,7 +2166,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* Subtab 3: Fee Particular Templates */}
-      {(activeSubTab === 'templates' || activeSubTab === 'templatesNew') && (
+      {activeSubTab === 'templates' && (
         <div className="space-y-4">
           {/* 4-Tier Fee Template Scope Switcher Card */}
           <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
@@ -3257,8 +3237,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Scope 4: Active Overrides Directory */}
       {templateScopeMode === 'overrides' && (
         <div className="space-y-4">
-          {newDirUi ? (
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+              <div className="inline-flex p-1 bg-slate-100 rounded-xl gap-1 border border-slate-200/70 flex-wrap">
+                {([
+                  ['students', 'Students', activeStudentOverridesList.length],
+                  ['classes', 'Classes', activeClassOverridesList.length],
+                  ['global', 'Global months', activeGlobalOverridesList.length],
+                ] as const).map(([key, label, n]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    id={`tab-dir-${key}`}
+                    onClick={() => setDirTab(key)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      dirTab === key ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {label} <span className="ml-1 text-slate-400">{n}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
                   Period
@@ -3294,6 +3293,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 )}
               </div>
 
+              {dirTab !== 'global' && (
               <div className="flex flex-wrap items-center gap-2">
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -3330,93 +3330,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   ))}
                 </select>
               </div>
-            </div>
-          ) : (
-            <>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
-            <div className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-teal-600 shrink-0" />
-              <div>
-                <span className="text-xs font-bold text-slate-800">Overrides List View:</span>{' '}
-                <span className="text-xs text-slate-500">
-                  Filter global, class and student custom overrides by application period
-                </span>
+              )}
               </div>
             </div>
-
-            <div className="inline-flex p-1 bg-slate-100 rounded-xl gap-1 shrink-0 self-start sm:self-auto border border-slate-200/70 flex-wrap">
-              <button
-                type="button"
-                id="btn-filter-overrides-all"
-                onClick={() => setOverridesFilter('all')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  overridesFilter === 'all'
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All Overrides
-              </button>
-              <button
-                type="button"
-                id="btn-filter-overrides-all-months"
-                onClick={() => setOverridesFilter('all_months')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  overridesFilter === 'all_months'
-                    ? 'bg-white text-teal-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All Months (Recurring)
-              </button>
-              <button
-                type="button"
-                id="btn-filter-overrides-target"
-                onClick={() => setOverridesFilter('target')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  overridesFilter === 'target' || overridesFilter === 'active'
-                    ? 'bg-white text-indigo-900 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Target Month ({formatMonthName(templateSpecificMonth)})
-              </button>
-              {activeMonth !== templateSpecificMonth && (
-                <button
-                  type="button"
-                  id="btn-filter-overrides-billing"
-                  onClick={() => setOverridesFilter('billing')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    overridesFilter === 'billing'
-                      ? 'bg-white text-indigo-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Billing Month ({formatMonthName(activeMonth)})
-                </button>
-              )}
-            </div>
-          </div>
-            </>
-          )}
 
           {/* Month-specific Global Templates */}
+          {dirTab === 'global' && (
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-teal-600" />
-                  Month-Specific Global Templates
-                </h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Months that use their own global fee particulars instead of the recurring Global Default.
-                </p>
-              </div>
-              <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-auto">
-                {activeGlobalOverridesList.length} month{activeGlobalOverridesList.length === 1 ? '' : 's'}
-              </span>
-            </div>
-
             {activeGlobalOverridesList.length > 0 ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
@@ -3501,24 +3421,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Active Class Overrides Table */}
+          {dirTab === 'classes' && (
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-indigo-600" />
-                  Class-Level Fee Overrides
-                </h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Classes configured with custom particulars (Fine & Flex 1–4) for recurring or month-specific periods.
-                </p>
-              </div>
-              <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg self-start sm:self-auto">
-                {classRowsView.length} class override{classRowsView.length === 1 ? '' : 's'}
-              </span>
-            </div>
-
             {classRowsView.length > 0 ? (
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <div className="overflow-x-auto">
@@ -3617,20 +3524,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Active Student Overrides Table */}
+          {dirTab === 'students' && (
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-              <div>
-                <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-teal-600" />
-                  Student Individual Fee Overrides
-                </h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Students configured with custom fine and Flex 1–4 particulars overrides for recurring or month-specific periods.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            <div className="flex justify-end">
+              <div className="flex items-center gap-2 flex-wrap">
                 {selectedOverrideKeys.length > 0 && hasPermission('settings.manage') && (
                   <button
                     type="button"
@@ -3645,19 +3545,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <>
                     <button
                       type="button"
-                      id="btn-upload-overrides-csv-section"
-                      onClick={() => {
-                        setCsvParseError(null);
-                        setShowCsvModal(true);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition cursor-pointer"
-                      title="Bulk import fee overrides via CSV"
-                    >
-                      <Upload className="w-3.5 h-3.5 text-teal-600" />
-                      Import CSV
-                    </button>
-                    <button
-                      type="button"
                       id="btn-export-overrides-csv-section"
                       onClick={handleExportStudentOverridesCsv}
                       className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
@@ -3666,25 +3553,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <Download className="w-3.5 h-3.5 text-slate-600" />
                       Export CSV
                     </button>
-                    <button
-                      type="button"
-                      id="btn-sample-overrides-csv-section"
-                      onClick={handleDownloadSampleCsv}
-                      className="flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition cursor-pointer"
-                      title="Download sample CSV format with dummy rows"
-                    >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-slate-600" />
-                      Sample CSV
-                    </button>
                   </>
                 )}
-                <span className="text-slate-600 font-bold text-xs bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg">
-                  {studentRowsView.length} override{studentRowsView.length === 1 ? '' : 's'}
-                </span>
               </div>
             </div>
 
-            {newDirUi && selectedOverrideKeys.length > 0 && hasPermission('settings.manage') && (
+            {selectedOverrideKeys.length > 0 && hasPermission('settings.manage') && (
               <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs">
                 <span className="font-bold text-amber-950">{selectedOverrideKeys.length} selected</span>
                 {selectedOverrideKeys.length < studentRowsView.length && (
@@ -3725,7 +3599,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                 studentPageRows.every((r) => selectedOverrideKeys.includes(r.uniqueKey))
                               }
                               onChange={handleToggleSelectAllOverrides}
-                              title={newDirUi ? 'Select all on this page' : 'Select all'}
+                              title="Select all on this page"
                               className="rounded text-teal-600 focus:ring-teal-500 cursor-pointer"
                             />
                           </th>
@@ -3836,7 +3710,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </tbody>
                   </table>
                 </div>
-                {newDirUi && (
                   <div className="p-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 bg-white">
                     <div className="flex items-center gap-3">
                       <RecordsPerPageSelector
@@ -3878,14 +3751,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </button>
                     </div>
                   </div>
-                )}
               </div>
             ) : (
               <div className="p-4 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
-                No student-specific Flex 1–4 template overrides match the selected view.
+                No template overrides match the selected view.
               </div>
             )}
           </div>
+          )}
         </div>
       )}
     </div>
@@ -4073,7 +3946,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <Upload className="w-5 h-5 text-teal-600" />
                 {parsedCsvRows.length > 0
                   ? 'Preview & Verify Fee Template Overrides'
-                  : `Import Fee Template Overrides (${effectiveTemplateMonth === 'all' ? 'All Months Recurring' : formatMonthName(effectiveTemplateMonth)})`}
+                  : 'Import Fee Template Overrides'}
               </h3>
               <button
                 type="button"
@@ -4093,22 +3966,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {parsedCsvRows.length === 0 ? (
               <div className="space-y-3 text-xs text-slate-600">
                 <p>
-                  Upload a CSV file with student fee template overrides for <strong>{effectiveTemplateMonth === 'all' ? 'All Months (Recurring Baseline)' : `${formatMonthName(effectiveTemplateMonth)} (${effectiveTemplateMonth})`}</strong>. First row must contain column headers.
+                  Upload a CSV file with student fee template overrides for <strong>{effectiveTemplateMonth === 'all' ? 'All Months (Recurring)' : formatMonthName(effectiveTemplateMonth)}</strong>. First row must contain column headers.
                 </p>
 
-                <div className="flex flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={handleDownloadSampleCsv}
-                    className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer self-start"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    Download Sample CSV Format (2–3 Dummy Rows)
-                  </button>
-                  <span className="text-[11px] text-slate-500">
-                    Provides 2–3 dummy example rows demonstrating column headers and values. To export current active student overrides, use <strong>Export CSV</strong> in the Overrides Directory.
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadSampleCsv}
+                  className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer self-start"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Download Sample CSV Format
+                </button>
 
                 {/* Status / Error alerts */}
                 {csvParseError && (

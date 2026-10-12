@@ -1328,6 +1328,18 @@ const auditQueryString = (query: AuditLogQuery): string => {
 const instHeaders = (): Record<string, string> =>
   activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {};
 
+/** Late fine charged since each student's last payment, keyed by student id (server-derived). */
+export async function apiFetchFineSincePayment(): Promise<Record<string, number> | null> {
+  try {
+    const res = await fetch('/api/reports/fine-since-payment', { headers: instHeaders() });
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    return body && body.success && body.fines ? (body.fines as Record<string, number>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function apiFetchAuditLogs(
   query: AuditLogQuery,
   signal?: AbortSignal

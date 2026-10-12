@@ -322,6 +322,36 @@ function requireTenantId(institutionId: string | undefined | null): string {
   return institutionId;
 }
 
+/**
+ * Derived value kept on every voucher: the late fine charged since the
+ * student's last payment. A voucher that has received any payment holds 0;
+ * every later voucher holds the previous voucher's value plus its own Fine
+ * particulars. The student's current figure is therefore the value on their
+ * latest voucher. Recomputed here, in one place, whenever vouchers or payments
+ * change ($1 = institution or NULL for all, $2 = student ids or NULL for all).
+ */
+const FINE_SINCE_PAYMENT_REFRESH_SQL = `
+  WITH base AS (
+    SELECT v.id, v.student_id, v.month,
+           CASE WHEN v.amount_paid > 0 THEN 0
+                ELSE COALESCE((SELECT SUM(p.amount) FROM voucher_particulars p WHERE p.voucher_id = v.id AND p.kind = 'Fine'), 0)
+           END AS fine,
+           v.amount_paid > 0 AS paid
+    FROM vouchers v
+    WHERE v.status <> 'Reversed'
+      AND ($1::text IS NULL OR v.institution_id = $1)
+      AND ($2::text[] IS NULL OR v.student_id = ANY($2))
+  ), grouped AS (
+    SELECT *, COUNT(*) FILTER (WHERE paid) OVER (PARTITION BY student_id ORDER BY month, id) AS grp FROM base
+  ), calc AS (
+    SELECT id, CASE WHEN paid THEN 0 ELSE SUM(fine) OVER (PARTITION BY student_id, grp ORDER BY month, id) END AS val
+    FROM grouped
+  )
+  UPDATE vouchers v SET fine_since_payment = c.val
+  FROM calc c
+  WHERE v.id = c.id AND v.fine_since_payment IS DISTINCT FROM c.val
+`;
+
 class DatabaseService {
   private engine: DbEngineType = 'postgres';
   private pgPool: pg.Pool | null = null;
@@ -738,6 +768,7 @@ class DatabaseService {
           voucher_type VARCHAR(32),
           carry_forward_month VARCHAR(16),
           carried_late_fine NUMERIC,
+          fine_since_payment NUMERIC NOT NULL DEFAULT 0,
           notes TEXT,
           created_date VARCHAR(32),
           created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -899,6 +930,16 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_audit_logs_institution_type_time ON audit_logs(institution_id, action_type, timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
       `);
+
+      // Databases created before fine_since_payment existed: add the derived
+      // column and fill it once for every student.
+      const fspCol = await client.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_name = 'vouchers' AND column_name = 'fine_since_payment'`
+      );
+      if (fspCol.rowCount === 0) {
+        await client.query(`ALTER TABLE vouchers ADD COLUMN fine_since_payment NUMERIC NOT NULL DEFAULT 0`);
+        await client.query(FINE_SINCE_PAYMENT_REFRESH_SQL, [null, null]);
+      }
     } finally {
       client.release();
     }
@@ -1949,6 +1990,20 @@ class DatabaseService {
           await client.query(`DELETE FROM vouchers WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
         }
 
+        // Keep the derived fine_since_payment of every touched student correct,
+        // whatever caused the change (payment, reversal, generation, carry
+        // forward, deletion, reissue, restore).
+        const touchedStudents = new Set<string>();
+        for (const v of Object.values(writes.voucherUpserts || {})) touchedStudents.add((v as any).studentId);
+        for (const t of writes.newTransactions || []) touchedStudents.add(t.studentId);
+        for (const id of writes.deleteVoucherIds || []) {
+          const l = locked.get(id);
+          if (l) touchedStudents.add(l.studentId);
+        }
+        if (touchedStudents.size > 0) {
+          await client.query(FINE_SINCE_PAYMENT_REFRESH_SQL, [tenantId, Array.from(touchedStudents)]);
+        }
+
         await client.query('COMMIT');
         return result;
       } catch (err) {
@@ -1960,6 +2015,27 @@ class DatabaseService {
     }
 
     throw new Error('No database engine available for voucher transaction.');
+  }
+
+  /**
+   * Fine charged since each student's last payment (the stored value on their
+   * latest non-reversed voucher).
+   */
+  public async listFineSincePayment(institutionId: string): Promise<Record<string, number>> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (this.engine === 'postgres' && this.pgPool) {
+      const res = await this.pgPool.query(
+        `SELECT DISTINCT ON (student_id) student_id, fine_since_payment
+         FROM vouchers WHERE institution_id = $1 AND status <> 'Reversed'
+         ORDER BY student_id, month DESC, id DESC`,
+        [tenantId]
+      );
+      const out: Record<string, number> = {};
+      for (const row of res.rows) out[row.student_id] = Number(row.fine_since_payment) || 0;
+      return out;
+    }
+    return {};
   }
 
   // --- Generic simple-entity CRUD (classes, families, buses, stops, transport_assignments, fee_templates, bank_accounts) ---

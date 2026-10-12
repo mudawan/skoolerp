@@ -314,7 +314,6 @@ export type ActiveTab =
   | 'feeDefaults'
   | 'voucherRules'
   | 'templates'
-  | 'templatesNew'
   | 'transport'
   | 'reports'
   | 'audit'
