@@ -4457,8 +4457,12 @@ class DatabaseService {
 
   /** Applies each institution's retention setting (months; 0 = keep forever, default 6). */
   public async runAuditRetention(): Promise<{ institutionId: string; deleted: number; cutoff: string; months: number }[]> {
-    await this.init();
-    if (!(this.engine === 'postgres' && this.pgPool)) return [];
+    try {
+      await this.init();
+    } catch {
+      return [];
+    }
+    if (!(this.engine === 'postgres' && this.pgPool && this.isInitialized)) return [];
     const res = await this.pgPool.query('SELECT id, settings FROM institutions');
     const out: { institutionId: string; deleted: number; cutoff: string; months: number }[] = [];
     for (const row of res.rows) {

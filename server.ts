@@ -166,7 +166,11 @@ async function startServer() {
   });
 
   // Initialize Database Schema (no demo seeding - clean state for institutions)
-  await dbService.init();
+  try {
+    await dbService.init();
+  } catch (err: any) {
+    console.warn('[DB] PostgreSQL connection attempt failed at startup. The server will continue running in degraded/offline mode until connected:', err?.message || err);
+  }
 
   // Enforce zero caching on all API endpoints across all browsers, proxies, and intermediaries
   // CSRF defence in depth (on top of the SameSite=Lax session cookie): browsers

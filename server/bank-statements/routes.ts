@@ -38,10 +38,14 @@ export interface BankStatementRouteDeps {
 const PAYMENT_CHOICES = new Set(['auto', 'BankDeposit', 'OnlineTransfer', 'SchoolCashier']);
 
 export async function registerBankStatementRoutes(app: express.Express, d: BankStatementRouteDeps): Promise<void> {
-  await dbService.init();
-  await dbService.withTx(async (client) => {
-    await ensureBankStatementSchema(client);
-  });
+  try {
+    await dbService.init();
+    await dbService.withTx(async (client) => {
+      await ensureBankStatementSchema(client);
+    });
+  } catch (err: any) {
+    console.warn('[BankStatements] Database schema init deferred until connection is available:', err?.message || err);
+  }
 
   const pool = (dbService as any).pgPool as { query: (t: string, p?: any[]) => Promise<any> };
   const baseDeps: ServiceDeps = {

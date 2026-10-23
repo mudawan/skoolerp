@@ -15,6 +15,7 @@
     "test:bank": "node --import tsx --test tests/bank-statements/adapters.test.ts tests/bank-statements/logic.test.ts tests/bank-statements/integration.test.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
@@ -29,6 +30,7 @@
     "motion": "^12.23.24",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.23.0",
+    "pg-mem": "^3.0.14",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
