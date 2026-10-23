@@ -301,7 +301,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     );
   }, [formData.regNo, students, student]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -389,14 +389,14 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
     };
 
     if (isEdit && student) {
-      const res = updateStudent(student.id, payload);
+      const res = await updateStudent(student.id, payload);
       if (res.success) {
         onSuccess();
       } else {
         setFormError(res.error || 'Failed to update student.');
       }
     } else {
-      const res = addStudent(payload);
+      const res = await addStudent(payload);
       if (res.success) {
         onSuccess();
       } else {

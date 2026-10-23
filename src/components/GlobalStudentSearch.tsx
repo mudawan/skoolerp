@@ -58,7 +58,7 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
   }, [classes]);
 
   const familyMap = useMemo(() => {
-    return new Map(families.map((f) => [f.id, f.name]));
+    return new Map(families.map((f) => [f.id, f.headName]));
   }, [families]);
 
   // Global keyboard shortcut: Cmd+K / Ctrl+K / '/' to focus search
@@ -416,7 +416,6 @@ export const GlobalStudentSearch: React.FC<GlobalStudentSearchProps> = ({
                         <StudentAvatar
                           name={student.name}
                           photoUrl={student.photoUrl}
-                          gender={student.gender}
                           size="md"
                         />
 

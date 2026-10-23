@@ -59,7 +59,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
   onSubmit,
   onClose,
 }) => {
-  const { classes } = useApp();
+  const { classes, financialSaving } = useApp();
   const student = students.find((s) => s.id === voucher.studentId);
   const studentClass = classes.find(
     (c) => c.id === voucher.classId || c.id === student?.classId
@@ -381,7 +381,7 @@ export const CollectPaymentModal: React.FC<CollectPaymentModalProps> = ({
                   </button>
                   <button
                     type="submit"
-                    disabled={Number(amount) <= 0}
+                    disabled={Number(amount) <= 0 || financialSaving}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                   >
                     <Receipt className="w-3.5 h-3.5" />

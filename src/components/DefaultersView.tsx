@@ -12,7 +12,7 @@ import { CollectPaymentModal } from './vouchers/CollectPaymentModal';
 import { RecordsPerPageSelector } from './RecordsPerPageSelector';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { downloadCsv } from '../utils/csv';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getNextMonthString, roundUpToMultiple } from '../utils/feeMath';
+import { buildLatestVoucherMap, formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getNextMonthString, roundUpToMultiple } from '../utils/feeMath';
 import {
   AlertTriangle,
   ArrowRight,
@@ -39,6 +39,7 @@ export const DefaultersView: React.FC = () => {
   const {
     activeMonth,
     vouchers,
+    isMonthLocked,
     students,
     classes,
     templates,
@@ -46,6 +47,7 @@ export const DefaultersView: React.FC = () => {
     updateVoucherParticulars,
     bulkCarryForwardDefaulters,
     undoCarryForwardVoucher,
+    financialSaving,
     getMonthClosureStatus,
     hasPermission,
     themeConfig,
@@ -54,6 +56,10 @@ export const DefaultersView: React.FC = () => {
     roundingEnabled,
     showToast,
   } = useApp();
+  const latestVoucherByStudent = useMemo(() => buildLatestVoucherMap(vouchers), [vouchers]);
+  const canTakePayment = (v: { id: string; studentId: string; month: string }) =>
+    latestVoucherByStudent.get(v.studentId)?.id === v.id && !isMonthLocked(v.month);
+
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [addLateFine, setAddLateFine] = useState(true);
@@ -146,10 +152,10 @@ export const DefaultersView: React.FC = () => {
     });
   };
 
-  const executeUndoCarryForward = () => {
-    if (!undoCarryModal?.targetVoucher) return;
+  const executeUndoCarryForward = async () => {
+    if (!undoCarryModal?.targetVoucher || financialSaving) return;
     const v = undoCarryModal.targetVoucher;
-    const res = undoCarryForwardVoucher(v.id);
+    const res = await undoCarryForwardVoucher(v.id);
 
     if (res.success) {
       showToast(`Successfully reverted carry forward for Voucher #${v.voucherNo} (${formatMonthName(v.month)})!`);
@@ -198,13 +204,13 @@ export const DefaultersView: React.FC = () => {
     setBulkUndoModal({ valid, blocked });
   };
 
-  const executeBulkUndoCarryForward = () => {
-    if (!bulkUndoModal) return;
+  const executeBulkUndoCarryForward = async () => {
+    if (!bulkUndoModal || financialSaving) return;
     let done = 0;
     const failures: string[] = [];
     const restoredIds: string[] = [];
     for (const v of bulkUndoModal.valid) {
-      const res = undoCarryForwardVoucher(v.id);
+      const res = await undoCarryForwardVoucher(v.id);
       if (res.success) {
         done++;
         restoredIds.push(v.id);
@@ -230,7 +236,7 @@ export const DefaultersView: React.FC = () => {
 
   const studentRef = (studentId: string) => {
     const st = students.find((s) => s.id === studentId);
-    return st?.rollNumber ? `Roll: ${st.rollNumber}` : st?.regNo ? `Reg: ${st.regNo}` : '';
+    return st?.regNo ? `Reg: ${st.regNo}` : '';
   };
 
   const buildExportTable = (rows: FeeVoucher[]) => {
@@ -446,13 +452,12 @@ export const DefaultersView: React.FC = () => {
       // Search Query Filter
       if (trimmed) {
         const matchesName = student?.name?.toLowerCase().includes(trimmed);
-        const matchesRoll = student?.rollNumber?.toLowerCase().includes(trimmed);
         const matchesReg = student?.regNo?.toLowerCase().includes(trimmed);
         const matchesFather = student?.fatherName?.toLowerCase().includes(trimmed);
         const matchesVoucherNo = v.voucherNo?.toLowerCase().includes(trimmed);
         const matchesClass = cls?.name?.toLowerCase().includes(trimmed);
 
-        if (!matchesName && !matchesRoll && !matchesReg && !matchesFather && !matchesVoucherNo && !matchesClass) {
+        if (!matchesName && !matchesReg && !matchesFather && !matchesVoucherNo && !matchesClass) {
           return false;
         }
       }
@@ -523,7 +528,7 @@ export const DefaultersView: React.FC = () => {
           cmp = (a.grossTotal || a.netDue) - (b.grossTotal || b.netDue);
           break;
         case 'concession':
-          cmp = (a.totalConcession || 0) - (b.totalConcession || 0);
+          cmp = (a.discountTotal || 0) - (b.discountTotal || 0);
           break;
         case 'status':
           cmp = (a.status || '').localeCompare(b.status || '');
@@ -648,9 +653,9 @@ export const DefaultersView: React.FC = () => {
     setCollectNotes('');
   };
 
-  const handleSaveLineItemsOnly = () => {
+  const handleSaveLineItemsOnly = async () => {
     if (!collectingVoucher) return;
-    const res = updateVoucherParticulars(collectingVoucher.id, collectItems);
+    const res = await updateVoucherParticulars(collectingVoucher.id, collectItems);
     if (res.success) {
       showToast('Voucher line items and totals updated successfully!', 'success');
       if (res.voucher) {
@@ -661,9 +666,9 @@ export const DefaultersView: React.FC = () => {
     }
   };
 
-  const handleSavePayment = (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!collectingVoucher) return;
+    if (!collectingVoucher || financialSaving) return;
 
     const numAmount = Number(collectAmount);
     if (isNaN(numAmount) || numAmount <= 0) {
@@ -671,7 +676,7 @@ export const DefaultersView: React.FC = () => {
       return;
     }
 
-    const res = collectVoucherPayment(
+    const res = await collectVoucherPayment(
       collectingVoucher.id,
       numAmount,
       collectMode,
@@ -1186,7 +1191,7 @@ export const DefaultersView: React.FC = () => {
                             <div className="min-w-0">
                               <div className="font-bold text-slate-900 truncate">{student?.name || 'Unknown'}</div>
                               <div className="text-[11px] text-slate-500 font-medium">
-                                {student?.rollNumber ? `Roll: ${student.rollNumber}` : student?.regNo ? `Reg: ${student.regNo}` : ''}
+                                {student?.regNo ? `Reg: ${student.regNo}` : ''}
                               </div>
                             </div>
                           </div>
@@ -1201,11 +1206,18 @@ export const DefaultersView: React.FC = () => {
                         <td className="p-3 font-bold text-rose-600 font-mono text-right">{formatCurrency(outstanding)}</td>
                         <td className="p-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
-                            {hasPermission('fees.collect') && (
+                            {hasPermission('fees.collect') && (() => {
+                              const target = latestVoucherByStudent.get(v.studentId);
+                              return !!target && target.status !== 'Carried' && !isMonthLocked(target.month);
+                            })() && (
                               <button
                                 type="button"
-                                onClick={() => handleOpenCollectModal(v)}
-                                title={`Collect payment for voucher #${v.voucherNo}`}
+                                onClick={() => handleOpenCollectModal(latestVoucherByStudent.get(v.studentId)!)}
+                                title={
+                                  latestVoucherByStudent.get(v.studentId)?.id === v.id
+                                    ? `Collect payment for voucher #${v.voucherNo}`
+                                    : `Collect payment on the latest voucher #${latestVoucherByStudent.get(v.studentId)?.voucherNo}`
+                                }
                                 className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition shadow-2xs cursor-pointer shrink-0 inline-flex items-center gap-1 text-[11px]"
                               >
                                 <Coins className="w-3.5 h-3.5" />
@@ -1362,7 +1374,7 @@ export const DefaultersView: React.FC = () => {
                             <div>
                               <div className="font-bold text-slate-900">{student?.name || 'Unknown'}</div>
                               <div className="text-[11px] text-slate-500 font-medium">
-                                {student?.rollNumber ? `Roll: ${student.rollNumber}` : student?.regNo ? `Reg: ${student.regNo}` : ''}
+                                {student?.regNo ? `Reg: ${student.regNo}` : ''}
                               </div>
                             </div>
                           </div>
@@ -1524,7 +1536,7 @@ export const DefaultersView: React.FC = () => {
                             <div>
                               <div className="font-bold text-slate-900">{student?.name || 'Unknown'}</div>
                               <div className="text-[11px] text-slate-500 font-medium">
-                                {student?.rollNumber ? `Roll: ${student.rollNumber}` : student?.regNo ? `Reg: ${student.regNo}` : ''}
+                                {student?.regNo ? `Reg: ${student.regNo}` : ''}
                               </div>
                             </div>
                           </div>
@@ -1846,6 +1858,7 @@ export const DefaultersView: React.FC = () => {
                 <button
                   type="button"
                   onClick={executeUndoCarryForward}
+                  disabled={financialSaving}
                   className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-4 h-4" />
@@ -1923,6 +1936,7 @@ export const DefaultersView: React.FC = () => {
                 <button
                   type="button"
                   onClick={executeBulkUndoCarryForward}
+                  disabled={financialSaving}
                   className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-4 h-4" />

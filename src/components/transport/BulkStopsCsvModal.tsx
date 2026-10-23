@@ -420,10 +420,16 @@ export const BulkStopsCsvModal: React.FC<BulkStopsCsvModalProps> = ({
             {/* Modal Footer Controls */}
             {rows.length > 0 && (
               <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
+                {rows.some((r) => !r.isValid || r.isDuplicateInCsv) && (
+                  <span className="mr-3 text-[11px] font-semibold text-rose-700">
+                    Fix {rows.filter((r) => !r.isValid || r.isDuplicateInCsv).length} row(s) with errors in the CSV and upload it again.
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={onCommit}
                   disabled={
+                    rows.some((r) => !r.isValid || r.isDuplicateInCsv) ||
                     rows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length === 0
                   }
                   className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"

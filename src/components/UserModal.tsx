@@ -643,7 +643,7 @@ Login portal: Sign in using this School / Institution Code, username, and passwo
                         </option>
                       )}
                       <optgroup label="Standard Roles">
-                        <option value="admin">Super Administrator (Full Access - All {totalCount} Privileges)</option>
+                        <option value="admin">Administrator (Full Access - All {totalCount} Privileges)</option>
                         <option value="accountant">Fee Accountant / Billing Officer (Invoicing & Operations - 20 Privileges)</option>
                         <option value="auditor">Internal Auditor / Inspector (Read-Only Audit - 11 Privileges)</option>
                       </optgroup>

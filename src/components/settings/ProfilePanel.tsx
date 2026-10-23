@@ -67,7 +67,6 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
     showToast,
     currentUser,
     sessionTimeoutMinutes,
-    setSessionTimeoutMinutes,
     updateInstitute,
   } = useApp();
   const [codeCopied, setCodeCopied] = useState(false);
@@ -84,7 +83,20 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
     setCustomMinutesInput(String(val));
   }, [profileData.sessionTimeoutMinutes, sessionTimeoutMinutes]);
 
-  const applyCustomTimeout = (inputStr: string) => {
+  const saveTimeout = async (mins: number) => {
+    const res = await updateInstitute({
+      sessionTimeoutMinutes: mins,
+      settings: { ...(institute.settings || {}), sessionTimeoutMinutes: mins },
+    });
+    if (!res.success) {
+      setCustomMinutesInput(String(institute.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10));
+      showToast(res.error || 'Could not save the auto-logout duration.', 'error');
+      return;
+    }
+    showToast(`Auto-logout inactivity duration set to ${mins} minutes.`, 'success');
+  };
+
+  const applyCustomTimeout = async (inputStr: string) => {
     const parsed = parseInt(inputStr, 10);
     const valid = isNaN(parsed) ? 10 : Math.max(1, Math.min(180, parsed));
     setCustomMinutesInput(String(valid));
@@ -93,12 +105,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
       sessionTimeoutMinutes: valid,
       settings: { ...prev.settings, sessionTimeoutMinutes: valid },
     }));
-    setSessionTimeoutMinutes(valid);
-    updateInstitute({
-      sessionTimeoutMinutes: valid,
-      settings: { ...(institute.settings || {}), sessionTimeoutMinutes: valid },
-    }).catch(() => {});
-    showToast(`Auto-logout inactivity duration set to ${valid} minutes.`, 'success');
+    await saveTimeout(valid);
   };
 
   return (
@@ -477,12 +484,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
                       sessionTimeoutMinutes: mins,
                       settings: { ...prev.settings, sessionTimeoutMinutes: mins },
                     }));
-                    setSessionTimeoutMinutes(mins);
-                    updateInstitute({
-                      sessionTimeoutMinutes: mins,
-                      settings: { ...(institute.settings || {}), sessionTimeoutMinutes: mins },
-                    }).catch(() => {});
-                    showToast(`Auto-logout inactivity duration set to ${mins} minutes.`, 'success');
+                    void saveTimeout(mins);
                   }}
                   className={`p-3 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
                     isSelected
@@ -535,12 +537,12 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
                       }
                     }}
                     onBlur={() => {
-                      applyCustomTimeout(customMinutesInput);
+                      void applyCustomTimeout(customMinutesInput);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        applyCustomTimeout(customMinutesInput);
+                        void applyCustomTimeout(customMinutesInput);
                       }
                     }}
                     className="w-full pl-9 pr-14 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
@@ -554,7 +556,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
                   type="button"
                   id="btn-apply-custom-timeout"
                   disabled={!hasPermission('settings.manage')}
-                  onClick={() => applyCustomTimeout(customMinutesInput)}
+                  onClick={() => void applyCustomTimeout(customMinutesInput)}
                   className="px-3.5 py-2 bg-slate-100 hover:bg-teal-50 text-slate-700 hover:text-teal-700 border border-slate-200 hover:border-teal-300 font-bold text-xs rounded-xl transition cursor-pointer shrink-0 disabled:opacity-50"
                 >
                   Apply

@@ -36,9 +36,9 @@ export const TransportView: React.FC = () => {
     saveTransportAssignment,
     bulkSaveTransportAssignments,
     deleteTransportAssignment,
+    deleteTransportAssignments,
     bulkUpdateTransportDaysForMonth,
     transportRoundingMultiple,
-    addStudentAccountHistory,
     hasPermission,
     showToast,
     themeConfig,
@@ -347,7 +347,7 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleBusDrop = (e: React.DragEvent, targetBus: TransportBus) => {
+  const handleBusDrop = async (e: React.DragEvent, targetBus: TransportBus) => {
     if (!hasPermission('transport.manage')) return;
     e.preventDefault();
     const sourceId = draggedBusId || e.dataTransfer.getData('text/plain');
@@ -365,7 +365,11 @@ export const TransportView: React.FC = () => {
     if (fromIndex !== -1 && toIndex !== -1) {
       const [movedBus] = currentBuses.splice(fromIndex, 1);
       currentBuses.splice(toIndex, 0, movedBus);
-      reorderBuses(currentBuses);
+      setDraggedBusId(null);
+      setDragOverBusId(null);
+      const res = await reorderBuses(currentBuses);
+      if (res && res.success === false) showToast(res.error || 'Could not save the new bus order.', 'error');
+      return;
     }
 
     setDraggedBusId(null);
@@ -394,7 +398,7 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleStopDrop = (e: React.DragEvent, targetStop: TransportStop) => {
+  const handleStopDrop = async (e: React.DragEvent, targetStop: TransportStop) => {
     if (!hasPermission('transport.manage')) return;
     e.preventDefault();
     const sourceId = draggedStopId || e.dataTransfer.getData('text/plain');
@@ -412,7 +416,11 @@ export const TransportView: React.FC = () => {
     if (fromIndex !== -1 && toIndex !== -1) {
       const [movedStop] = currentStops.splice(fromIndex, 1);
       currentStops.splice(toIndex, 0, movedStop);
-      reorderStops(currentStops);
+      setDraggedStopId(null);
+      setDragOverStopId(null);
+      const res = await reorderStops(currentStops);
+      if (res && res.success === false) showToast(res.error || 'Could not save the new stop order.', 'error');
+      return;
     }
 
     setDraggedStopId(null);
@@ -525,8 +533,8 @@ export const TransportView: React.FC = () => {
 
     setAsgnData({
       studentId: '',
-      busId: buses[0]?.id || '',
-      stopId: stops[0]?.id || '',
+      busId: '',
+      stopId: '',
       tripType: 'RoundTrip',
       daysCharged: globalMonthDays,
       discount: 0,
@@ -586,9 +594,13 @@ export const TransportView: React.FC = () => {
     setGlobalMonthDays(clamped);
   };
 
-  const handleApplyGlobalDaysToAll = () => {
-    const res = bulkUpdateTransportDaysForMonth(activeMonth, globalMonthDays);
-    if (res.success && res.updatedCount > 0) {
+  const handleApplyGlobalDaysToAll = async () => {
+    const res = await bulkUpdateTransportDaysForMonth(activeMonth, globalMonthDays);
+    if (!res.success) {
+      setCopyFeedback({ type: 'error', message: res.error || 'Could not save the active days; nothing was changed.' });
+      return;
+    }
+    if (res.updatedCount > 0) {
       setCopyFeedback({
         type: 'success',
         message: `Applied ${globalMonthDays} active days to all ${res.updatedCount} transport assignment${
@@ -612,7 +624,7 @@ export const TransportView: React.FC = () => {
     const tripLabel = (t: string) => (t === 'OneWay' ? 'One Way' : 'Round Trip');
 
     const rows: CopyPreviewRow[] = transportAssignments
-      .filter((a) => a.month === prevMonth && a.active)
+      .filter((a) => a.month === prevMonth && a.active && students.some((st) => st.id === a.studentId))
       .map((prev) => {
         const student = students.find((st) => st.id === prev.studentId);
         const studentClass = student ? classes.find((c) => c.id === student.classId) : undefined;
@@ -704,7 +716,7 @@ export const TransportView: React.FC = () => {
     });
   };
 
-  const handleCommitCopy = () => {
+  const handleCommitCopy = async () => {
     // Re-evaluate against current data so nothing assigned in the meantime is overwritten.
     const fresh = buildCopyPreview();
     const chosen = new Set(copyRows.filter((r) => r.status === 'copy' && r.selected).map((r) => r.id));
@@ -715,7 +727,7 @@ export const TransportView: React.FC = () => {
       const sourceById = new Map<string, TransportAssignment>(transportAssignments.map((a): [string, TransportAssignment] => [a.id, a]));
       // Copied unchanged from the student's latest assignment, so the smart rule
       // applies: no new account-history entry for an unchanged ongoing route.
-      bulkSaveTransportAssignments(
+      const copyRes = await bulkSaveTransportAssignments(
         toSave.map((r) => {
           const src = sourceById.get(r.id)!;
           return {
@@ -731,6 +743,12 @@ export const TransportView: React.FC = () => {
           };
         })
       );
+      if (!copyRes.success) {
+        setShowCopyModal(false);
+        setCopyRows([]);
+        setCopyFeedback({ type: 'error', message: `Copy failed. ${(copyRes as any).error || 'Assignments could not be saved.'}` });
+        return;
+      }
     }
 
     const count = (st: CopyPreviewRow['status']) => fresh.rows.filter((r) => r.status === st).length;
@@ -1133,7 +1151,7 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleCommitBulkImport = () => {
+  const handleCommitBulkImport = async () => {
     const validSelected = bulkPreviewRows.filter(
       (r) => r.selected && r.isValid && !r.isDuplicateInCsv && r.student && r.bus && r.stop
     );
@@ -1161,6 +1179,28 @@ export const TransportView: React.FC = () => {
       createdAt: r.existingAsgn?.createdAt || nowIso,
     }));
 
+    // Stop before any side effect if a selected row no longer has a real student, bus and stop.
+    const unsavable = assignmentsToSave.filter(
+      (a) =>
+        !students.some((st) => st.id === a.studentId) ||
+        !buses.some((b) => b.id === a.busId) ||
+        !stops.some((sp) => sp.id === a.stopId)
+    );
+    if (unsavable.length > 0) {
+      setBulkImportStatus({
+        message: null,
+        error: `${unsavable.length} selected row${unsavable.length === 1 ? '' : 's'} no longer match a student, bus or stop. Nothing was imported; re-upload the file.`,
+      });
+      return;
+    }
+
+    const absentDeleteIds = bulkAbsentStudents
+      .map((abs) => transportAssignments.find((a) => a.studentId === abs.studentId && a.month === targetMonth)?.id)
+      .filter((id): id is string => !!id);
+
+    // History entries travel with the batch and are stored by the server in the same transaction.
+    const historyEntries: any[] = [];
+    const writeHistory = () => {
     // Smart event logging for assignments in CSV:
     // "CSV transport assignments should be smart - log a change entry and do not make new entry if exact same assignment already exists in any prior month."
     for (const r of validSelected) {
@@ -1187,7 +1227,7 @@ export const TransportView: React.FC = () => {
           // Changed assignment: log a change entry with actual event time
           const priorStop = stops.find((s) => s.id === prior.stopId);
           const priorBus = buses.find((b) => b.id === prior.busId);
-          addStudentAccountHistory({
+          historyEntries.push({
             studentId: student.id,
             date: todayDate,
             timestamp: nowIso,
@@ -1201,7 +1241,7 @@ export const TransportView: React.FC = () => {
         }
       } else {
         // No prior assignment in any month: this is brand new transport assignment
-        addStudentAccountHistory({
+        historyEntries.push({
           studentId: student.id,
           date: todayDate,
           timestamp: nowIso,
@@ -1222,16 +1262,8 @@ export const TransportView: React.FC = () => {
       const prevBusNum = abs.bus?.busNumber || 'Bus';
       const prevMonthName = formatMonthName(prevMonth);
 
-      // Deactivate any existing assignment in targetMonth if present
-      const existingInTarget = transportAssignments.find(
-        (a) => a.studentId === abs.studentId && a.month === targetMonth
-      );
-      if (existingInTarget) {
-        deleteTransportAssignment(existingInTarget.id);
-      }
-
       // Log as transport removed with actual event timestamp
-      addStudentAccountHistory({
+      historyEntries.push({
         studentId: abs.studentId,
         date: todayDate,
         timestamp: nowIso,
@@ -1244,7 +1276,22 @@ export const TransportView: React.FC = () => {
       });
     }
 
-    bulkSaveTransportAssignments(assignmentsToSave);
+    };
+
+    if (importInFlight.current) return;
+    writeHistory();
+    importInFlight.current = true;
+    setBulkImportStatus({ message: 'Saving to the server…', error: null });
+    let bulkRes: Awaited<ReturnType<typeof bulkSaveTransportAssignments>>;
+    try {
+      bulkRes = await bulkSaveTransportAssignments(assignmentsToSave, { deleteIds: absentDeleteIds, history: historyEntries });
+    } finally {
+      importInFlight.current = false;
+    }
+    if (!bulkRes.success) {
+      setBulkImportStatus({ message: null, error: bulkRes.error || 'Import failed; nothing was saved.' });
+      return;
+    }
 
     showToast(
       `Successfully recorded ${validSelected.length} transport assignment${
@@ -1461,7 +1508,11 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleCommitBulkStopsImport = () => {
+  const stopSaveInFlight = React.useRef(false);
+  const importInFlight = React.useRef(false);
+
+  const handleCommitBulkStopsImport = async () => {
+    if (stopSaveInFlight.current) return;
     const validSelected = bulkStopsPreviewRows.filter(
       (r) => r.selected && r.isValid && !r.isDuplicateInCsv && r.name
     );
@@ -1479,7 +1530,21 @@ export const TransportView: React.FC = () => {
       sortOrder: r.sortOrder,
     }));
 
-    const result = bulkSaveTransportStops(stopsToSave);
+    setBulkStopsImportStatus({ message: 'Saving to the server…', error: null });
+    stopSaveInFlight.current = true;
+    let result: Awaited<ReturnType<typeof bulkSaveTransportStops>>;
+    try {
+      result = await bulkSaveTransportStops(stopsToSave);
+    } finally {
+      stopSaveInFlight.current = false;
+    }
+    if (!result.success) {
+      setBulkStopsImportStatus({
+        message: null,
+        error: result.error || 'Import was not saved; nothing was changed.',
+      });
+      return;
+    }
 
     showToast(
       `Successfully imported ${result.addedCount} new stop${result.addedCount === 1 ? '' : 's'}${
@@ -1568,6 +1633,11 @@ export const TransportView: React.FC = () => {
     );
   };
 
+  // Selection is per month: drop it whenever the month changes.
+  useEffect(() => {
+    setSelectedAsgnIds([]);
+  }, [activeMonth]);
+
   const toggleSelectAllAsgns = () => {
     if (selectedAsgnIds.length === activeMonthAssignments.length && activeMonthAssignments.length > 0) {
       setSelectedAsgnIds([]);
@@ -1580,10 +1650,14 @@ export const TransportView: React.FC = () => {
     setSelectedAsgnIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
   };
 
-  const handleBulkDeleteSelectedAsgns = () => {
+  const handleBulkDeleteSelectedAsgns = async () => {
     if (selectedAsgnIds.length === 0) return;
     const count = selectedAsgnIds.length;
-    selectedAsgnIds.forEach((id) => deleteTransportAssignment(id));
+    const res = await deleteTransportAssignments(selectedAsgnIds);
+    if (!res.success) {
+      setCopyFeedback({ type: 'error', message: res.error || 'Could not remove the selected assignments.' });
+      return;
+    }
     setSelectedAsgnIds([]);
     setCopyFeedback({
       type: 'success',
@@ -1591,11 +1665,21 @@ export const TransportView: React.FC = () => {
     });
   };
 
-  const handleSaveBus = (e: React.FormEvent) => {
+  const handleSaveBus = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (stopSaveInFlight.current) return;
     setFormError('');
+    stopSaveInFlight.current = true;
+    try {
+      await saveBusInner();
+    } finally {
+      stopSaveInFlight.current = false;
+    }
+  };
+
+  const saveBusInner = async () => {
     if (editingBus) {
-      const res = updateBus(editingBus.id, {
+      const res = await updateBus(editingBus.id, {
         busNumber: busData.busNumber.trim(),
         model: busData.model.trim(),
         regNumber: busData.regNumber.trim(),
@@ -1612,7 +1696,7 @@ export const TransportView: React.FC = () => {
         setFormError(res.error || 'Failed to update bus');
       }
     } else {
-      const res = addBus({
+      const res = await addBus({
         busNumber: busData.busNumber.trim(),
         model: busData.model.trim(),
         regNumber: busData.regNumber.trim(),
@@ -1630,11 +1714,21 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleSaveStop = (e: React.FormEvent) => {
+  const handleSaveStop = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (stopSaveInFlight.current) return;
     setFormError('');
+    stopSaveInFlight.current = true;
+    try {
+      await saveStopInner();
+    } finally {
+      stopSaveInFlight.current = false;
+    }
+  };
+
+  const saveStopInner = async () => {
     if (editingStop) {
-      const res = updateStop(editingStop.id, {
+      const res = await updateStop(editingStop.id, {
         name: stopData.name.trim(),
         area: stopData.area.trim(),
         landmark: stopData.landmark.trim(),
@@ -1648,7 +1742,7 @@ export const TransportView: React.FC = () => {
         setFormError(res.error || 'Failed to update stop');
       }
     } else {
-      const res = addStop({
+      const res = await addStop({
         name: stopData.name.trim(),
         area: stopData.area.trim(),
         landmark: stopData.landmark.trim(),
@@ -1663,13 +1757,17 @@ export const TransportView: React.FC = () => {
     }
   };
 
-  const handleSaveAssignment = (e: React.FormEvent) => {
+  const handleSaveAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (stopSaveInFlight.current) return;
     const assignmentMonth = editingAsgn ? editingAsgn.month : activeMonth;
     const maxDays = getDaysInMonth(assignmentMonth);
     const chargedDays = Math.min(Math.max(Number(asgnData.daysCharged) || 0, 0), maxDays);
 
-    saveTransportAssignment({
+    stopSaveInFlight.current = true;
+    let saveRes: Awaited<ReturnType<typeof saveTransportAssignment>>;
+    try {
+      saveRes = await saveTransportAssignment({
       ...(editingAsgn ? { id: editingAsgn.id } : {}),
       studentId: asgnData.studentId,
       month: assignmentMonth,
@@ -1679,7 +1777,14 @@ export const TransportView: React.FC = () => {
       daysCharged: chargedDays,
       discount: Math.max(0, Number(asgnData.discount) || 0),
       active: asgnData.active,
-    });
+      });
+    } finally {
+      stopSaveInFlight.current = false;
+    }
+    if (saveRes && saveRes.success === false) {
+      setFormError((saveRes as any).error || 'Could not save assignment.');
+      return;
+    }
     setShowAsgnModal(false);
     setEditingAsgn(null);
   };
@@ -2945,6 +3050,7 @@ export const TransportView: React.FC = () => {
         setIsStudentComboOpen={setIsStudentComboOpen}
         studentComboRef={studentComboRef}
         onSelectStudent={handleSelectStudentForAssignment}
+        formError={formError}
         onSubmit={handleSaveAssignment}
       />
 
@@ -3040,12 +3146,12 @@ export const TransportView: React.FC = () => {
             confirmLabel={hasAssigned ? 'Understood' : 'Delete Bus'}
             confirmDisabled={hasAssigned}
             variant={hasAssigned ? 'warning' : 'danger'}
-            onConfirm={() => {
+            onConfirm={async () => {
               if (hasAssigned || !busToDelete) {
                 setBusToDelete(null);
                 return;
               }
-              const res = deleteBus(busToDelete.id);
+              const res = await deleteBus(busToDelete.id);
               if (!res.success) {
                 showToast(res.error || 'Failed to delete bus', 'error');
               } else {
@@ -3090,12 +3196,12 @@ export const TransportView: React.FC = () => {
             confirmLabel={hasAssigned ? 'Understood' : 'Delete Stop'}
             confirmDisabled={hasAssigned}
             variant={hasAssigned ? 'warning' : 'danger'}
-            onConfirm={() => {
+            onConfirm={async () => {
               if (hasAssigned || !stopToDelete) {
                 setStopToDelete(null);
                 return;
               }
-              const res = deleteStop(stopToDelete.id);
+              const res = await deleteStop(stopToDelete.id);
               if (!res.success) {
                 showToast(res.error || 'Failed to delete bus stop', 'error');
               } else {
@@ -3126,10 +3232,14 @@ export const TransportView: React.FC = () => {
             }
             confirmLabel="Remove Assignment"
             variant="danger"
-            onConfirm={() => {
+            onConfirm={async () => {
               if (!asgnToDelete) return;
-              deleteTransportAssignment(asgnToDelete.id);
-              showToast(`Transport assignment removed for ${assignedStudent?.name || 'student'}.`, 'info');
+              const res = await deleteTransportAssignment(asgnToDelete.id);
+              if (!res.success) {
+                showToast(res.error || 'Could not remove the transport assignment.', 'error');
+              } else {
+                showToast(`Transport assignment removed for ${assignedStudent?.name || 'student'}.`, 'success');
+              }
               setAsgnToDelete(null);
             }}
             onClose={() => setAsgnToDelete(null)}

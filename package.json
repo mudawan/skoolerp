@@ -8,7 +8,11 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "platform:create-admin": "tsx scripts/create-platform-admin.ts",
+    "test:guard": "node tests/guard-confirmed-writes.mjs && node tests/guard-awaited-and-financial.mjs && node tests/guard-platform-isolation.mjs",
+    "check": "npm run lint && npm run test:guard",
+    "test:bank": "node --import tsx --test tests/bank-statements/adapters.test.ts tests/bank-statements/logic.test.ts tests/bank-statements/integration.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -16,12 +20,14 @@
     "@vitejs/plugin-react": "^5.0.4",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pdfjs-dist": "^4.10.38",
     "pg": "^8.23.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
@@ -33,11 +39,20 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
+  },
+  "allowScripts": {
+    "@google/genai@2.28.0": true,
+    "core-js@3.50.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.6": true
   }
 }

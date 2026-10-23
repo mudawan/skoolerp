@@ -6,7 +6,6 @@ import {
   fetchServerState,
   apiFetchAuditSummary,
   apiPurgeAuditLogs,
-  queueDatabaseSync,
   DbStatus,
 } from '../../services/apiSync';
 import { THEME_COLOR_PRESETS } from '../../utils/themeConfig';
@@ -17,19 +16,8 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
-  Users,
-  Server,
-  HardDrive,
-  ShieldCheck,
-  Clock,
-  FileText,
-  Check,
-  Copy,
-  Terminal,
-  Layers,
   ArrowDownToLine,
   ArrowUpFromLine,
-  Info,
 } from 'lucide-react';
 
 export const DatabaseBackupsPanel: React.FC = () => {
@@ -46,7 +34,6 @@ export const DatabaseBackupsPanel: React.FC = () => {
     bankAccounts,
     themeConfig,
     hasPermission,
-    logAuditEvent,
     auditRetentionMonths,
     setAuditRetentionMonths,
     showToast,
@@ -56,16 +43,10 @@ export const DatabaseBackupsPanel: React.FC = () => {
 
   const [dbStatus, setDbStatus] = useState<DbStatus>({
     isConnected: true,
-    isSyncing: false,
     engine: 'postgres',
     revision: 1,
     activePeers: 1,
   });
-
-  const [healthInfo, setHealthInfo] = useState<{
-    uptime?: number;
-    timestamp?: string;
-  }>({});
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -97,7 +78,6 @@ export const DatabaseBackupsPanel: React.FC = () => {
       showToast(r.error || 'Purge failed.', 'error');
     }
   };
-  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
 
   // Restore state
   const [selectedBackupFile, setSelectedBackupFile] = useState<File | null>(null);
@@ -109,14 +89,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    checkBackendHealth().then((info) => {
-      if (info) {
-        setHealthInfo({
-          uptime: info.uptime,
-          timestamp: info.timestamp,
-        });
-      }
-    });
+    void checkBackendHealth();
 
     const unsubscribe = subscribeDbStatus((newStatus) => {
       setDbStatus(newStatus);
@@ -151,12 +124,6 @@ export const DatabaseBackupsPanel: React.FC = () => {
     // Download directly from the authoritative API endpoint or generate client payload
     window.location.href = '/api/backup/export';
 
-    logAuditEvent({
-      actionType: 'settings_change',
-      actionTitle: 'Database Backup Exported',
-      module: 'Settings',
-      description: `Manual database backup downloaded (${students.length} students).`,
-    });
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -215,124 +182,39 @@ export const DatabaseBackupsPanel: React.FC = () => {
     }
   };
 
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedSnippet(id);
-    setTimeout(() => setCopiedSnippet(null), 2000);
-  };
-
-  const formatUptime = (seconds?: number) => {
-    if (!seconds) return 'Active';
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    if (hrs > 0) return `${hrs}h ${mins}m`;
-    return `${mins}m`;
-  };
-
   return (
     <div className="space-y-6">
-      {/* 1. Database & Live Cluster Status Card */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div
-              style={{ backgroundColor: `${preset.primaryColor}15`, color: preset.primaryColor }}
-              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-slate-200/60"
-            >
-              <Database className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900">
-                  Database & Storage Architecture
-                </h3>
-                <span
-                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                    dbStatus.engine === 'postgres'
-                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  }`}
-                >
-                  <Server className="w-3 h-3" />
-                  {dbStatus.engine} Engine
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Centralized relational repository with live bi-directional multi-user synchronization.
-              </p>
-            </div>
-          </div>
-
-          <button
-            id="btn-manual-db-sync"
-            type="button"
-            onClick={handleManualSync}
-            disabled={isRefreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200/80 bg-slate-50 text-slate-700 hover:bg-slate-100 text-xs font-semibold shadow-2xs transition cursor-pointer self-start sm:self-auto shrink-0"
+      {/* 1. Connection status. Server and database details belong to the platform owner, not to schools. */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div
+            style={{ backgroundColor: `${preset.primaryColor}15`, color: preset.primaryColor }}
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-slate-200/60"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
-            <span>{isRefreshing ? 'Checking Sync...' : 'Verify Live Sync'}</span>
-          </button>
-        </div>
-
-        {/* Live Metrics Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-medium">Cluster Connectivity</span>
+            <Database className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm sm:text-base font-bold text-slate-900">Connection</h3>
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
               {dbStatus.isConnected ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
               ) : (
-                <AlertTriangle className="w-4 h-4 text-rose-500" />
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
               )}
-            </div>
-            <div className="text-sm font-bold text-slate-900">
-              {dbStatus.isConnected ? 'Connected & Healthy' : 'Offline / Reconnecting'}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
-              SSE Real-Time Stream Active
-            </div>
-          </div>
-
-          <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-medium">Database Revision</span>
-              <Layers className="w-4 h-4 text-teal-500" />
-            </div>
-            <div className="text-sm font-bold text-slate-900">
-              Rev #{dbStatus.revision}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
-              Atomic Mutation Sequence
-            </div>
-          </div>
-
-          <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-medium">Connected Peers</span>
-              <Users className="w-4 h-4 text-indigo-500" />
-            </div>
-            <div className="text-sm font-bold text-slate-900">
-              {dbStatus.activePeers} {dbStatus.activePeers === 1 ? 'Session' : 'Sessions'}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
-              Simultaneous Operator Terminals
-            </div>
-          </div>
-
-          <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between text-slate-500 mb-1">
-              <span className="text-xs font-medium">Server Uptime</span>
-              <Clock className="w-4 h-4 text-amber-500" />
-            </div>
-            <div className="text-sm font-bold text-slate-900">
-              {formatUptime(healthInfo.uptime)}
-            </div>
-            <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-              {dbStatus.engine === 'postgres' ? 'Cloud Run / PostgreSQL' : 'PostgreSQL Database'}
-            </div>
+              {dbStatus.isConnected ? 'Connected. Your records are saved on the server as you work.' : 'Not connected. Changes are paused until the connection returns.'}
+            </p>
           </div>
         </div>
+        <button
+          id="btn-manual-db-sync"
+          type="button"
+          onClick={handleManualSync}
+          disabled={isRefreshing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200/80 bg-slate-50 text-slate-700 hover:bg-slate-100 text-xs font-semibold shadow-2xs transition cursor-pointer self-start sm:self-auto shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
+          <span>{isRefreshing ? 'Checking...' : 'Check connection'}</span>
+        </button>
       </div>
 
       {/* 2. Backup & Disaster Recovery Operations */}
@@ -487,7 +369,10 @@ export const DatabaseBackupsPanel: React.FC = () => {
             <select
               id="select-audit-retention"
               value={auditRetentionMonths}
-              onChange={(e) => setAuditRetentionMonths(Number(e.target.value))}
+              onChange={async (e) => {
+                const res = await setAuditRetentionMonths(Number(e.target.value));
+                if (!res.success) showToast(res.error || 'Could not save the retention period. Nothing was changed.', 'error');
+              }}
               className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
             >
               {[3, 6, 12, 24].map((m) => (
@@ -553,63 +438,6 @@ export const DatabaseBackupsPanel: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* 3. Production Deployment & Database Engine Quick Reference */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center border border-slate-200">
-            <Terminal className="w-4 h-4" />
-          </div>
-          <div>
-            <h4 className="font-bold text-slate-900 text-sm">Self-Hosting & PostgreSQL Configuration</h4>
-            <p className="text-xs text-slate-500">
-              Instructions for configuring production databases and running automated nightly backups.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
-          <div className="space-y-2 bg-slate-50 p-4 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between font-bold text-slate-800">
-              <span>Switch to PostgreSQL Engine</span>
-              <button
-                type="button"
-                onClick={() => copyToClipboard('DATABASE_URL="postgres://postgres:password@localhost:5432/school_db"', 'db_url')}
-                className="flex items-center gap-1 text-teal-600 hover:text-teal-800 text-[11px]"
-              >
-                {copiedSnippet === 'db_url' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                <span>{copiedSnippet === 'db_url' ? 'Copied' : 'Copy'}</span>
-              </button>
-            </div>
-            <p className="text-slate-600 leading-relaxed">
-              Add the <code className="px-1 py-0.5 bg-white border rounded text-slate-900 font-mono">DATABASE_URL</code> variable to your environment or <code className="px-1 py-0.5 bg-white border rounded text-slate-900 font-mono">.env</code> file. The server will automatically connect to PostgreSQL with connection pooling.
-            </p>
-            <div className="bg-slate-900 text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
-              DATABASE_URL="postgres://postgres:password@localhost:5432/school_db"
-            </div>
-          </div>
-
-          <div className="space-y-2 bg-slate-50 p-4 rounded-xl border border-slate-200/60">
-            <div className="flex items-center justify-between font-bold text-slate-800">
-              <span>Automated Cron Backup Script</span>
-              <button
-                type="button"
-                onClick={() => copyToClipboard('0 2 * * * /var/www/skooler/scripts/backup.sh >> /var/log/skooler_backup.log 2>&1', 'cron')}
-                className="flex items-center gap-1 text-teal-600 hover:text-teal-800 text-[11px]"
-              >
-                {copiedSnippet === 'cron' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                <span>{copiedSnippet === 'cron' ? 'Copied' : 'Copy'}</span>
-              </button>
-            </div>
-            <p className="text-slate-600 leading-relaxed">
-              Schedule <code className="px-1 py-0.5 bg-white border rounded text-slate-900 font-mono">scripts/backup.sh</code> to create daily timestamped gzip snapshots with automatic 30-day retention pruning.
-            </p>
-            <div className="bg-slate-900 text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
-              0 2 * * * /var/www/skooler/scripts/backup.sh
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Restore Confirmation Modal */}
       {showRestoreConfirm && (

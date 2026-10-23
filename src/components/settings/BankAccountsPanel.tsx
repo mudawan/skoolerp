@@ -15,7 +15,7 @@ export const BankAccountsPanel: React.FC<BankAccountsPanelProps> = ({
   handleOpenBankModal,
   setBankToDelete,
 }) => {
-  const { hasPermission, setDefaultBankAccount, themeConfig } = useApp();
+  const { hasPermission, setDefaultBankAccount, themeConfig, showToast } = useApp();
   const preset = THEME_COLOR_PRESETS[themeConfig?.color || 'teal'] || THEME_COLOR_PRESETS.teal;
 
   return (
@@ -114,7 +114,10 @@ export const BankAccountsPanel: React.FC<BankAccountsPanelProps> = ({
                     {!bank.isDefault && (
                       <button
                         type="button"
-                        onClick={() => setDefaultBankAccount(bank.id)}
+                        onClick={async () => {
+                          const res = await setDefaultBankAccount(bank.id);
+                          if (!res.success) showToast(res.error || 'Could not change the default bank account.', 'error');
+                        }}
                         style={{ color: preset.primaryColor }}
                         className="text-[11px] font-bold hover:underline cursor-pointer px-1.5 py-1"
                       >

@@ -1,0 +1,119 @@
+/* Platform (app-owner) area. Self-contained: it does not use the school app's theme classes.
+   Colour tokens follow the validated data-viz palette; light and dark are selected steps, not an inversion. */
+.pf-root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d67;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10); --wash: rgba(11, 11, 11, 0.045);
+  --accent: #2a78d6; --accent-ink: #ffffff;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-other: #898781;
+  --good: #0ca30c; --good-ink: #006300; --warning: #fab219; --warning-ink: #7a5500; --serious: #ec835a; --serious-ink: #9a3d17; --critical: #d03b3b; --critical-ink: #a32323;
+  background: var(--page); color: var(--ink); min-height: 100vh;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.45;
+}
+@media (prefers-color-scheme: dark) {
+  .pf-root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a09e96;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.06);
+    --accent: #3987e5; --accent-ink: #0b0b0b;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-other: #898781;
+    --good-ink: #0ca30c; --warning-ink: #fab219; --serious-ink: #ec835a; --critical-ink: #ef6a6a;
+  }
+}
+.pf-root *, .pf-root *::before, .pf-root *::after { box-sizing: border-box; }
+.pf-root h1, .pf-root h2, .pf-root h3 { margin: 0; font-weight: 600; }
+.pf-root button, .pf-root input, .pf-root select { font: inherit; color: inherit; }
+
+.pf-top { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.pf-brand { font-weight: 700; font-size: 15px; }
+.pf-brand small { font-weight: 500; color: var(--muted); margin-left: 8px; }
+.pf-nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.pf-tab { background: none; border: 0; padding: 7px 12px; border-radius: 8px; cursor: pointer; color: var(--ink-2); font-weight: 500; }
+.pf-tab:hover { background: var(--wash); }
+.pf-tab[aria-current="page"] { background: var(--wash); color: var(--ink); font-weight: 600; }
+.pf-spacer { flex: 1; }
+.pf-who { color: var(--ink-2); font-size: 13px; display: flex; align-items: center; gap: 10px; }
+.pf-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--wash); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.pf-btn { border: 1px solid var(--border); background: var(--surface); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+.pf-btn:hover { background: var(--wash); }
+.pf-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.pf-btn-primary { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+.pf-btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
+
+.pf-main { max-width: 1240px; margin: 0 auto; padding: 20px 24px 48px; }
+.pf-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.pf-filters .grow { flex: 1; }
+.pf-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.pf-seg button { border: 0; background: none; padding: 6px 12px; cursor: pointer; font-weight: 500; color: var(--ink-2); }
+.pf-seg button + button { border-left: 1px solid var(--border); }
+.pf-seg button:hover { background: var(--wash); }
+.pf-seg button[aria-pressed="true"] { background: var(--wash); color: var(--ink); font-weight: 700; }
+.pf-muted { color: var(--muted); font-size: 12.5px; }
+.pf-input, .pf-select { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 10px; min-width: 0; }
+
+.pf-grid { display: grid; gap: 14px; }
+.pf-tiles { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 14px; }
+.pf-cols-2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); margin-bottom: 14px; }
+@media (max-width: 520px) { .pf-cols-2 { grid-template-columns: 1fr; } .pf-main, .pf-top { padding-left: 16px; padding-right: 16px; } }
+.pf-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.pf-card h2 { font-size: 14px; margin-bottom: 2px; }
+.pf-card .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+.pf-refetching { opacity: .6; transition: opacity .15s; }
+
+.pf-tile .label { color: var(--ink-2); font-size: 13px; }
+.pf-tile .value { font-size: 28px; font-weight: 600; margin-top: 2px; letter-spacing: -0.01em; }
+.pf-tile .value small { font-size: 14px; font-weight: 500; color: var(--ink-2); margin-left: 3px; }
+.pf-tile .foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; font-size: 12.5px; color: var(--muted); min-height: 20px; }
+.pf-hero .value { font-size: 52px; }
+.pf-status { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; font-size: 12.5px; }
+.pf-status.good { color: var(--good-ink); } .pf-status.warning { color: var(--warning-ink); } .pf-status.serious { color: var(--serious-ink); } .pf-status.critical { color: var(--critical-ink); }
+
+.pf-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 8px; font-size: 12.5px; color: var(--ink-2); }
+.pf-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pf-key { width: 14px; height: 0; border-top: 2px solid; border-radius: 2px; display: inline-block; }
+.pf-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.pf-chart { position: relative; width: 100%; }
+.pf-chart svg { display: block; width: 100%; overflow: visible; }
+.pf-chart text { font-family: inherit; fill: var(--muted); font-size: 11px; }
+.pf-tip { position: absolute; pointer-events: none; z-index: 5; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.14); font-size: 12px; white-space: nowrap; }
+.pf-tip .t { color: var(--muted); margin-bottom: 3px; }
+.pf-tip .row { display: flex; align-items: center; gap: 7px; }
+.pf-tip .row b { font-weight: 700; color: var(--ink); }
+.pf-tip .row span { color: var(--ink-2); }
+.pf-linkbtn { background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink-2); text-decoration: underline; text-underline-offset: 2px; font-size: 12px; }
+
+table.pf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pf-table th { text-align: left; font-weight: 600; color: var(--ink-2); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+.pf-table td { padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+.pf-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.pf-table th.num { text-align: right; }
+.pf-table tr.click { cursor: pointer; } .pf-table tr.click:hover td { background: var(--wash); }
+.pf-table code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pf-scroll { overflow: auto; max-height: 420px; }
+.pf-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.pf-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13px; }
+.pf-kv dt { color: var(--ink-2); } .pf-kv dd { margin: 0; word-break: break-all; }
+.pf-note { background: var(--wash); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: var(--ink-2); margin-top: 10px; }
+.pf-error { color: var(--critical-ink); font-size: 13px; }
+
+.pf-login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.pf-login form { width: 100%; max-width: 360px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 24px; display: grid; gap: 12px; }
+.pf-login label { display: grid; gap: 4px; font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.pf-login .pf-input { padding: 9px 10px; color: var(--ink); }
+.pf-empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* ---- Support actions ---- */
+.pf-modal-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: grid; place-items: center; padding: 16px; z-index: 50; }
+.pf-modal { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; display: grid; gap: 12px; max-height: 90vh; overflow: auto; }
+.pf-modal h2 { font-size: 16px; }
+.pf-modal label { display: grid; gap: 4px; font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.pf-modal .pf-input, .pf-modal textarea.pf-input { width: 100%; padding: 8px 10px; color: var(--ink); }
+.pf-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.pf-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.pf-btn-sm { padding: 3px 9px; font-size: 12.5px; }
+.pf-btn-danger { border-color: var(--critical-ink); color: var(--critical-ink); }
+.pf-secret { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; letter-spacing: 0.04em; padding: 12px; border-radius: 10px; background: var(--wash); border: 1px dashed var(--axis); text-align: center; user-select: all; word-break: break-all; }
+.pf-toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--page); padding: 9px 16px; border-radius: 10px; z-index: 60; font-size: 13px; max-width: 90vw; }
+.pf-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.pf-head h2 { font-size: 16px; }
+.pf-table tr.sel td { background: var(--wash); }

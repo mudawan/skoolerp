@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { Student } from '../types';
@@ -20,8 +20,8 @@ interface DeleteStudentModalProps {
   student: Student | null;
   bulkStudents?: Student[];
   onClose: () => void;
-  onConfirmDelete: (studentId: string) => void;
-  onConfirmBulkDelete?: (studentIds: string[]) => void;
+  onConfirmDelete: (studentId: string) => Promise<{ success: boolean; error?: string }>;
+  onConfirmBulkDelete?: (studentIds: string[]) => Promise<{ success: boolean; error?: string }>;
   onViewLedger?: (studentId: string) => void;
 }
 
@@ -79,11 +79,25 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
     ? transportAssignments.filter((a) => bulkDeletable.some((s) => s.id === a.studentId)).length
     : 0;
 
-  const handleDeactivateInstead = () => {
-    if (student) {
-      updateStudent(student.id, { status: 'Inactive' });
-      onClose();
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+
+  // Runs a server call; the modal closes only when the server confirms, otherwise it shows why.
+  const runConfirmed = async (call: () => Promise<{ success: boolean; error?: string }>) => {
+    if (busy) return;
+    setBusy(true);
+    setActionError('');
+    try {
+      const res = await call();
+      if (res.success) onClose();
+      else setActionError(res.error || 'The server did not accept the change. Nothing was changed.');
+    } finally {
+      setBusy(false);
     }
+  };
+
+  const handleDeactivateInstead = () => {
+    if (student) void runConfirmed(() => updateStudent(student.id, { status: 'Inactive' }));
   };
 
   useEscapeKey(onClose, true, 1);
@@ -359,6 +373,10 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
           </div>
         )}
 
+        {actionError && (
+          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold">{actionError}</div>
+        )}
+
         {/* Modal Actions */}
         <div className="flex items-center justify-between border-t border-slate-200 pt-3">
           <button
@@ -372,10 +390,8 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
           {!isBulk && student && !hasVouchers && (
             <button
               type="button"
-              onClick={() => {
-                onConfirmDelete(student.id);
-                onClose();
-              }}
+              disabled={busy}
+              onClick={() => void runConfirmed(() => onConfirmDelete(student.id))}
               className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
@@ -396,11 +412,8 @@ export const DeleteConfirmationModal: React.FC<DeleteStudentModalProps> = ({
           {isBulk && onConfirmBulkDelete && (
             <button
               type="button"
-              disabled={bulkDeletable.length === 0}
-              onClick={() => {
-                onConfirmBulkDelete(bulkDeletable.map((s) => s.id));
-                onClose();
-              }}
+              disabled={bulkDeletable.length === 0 || busy}
+              onClick={() => void runConfirmed(() => onConfirmBulkDelete(bulkDeletable.map((s) => s.id)))}
               className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />

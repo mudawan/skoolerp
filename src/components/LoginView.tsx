@@ -1,5 +1,6 @@
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY } from '../utils/feeMath';
 import React, { useState, useEffect } from 'react';
+import { apiChangePassword, apiLogout } from '../services/apiSync';
 import { useApp } from '../context/AppContext';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { apiValidateCode } from '../services/apiSync';
@@ -56,6 +57,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     }
   });
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  // After a platform password reset the user must choose a new password before the app opens.
+  const [forcedChange, setForcedChange] = useState(false);
+  const [newPw, setNewPw] = useState('');
+  const [newPw2, setNewPw2] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
 
   // New Institution Form
@@ -198,6 +203,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
         cleanCode
       );
       setIsLoading(false);
+      if (res.mustChangePassword) {
+        setForcedChange(true);
+        setNewPw('');
+        setNewPw2('');
+        return;
+      }
       if (!res.success) {
         setErrorMsg(res.error || 'Authentication failed. Please verify your credentials.');
       } else {
@@ -209,6 +220,47 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     } catch {
       setIsLoading(false);
       setErrorMsg('Unexpected login error. Please check your credentials.');
+    }
+  };
+
+  // Second step after a reset: set the new password, then sign in with it.
+  const handleForcedChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    if (newPw.length < 8 || newPw.length > 20) {
+      setErrorMsg('Password must be between 8 and 20 characters.');
+      return;
+    }
+    if (newPw !== newPw2) {
+      setErrorMsg('The two new passwords do not match.');
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const ch = await apiChangePassword(loginPassword, newPw);
+      if (!ch.success) {
+        setIsLoading(false);
+        setErrorMsg(ch.error || 'Could not change the password.');
+        return;
+      }
+      const cleanCode = loginSchoolCode.trim().toUpperCase();
+      const res = await login(loginIdentifier, newPw, cleanCode);
+      setIsLoading(false);
+      if (res.success) {
+        setLoginPassword('');
+        setForcedChange(false);
+        try {
+          localStorage.setItem('school_management_last_inst_code', cleanCode);
+        } catch {}
+        if (onSuccess) onSuccess();
+      } else {
+        setForcedChange(false);
+        setLoginPassword('');
+        setSuccessMsg('Password changed. Please sign in with your new password.');
+      }
+    } catch {
+      setIsLoading(false);
+      setErrorMsg('Unexpected error. Please try again.');
     }
   };
 
@@ -443,7 +495,56 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
           {/* ========================================================================= */}
           {/* TAB 1: SIGN IN                                                            */}
           {/* ========================================================================= */}
-          {authMode === 'login' && (
+          {authMode === 'login' && forcedChange && (
+            <form onSubmit={handleForcedChange} className="space-y-4">
+              <div>
+                <h2 className="text-base font-bold text-white">Choose a new password</h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Your password was reset by support. Set a new one (8–20 characters) to continue.
+                </p>
+              </div>
+              <div>
+                <label htmlFor="forced-new-password" className="block text-xs font-semibold text-slate-300 mb-1.5">New password</label>
+                <input
+                  id="forced-new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                  required
+                  autoFocus
+                  className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+                />
+              </div>
+              <div>
+                <label htmlFor="forced-new-password-2" className="block text-xs font-semibold text-slate-300 mb-1.5">Repeat new password</label>
+                <input
+                  id="forced-new-password-2"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPw2}
+                  onChange={(e) => setNewPw2(e.target.value)}
+                  required
+                  className="w-full bg-slate-900/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white text-sm font-semibold transition"
+              >
+                {isLoading ? 'Saving…' : 'Save new password and continue'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { apiLogout().catch(() => {}); setForcedChange(false); setLoginPassword(''); setErrorMsg(null); }}
+                className="w-full text-xs text-slate-400 hover:text-slate-200 underline"
+              >
+                Cancel
+              </button>
+            </form>
+          )}
+          {authMode === 'login' && !forcedChange && (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">

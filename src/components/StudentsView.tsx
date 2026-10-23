@@ -106,8 +106,9 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     classes,
     families,
     deleteStudent,
+    bulkDeleteStudents,
+    bulkAddStudents,
     hasPermission,
-    addStudent,
     showToast,
   } = useApp();
 
@@ -354,15 +355,24 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
     setStudentToDelete(student);
   };
 
-  const handleConfirmSingleDelete = (id: string) => {
-    deleteStudent(id);
-    setStudentToDelete(null);
+  // The modal stays open until the server confirms, and shows the server's message on failure.
+  const handleConfirmSingleDelete = async (id: string) => {
+    const res = await deleteStudent(id);
+    if (res.success) {
+      showToast('Student deleted.', 'success');
+      setStudentToDelete(null);
+      setSelectedIds((prev) => prev.filter((x) => x !== id));
+    }
+    return res;
   };
 
-  const handleConfirmBulkDelete = (idsToDelete: string[]) => {
-    idsToDelete.forEach((id) => deleteStudent(id));
+  const handleConfirmBulkDelete = async (idsToDelete: string[]) => {
+    const res = await bulkDeleteStudents(idsToDelete);
+    if (res.error) return { success: false, error: res.error };
+    showToast(`Deleted ${res.deletedCount} student(s).`, 'success');
     setSelectedIds((prev) => prev.filter((id) => !idsToDelete.includes(id)));
     setIsBulkDeleting(false);
+    return { success: true };
   };
 
   // Export to CSV
@@ -774,7 +784,7 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
   };
 
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     const rowsToImport = previewRows.filter((r) => r.selected && r.isValid && !r.isDuplicate);
     if (rowsToImport.length === 0) {
       setImportStatus({
@@ -784,11 +794,28 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
       return;
     }
 
-    let importedCount = 0;
-    let errorCount = 0;
-
+    // All-or-nothing: re-check every row against the current records before saving any.
+    const seen = new Set<string>();
+    const clashes: string[] = [];
     for (const r of rowsToImport) {
-      const res = addStudent({
+      const reg = (r.regNo || '').trim().toLowerCase();
+      if (!reg) clashes.push(`${r.name || 'Unnamed'} (no Reg #)`);
+      else if (seen.has(reg) || students.some((st) => st.regNo.toLowerCase() === reg || st.studentNo.toLowerCase() === reg)) {
+        clashes.push(`Reg # ${r.regNo}`);
+      }
+      seen.add(reg);
+    }
+    if (clashes.length > 0) {
+      setImportStatus({
+        message: null,
+        error: `Nothing was imported. ${clashes.length} row(s) clash with existing records: ${clashes.slice(0, 5).join(', ')}${clashes.length > 5 ? '…' : ''}. Fix the CSV and upload it again.`,
+      });
+      return;
+    }
+
+    // One all-or-nothing save: every row is stored or none is.
+    const res = await bulkAddStudents(rowsToImport.map((r) => (
+{
         regNo: r.regNo || undefined,
         name: r.name,
         admissionDate: r.admissionDate,
@@ -808,20 +835,19 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
         motherPhone: r.motherPhone || '',
         status: 'Active',
         monthlyDiscount: r.monthlyDiscount,
-      });
-
-      if (res.success) {
-        importedCount++;
-      } else {
-        errorCount++;
       }
+    )));
+    if (!res.success) {
+      setImportStatus({
+        message: null,
+        error: `Nothing was imported. ${res.error || 'The server did not accept the file.'}`,
+      });
+      return;
     }
 
     setPreviewRows([]);
     setImportStatus({
-      message: `Successfully imported ${importedCount} student(s) into the system!${
-        errorCount > 0 ? ` (${errorCount} failed)` : ''
-      }`,
+      message: `Imported ${res.importedCount} student(s).`,
       error: null,
     });
   };
@@ -1784,9 +1810,17 @@ export const StudentsView: React.FC<StudentsViewProps> = ({ onNavigateToLedger }
 
             {previewRows.length > 0 && (
               <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
+                {previewCounts.invalid + previewCounts.duplicates > 0 && (
+                  <span className="mr-3 text-[11px] font-semibold text-rose-700">
+                    Fix {previewCounts.invalid + previewCounts.duplicates} row(s) with errors in the CSV and upload it again.
+                  </span>
+                )}
                 <button
                   onClick={handleConfirmImport}
-                  disabled={previewRows.filter((r) => r.selected && r.isValid).length === 0}
+                  disabled={
+                    previewCounts.invalid + previewCounts.duplicates > 0 ||
+                    previewRows.filter((r) => r.selected && r.isValid).length === 0
+                  }
                   className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />

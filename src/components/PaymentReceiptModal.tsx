@@ -42,7 +42,7 @@ export const PaymentReceiptModal: React.FC<PaymentReceiptModalProps> = ({
   receiptData,
   initialIndex = 0,
 }) => {
-  const { institute, bankAccounts, students, classes, feeTemplates, voucherRoundingMultiple, appTheme, showToast } =
+  const { institute, bankAccounts, students, classes, templates: feeTemplates, roundingMultiple: voucherRoundingMultiple, showToast } =
     useApp();
 
   useEscapeKey(onClose, isOpen);

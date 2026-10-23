@@ -1,3 +1,4 @@
+import { useApp } from '../../context/AppContext';
 import React from 'react';
 import { FeeVoucher, Student, VoucherDeletionResolution } from '../../types';
 import { DownstreamConflict } from '../../context/AppContext';
@@ -37,6 +38,7 @@ export const DeleteVoucherModal: React.FC<DeleteVoucherModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  const { financialSaving } = useApp();
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
       <div
@@ -193,6 +195,7 @@ export const DeleteVoucherModal: React.FC<DeleteVoucherModalProps> = ({
                   type="button"
                   id="btn-confirm-auto-heal-delete"
                   onClick={onConfirm}
+                  disabled={financialSaving}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
@@ -205,6 +208,7 @@ export const DeleteVoucherModal: React.FC<DeleteVoucherModalProps> = ({
                   type="button"
                   id="btn-confirm-cascade-delete"
                   onClick={onConfirm}
+                  disabled={financialSaving}
                   className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -281,6 +285,7 @@ export const DeleteVoucherModal: React.FC<DeleteVoucherModalProps> = ({
                 type="button"
                 id="btn-confirm-standard-delete"
                 onClick={onConfirm}
+                  disabled={financialSaving}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-1.5"
               >
                 <Trash2 className="w-3.5 h-3.5" />

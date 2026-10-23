@@ -111,29 +111,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     saveStudentTemplateOverrides,
     bulkSaveMultipleStudentTemplateOverrides,
     deleteStudentTemplates,
+    deleteStudentTemplateScopes,
     resetAllTemplates,
     hasPermission,
     priorMonthRule,
-    setPriorMonthRule,
+    savePolicySettings,
     skippedMonthRule,
-    setSkippedMonthRule,
     voucherDeletionResolution,
-    setVoucherDeletionResolution,
     defaultLateFeeRate,
-    setDefaultLateFeeRate,
     roundingMultiple,
-    setRoundingMultiple,
     roundingEnabled,
-    setRoundingEnabled,
     transportRoundingMultiple,
-    setTransportRoundingMultiple,
     defaultDueDateEnabled,
     defaultDueDay,
-    setDefaultDueDateSettings,
     voucherCopyOrder,
-    setVoucherCopyOrder,
     voucherDefaultCopies,
-    setVoucherDefaultCopies,
     users,
     addUser,
     updateUser,
@@ -149,7 +141,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setActiveMonth,
     beforeMonthChange,
     sessionTimeoutMinutes,
-    setSessionTimeoutMinutes,
     showToast,
   } = useApp();
 
@@ -271,23 +262,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setShowPolicyConfirmModal(true);
   };
 
-  const handleConfirmPolicyChanges = () => {
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
+  // Confirm-first: one request; the settings take effect (and the dialog closes)
+  // only when the server accepted them. A refusal keeps the dialog open.
+  const handleConfirmPolicyChanges = async () => {
+    if (savingPolicy) return;
+    let patch: Record<string, any>;
     if (policyScope === 'rules') {
-      setPriorMonthRule(selectedPriorRule);
-      setSkippedMonthRule(selectedSkippedRule);
-      setVoucherDeletionResolution(selectedDeletionResolution);
+      patch = {
+        priorMonthRule: selectedPriorRule,
+        skippedMonthRule: selectedSkippedRule,
+        voucherDeletionResolution: selectedDeletionResolution,
+      };
     } else if (policyScope === 'defaults') {
-      setDefaultLateFeeRate(selectedLateFeeRate);
-      setRoundingMultiple(selectedRoundingMultiple);
-      setRoundingEnabled(selectedRoundingEnabled);
-      setTransportRoundingMultiple(selectedTransportRoundingMultiple);
-      setDefaultDueDateSettings({
-        enabled: selectedDefaultDueDateEnabled,
-        day: selectedDefaultDueDay,
-      });
+      patch = {
+        defaultLateFeeRate: selectedLateFeeRate,
+        roundingMultiple: selectedRoundingMultiple,
+        roundingEnabled: selectedRoundingEnabled,
+        transportRoundingMultiple: selectedTransportRoundingMultiple,
+        defaultDueDateEnabled: selectedDefaultDueDateEnabled,
+        defaultDueDay: selectedDefaultDueDay,
+      };
     } else {
-      setVoucherCopyOrder(selectedVoucherCopyOrder);
-      setVoucherDefaultCopies(selectedVoucherDefaultCopies);
+      patch = {
+        voucherCopyOrder: selectedVoucherCopyOrder,
+        voucherDefaultCopies: selectedVoucherDefaultCopies,
+      };
+    }
+    setSavingPolicy(true);
+    const res = await savePolicySettings(patch);
+    setSavingPolicy(false);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the settings. Nothing was changed.', 'error');
+      return;
     }
     setShowPolicyConfirmModal(false);
     showToast(`${policyScopeNames[policyScope]} updated and activated successfully!`, 'success');
@@ -557,7 +565,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleRosterAmountChange = (kind: ParticularKind, amount: number | string) => {
     setRosterState((prev) =>
-      prev.map((item) => (item.kind === kind ? { ...item, defaultAmount: amount } : item))
+      prev.map((item) => (item.kind === kind ? { ...item, defaultAmount: Number(amount) || 0 } : item))
     );
   };
 
@@ -578,7 +586,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const allowNegativeAmount = (kind: ParticularKind): boolean =>
     kind === 'Flex1' || kind === 'Flex2' || kind === 'Flex3' || kind === 'Flex4';
 
-  const saveGlobalRoster = () => {
+  const saveGlobalRoster = async () => {
     const updatedGlobalTemplates: FeeTemplate[] = rosterState.map((r, idx) => ({
       id: `tpl-${r.kind.toLowerCase()}-${effectiveTemplateMonth}-${idx + 1}`,
       kind: r.kind,
@@ -588,17 +596,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       month: effectiveTemplateMonth,
     }));
 
-    updateGlobalTemplatesList(updatedGlobalTemplates, effectiveTemplateMonth);
+    const res = await updateGlobalTemplatesList(updatedGlobalTemplates, effectiveTemplateMonth);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the fee particulars. Nothing was changed.', 'error');
+      return false;
+    }
     if (effectiveTemplateMonth === 'all') {
       showToast('Global fee particulars roster order & rates saved for All Months! All vouchers and PDF exports will follow this baseline.', 'success');
     } else {
       showToast(`Global fee particulars override saved for ${formatMonthName(effectiveTemplateMonth)}! Vouchers generated for this month will use this global override.`, 'success');
     }
+    return true;
   };
 
-  const handleClearGlobalMonthOverride = () => {
+  const handleClearGlobalMonthOverride = async () => {
     if (effectiveTemplateMonth === 'all') return;
-    deleteGlobalTemplates(effectiveTemplateMonth);
+    const res = await deleteGlobalTemplates(effectiveTemplateMonth);
+    if (!res.success) {
+      showToast(res.error || 'Could not clear the month override. Nothing was changed.', 'error');
+      return;
+    }
     showToast(
       `Global month override cleared for ${formatMonthName(effectiveTemplateMonth)}. Reverted to All-Months Global defaults.`,
       'info'
@@ -607,7 +624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSaveAllParticulars = (e: React.FormEvent) => {
     e.preventDefault();
-    saveGlobalRoster();
+    void saveGlobalRoster();
   };
 
   // 4-Way Hierarchy Fee Template Overrides State: Global | Class | Student | Overrides Directory
@@ -876,7 +893,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const saveClassRoster = () => {
+  const saveClassRoster = async () => {
     if (!selectedClassId || !selectedClass) return;
 
     const itemsToSave = classRosterState.map((item, idx) => {
@@ -891,7 +908,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       };
     });
 
-    saveClassTemplateOverrides(selectedClassId, effectiveTemplateMonth, itemsToSave);
+    const res = await saveClassTemplateOverrides(selectedClassId, effectiveTemplateMonth, itemsToSave);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the class fee template. Nothing was changed.', 'error');
+      return false;
+    }
     if (effectiveTemplateMonth === 'all') {
       showToast(
         `Class-level fee template for ${selectedClass.name} saved for All Months! This permanently overrides global defaults for all students in ${selectedClass.name}.`,
@@ -903,16 +924,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         'success'
       );
     }
+    return true;
   };
 
   const handleSaveClassOverrides = (e: React.FormEvent) => {
     e.preventDefault();
-    saveClassRoster();
+    void saveClassRoster();
   };
 
-  const handleClearClassOverrides = (classIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
+  const handleClearClassOverrides = async (classIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
     const classObj = classes.find((c) => c.id === classIdToClear);
-    deleteClassTemplates(classIdToClear, monthToClear);
+    const res = await deleteClassTemplates(classIdToClear, monthToClear);
+    if (!res.success) {
+      showToast(res.error || 'Could not clear the class overrides. Nothing was changed.', 'error');
+      return;
+    }
     if (monthToClear === 'all') {
       showToast(
         `All-months class template overrides cleared for ${classObj?.name || 'Class'}. Reverted to Global Default templates.`,
@@ -926,7 +952,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const saveStudentRoster = () => {
+  const saveStudentRoster = async () => {
     if (!selectedStudentId || !selectedStudent) return;
 
     const itemsToSave = studentRosterState.map((item, idx) => {
@@ -941,7 +967,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       };
     });
 
-    saveStudentTemplateOverrides(selectedStudentId, effectiveTemplateMonth, itemsToSave);
+    const res = await saveStudentTemplateOverrides(selectedStudentId, effectiveTemplateMonth, itemsToSave);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the student fee template. Nothing was changed.', 'error');
+      return false;
+    }
     if (effectiveTemplateMonth === 'all') {
       showToast(
         `Student-specific fee template for ${selectedStudent.name} (${selectedStudent.regNo}) saved for All Months! Recurring across all billing months.`,
@@ -953,11 +983,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         'success'
       );
     }
+    return true;
   };
 
   const handleSaveStudentOverrides = (e: React.FormEvent) => {
     e.preventDefault();
-    saveStudentRoster();
+    void saveStudentRoster();
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -979,9 +1010,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleClearStudentOverrides = (studentIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
+  const handleClearStudentOverrides = async (studentIdToClear: string, monthToClear: string = effectiveTemplateMonth) => {
     const studentObj = students.find((s) => s.id === studentIdToClear);
-    deleteStudentTemplates(studentIdToClear, monthToClear);
+    const res = await deleteStudentTemplates(studentIdToClear, monthToClear);
+    if (!res.success) {
+      showToast(res.error || 'Could not clear the student overrides. Nothing was changed.', 'error');
+      return;
+    }
     if (monthToClear === 'all') {
       showToast(
         `All-months custom overrides cleared for ${studentObj?.name || 'student'}${studentObj ? ` (${studentObj.regNo})` : ''}. Reverted to class/global fee templates.`,
@@ -1030,19 +1065,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     showToast('Unsaved changes discarded.', 'info');
   };
 
-  const saveActiveDrafts = () => {
+  const saveActiveDrafts = async () => {
     const transition = pendingTransition;
     let savedCount = 0;
     if (templateScopeMode === 'global' && globalDirty) {
-      saveGlobalRoster();
+      if (!(await saveGlobalRoster())) return; // stay put: the save was not confirmed
       savedCount++;
     }
     if (templateScopeMode === 'class' && classDirty) {
-      saveClassRoster();
+      if (!(await saveClassRoster())) return;
       savedCount++;
     }
     if (templateScopeMode === 'student' && studentDirty) {
-      saveStudentRoster();
+      if (!(await saveStudentRoster())) return;
       savedCount++;
     }
     if (!savedCount) {
@@ -1097,8 +1132,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     };
   }, [beforeMonthChange]);
 
-  const handleConfirmResetAll = () => {
-    resetAllTemplates();
+  const handleConfirmResetAll = async () => {
+    const res = await resetAllTemplates();
+    if (!res.success) {
+      showToast(res.error || 'Could not reset the fee templates. Nothing was changed.', 'error');
+      setShowResetAllModal(false);
+      return;
+    }
     setRosterState(initializeRosterState());
     setShowResetAllModal(false);
     showToast(
@@ -1359,14 +1399,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     );
   };
 
-  const handleBulkDeleteOverrides = () => {
+  const handleBulkDeleteOverrides = async () => {
     if (selectedOverrideKeys.length === 0) return;
-    selectedOverrideKeys.forEach((key) => {
-      const [sId, m] = key.split(':::');
-      if (sId) {
-        deleteStudentTemplates(sId, m || 'all');
-      }
-    });
+    const scopes = selectedOverrideKeys
+      .map((key) => {
+        const [sId, m] = key.split(':::');
+        return { studentId: sId, month: m || 'all' };
+      })
+      .filter((x) => !!x.studentId);
+    const res = await deleteStudentTemplateScopes(scopes);
+    if (!res.success) {
+      showToast(res.error || 'Could not delete the selected overrides. Nothing was changed.', 'error');
+      return;
+    }
     showToast(
       `Custom fee template overrides deleted for ${selectedOverrideKeys.length} student override${
         selectedOverrideKeys.length === 1 ? '' : 's'
@@ -1680,7 +1725,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     document.body.removeChild(link);
   };
 
-  const handleCommitCsvUpload = () => {
+  const handleCommitCsvUpload = async () => {
     const validRows = parsedCsvRows.filter((r) => r.isValid && r.student);
     if (validRows.length === 0) {
       setCsvParseError('No valid rows to import. Please check student identifiers.');
@@ -1775,7 +1820,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       };
     });
 
-    bulkSaveMultipleStudentTemplateOverrides(entriesToSave, effectiveTemplateMonth);
+    const bulkRes = await bulkSaveMultipleStudentTemplateOverrides(entriesToSave, effectiveTemplateMonth);
+    if (!bulkRes.success) {
+      setCsvParseError(bulkRes.error || 'The import could not be saved. Nothing was imported.');
+      return;
+    }
 
     showToast(
       `Successfully imported custom fee template overrides for ${validRows.length} student${
@@ -1915,10 +1964,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setUserToDelete(null);
   };
 
-  const handleConfirmDeleteBank = () => {
+  const handleConfirmDeleteBank = async () => {
     if (!bankToDelete) return;
-    deleteBankAccount(bankToDelete.id);
-    showToast(`Bank account "${bankToDelete.bankName}" removed.`, 'success');
+    const res = await deleteBankAccount(bankToDelete.id);
+    if (!res.success) {
+      showToast(res.error || 'Could not remove the bank account.', 'error');
+    } else {
+      showToast(`Bank account "${bankToDelete.bankName}" removed.`, 'success');
+    }
     setBankToDelete(null);
   };
 
@@ -1933,8 +1986,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         sessionTimeoutMinutes: timeout,
       },
     };
-    await updateInstitute(mergedData);
-    setSessionTimeoutMinutes(timeout);
+    const res = await updateInstitute(mergedData);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the institute profile.', 'error');
+      return;
+    }
     showToast('Institute profile and security settings saved successfully!', 'success');
   };
 
@@ -1973,20 +2029,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setShowBankModal(true);
   };
 
-  const handleSaveBank = (e: React.FormEvent) => {
+  const handleSaveBank = async (e: React.FormEvent) => {
     e.preventDefault();
     const payload = {
       ...bankFormData,
       instructionsLine1: bankFormData.instructionsLtr,
       instructionsLine2: bankFormData.instructionsRtl,
     };
-    if (editingBank) {
-      updateBankAccount(editingBank.id, payload);
-      showToast(`Bank "${bankFormData.bankName}" updated.`, 'success');
-    } else {
-      addBankAccount(payload);
-      showToast(`Bank "${bankFormData.bankName}" added.`, 'success');
+    const res = editingBank ? await updateBankAccount(editingBank.id, payload) : await addBankAccount(payload);
+    if (!res.success) {
+      showToast(res.error || 'Could not save the bank account. Nothing was changed.', 'error');
+      return;
     }
+    showToast(`Bank "${bankFormData.bankName}" ${editingBank ? 'updated' : 'added'}.`, 'success');
     setShowBankModal(false);
   };
 
@@ -2747,7 +2802,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                     <div className="text-xs text-slate-600 mt-0.5">
                       Class: <span className="font-semibold text-slate-800">{selectedStudentClass?.name || 'N/A'}</span>
-                      {selectedStudent.section && ` (Sec ${selectedStudent.section})`}
                       {selectedStudent.fatherName && ` • S/D/O: ${selectedStudent.fatherName}`}
                       {selectedStudent.monthlyDiscount ? ` • Base Discount: ${formatCurrency(selectedStudent.monthlyDiscount)}` : ''}
                     </div>
@@ -3394,8 +3448,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               {hasPermission('settings.manage') && (
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    deleteGlobalTemplates(item.month);
+                                  onClick={async () => {
+                                    const res = await deleteGlobalTemplates(item.month);
+                                    if (!res.success) {
+                                      showToast(res.error || 'Could not remove the month override. Nothing was changed.', 'error');
+                                      return;
+                                    }
                                     showToast(
                                       `Month-specific global templates removed for ${formatMonthName(item.month)}. That month now uses the Global Default.`,
                                       'info'
@@ -4528,9 +4586,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div className="p-2 bg-amber-50/80 border border-amber-200/70 rounded-lg text-[11px] text-amber-900 leading-relaxed">
                     <strong>Impact:</strong>{' '}
-                    {selectedPriorRule === 'strict' && 'Blocks generation for any month prior to student’s latest issued month.'}
-                    {selectedPriorRule === 'warning' && 'Allows prior-month vouchers after warning; downstream figures remain static.'}
-                    {selectedPriorRule === 'recalculate' && 'Auto-updates prior balances and recalculates net dues across subsequent vouchers.'}
+                    {selectedPriorRule === 'strict' && 'Blocks generation for any month prior to student’s latest issued month. Add a missed past charge to the current voucher as a labelled particular; payments always go against the latest voucher.'}
+                    {selectedPriorRule === 'recalculate' && 'Auto-updates prior balances and recalculates net dues across subsequent vouchers. A missed past month is backdated and the later vouchers update; payments always go against the student\'s latest voucher.'}
                   </div>
                 </div>
               )}
@@ -4616,10 +4673,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 type="button"
                 id="btn-confirm-apply-policies"
                 onClick={handleConfirmPolicyChanges}
-                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                disabled={savingPolicy}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <Check className="w-3.5 h-3.5" />
-                Apply Changes
+                {savingPolicy ? 'Saving…' : 'Apply Changes'}
               </button>
             </div>
           </div>

@@ -414,7 +414,7 @@ export interface SpecialtyPreset {
 export const SPECIALTY_PRESETS: SpecialtyPreset[] = [
   {
     id: 'admin',
-    name: 'Super Administrator',
+    name: 'Administrator',
     badge: 'Full Access',
     role: 'Admin',
     description: 'Unrestricted control over all billing, collections, policies, and operator credentials.',
@@ -498,7 +498,7 @@ export function isPermissionAllowed(
 ): boolean {
   if (!user) return false;
 
-  // Super Admin role or wildcard '*' grants full system access
+  // Admin role or wildcard '*' grants full system access
   if (user.role === 'Admin' || user.permissions?.includes('*')) {
     return true;
   }

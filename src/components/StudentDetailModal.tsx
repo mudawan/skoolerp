@@ -49,6 +49,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     families,
     hasPermission,
     generateAdmissionVoucher,
+    financialSaving,
     showToast,
     vouchers,
     activeMonth,
@@ -157,7 +158,13 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     [vouchers, student.id, admMonth]
   );
 
+  const studentHasOtherVoucher = useMemo(
+    () => vouchers.some((v) => v.studentId === student.id && v.status !== 'Reversed'),
+    [vouchers, student.id]
+  );
+
   const handleOpenAdmVoucher = () => {
+    if (studentHasOtherVoucher) return;
     seedAdmItems(admMonth);
     setAdmDueDate(getComputedDefaultDueDate(admMonth));
     setAdmDueDateTouched(false);
@@ -172,13 +179,14 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   };
 
   const admGenerateDisabled =
+    studentHasOtherVoucher ||
     !!existingAdmVoucher ||
     admRangeInvalid ||
     (!!admMonthMin && admMonth < admMonthMin) ||
     (!!admMonthMax && admMonth > admMonthMax) ||
     admTotal <= 0;
 
-  const handleGenerateAdmVoucher = () => {
+  const handleGenerateAdmVoucher = async () => {
     if (admGenerateDisabled) return;
     const items = admItems
       .filter((it) => (Number(it.amount) || 0) > 0)
@@ -196,8 +204,13 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     // so they are reused next time. Generation below uses these exact items
     // directly (not the possibly-just-updated template state), avoiding a
     // stale-closure "no template" failure on the first click.
-    saveStudentTemplateOverrides(student.id, admMonth, items);
-    const res = generateAdmissionVoucher(student.id, admMonth, {
+    const tplRes = await saveStudentTemplateOverrides(student.id, admMonth, items);
+    if (!tplRes.success) {
+      showToast(tplRes.error || 'Could not save the admission charges. No voucher was generated.', 'error');
+      return;
+    }
+    if (financialSaving) return;
+    const res = await generateAdmissionVoucher(student.id, admMonth, {
       dueDate: admDueDate || undefined,
       items: items.map((it) => ({ kind: it.kind, label: it.label, amount: it.defaultAmount })),
     });
@@ -653,7 +666,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
             {hasPermission('fees.generate') && student.firstBillingMonth && (
               <button
                 onClick={handleOpenAdmVoucher}
-                className="px-3.5 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-amber-200"
+                disabled={studentHasOtherVoucher}
+                title={studentHasOtherVoucher ? 'Admission voucher can only be issued before the first regular voucher' : undefined}
+                className="px-3.5 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:hover:bg-slate-100 disabled:cursor-not-allowed rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-amber-200"
               >
                 <Receipt className="w-3.5 h-3.5" />
                 Admission Voucher
@@ -790,7 +805,15 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 </div>
 
                 {/* Existing Voucher Warning Banner */}
-                {existingAdmVoucher && (
+                {studentHasOtherVoucher && (
+                  <div className="bg-rose-50 border border-rose-200/80 rounded-xl p-3 text-xs text-rose-800 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="leading-relaxed">
+                      This student already has a voucher. Admission vouchers can only be issued before the first regular voucher.
+                    </div>
+                  </div>
+                )}
+                {!studentHasOtherVoucher && existingAdmVoucher && (
                   <div className="bg-rose-50 border border-rose-200/80 rounded-xl p-3 text-xs text-rose-800 flex items-start gap-2.5">
                     <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                     <div className="leading-relaxed">
@@ -830,7 +853,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                                   prev.map((p) => (p.kind === it.kind ? { ...p, label: e.target.value } : p))
                                 )
                               }
-                              placeholder={it.defaultLabel}
+                              placeholder={ADM_FLEX_KINDS.find((k) => k.kind === it.kind)?.defaultLabel}
                               className="w-full px-2.5 py-1 bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 placeholder:text-slate-400 transition"
                             />
                           </div>
@@ -882,7 +905,9 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                     className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-2 transition cursor-pointer shadow-xs"
                   >
                     <FileCheck2 className="w-4 h-4" />
-                    {admTotal <= 0
+                    {studentHasOtherVoucher
+                      ? 'Not Allowed'
+                      : admTotal <= 0
                       ? 'Enter an Amount'
                       : existingAdmVoucher
                       ? 'Voucher Already Exists'

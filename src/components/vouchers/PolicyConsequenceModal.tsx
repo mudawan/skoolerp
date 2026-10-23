@@ -4,7 +4,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 export interface PolicyConfirmModalState {
   isOpen: boolean;
-  priorRule?: 'warning' | 'recalculate';
+  priorRule?: 'recalculate';
   affectedPriorPreviews: VoucherPreviewCalculation[];
   affectedSkippedPreviews: VoucherPreviewCalculation[];
 }
@@ -67,30 +67,7 @@ export const PolicyConsequenceModal: React.FC<PolicyConsequenceModalProps> = ({
 
         {/* Prior Month Consequence Section */}
         {policyConfirmModal.affectedPriorPreviews.length > 0 && (
-          policyConfirmModal.priorRule === 'warning' ? (
-            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200/80 text-xs text-amber-900 space-y-2">
-              <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                Prior Month Sequential Consequence:
-              </div>
-              <p className="leading-relaxed">
-                Generating vouchers for <strong>{formatMonthName(targetMonth)}</strong> will create the new voucher(s), but existing future vouchers will <strong>NOT</strong> automatically inherit new carry-over balance arrears.
-              </p>
-              <div className="text-[11px] font-bold text-slate-700 pt-1">
-                Students with Existing Future Vouchers ({policyConfirmModal.affectedPriorPreviews.length}):
-              </div>
-              <div className="max-h-28 overflow-y-auto border border-amber-200/60 rounded-lg p-1.5 bg-white/80 space-y-1">
-                {policyConfirmModal.affectedPriorPreviews.map((p) => (
-                  <div key={p.student.id} className="flex items-center justify-between text-slate-800 text-[11px] px-2 py-1 bg-amber-50/50 rounded">
-                    <span className="font-semibold">{p.student.name} ({p.student.regNo})</span>
-                    <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded">
-                      Future: {formatMonthName(p.latestFutureMonth || '')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
+          (
             <div className="p-3.5 bg-indigo-50 rounded-xl border border-indigo-200/80 text-xs text-indigo-900 space-y-2">
               <div className="font-bold flex items-center gap-1.5 text-indigo-800">
                 <RefreshCw className="w-4 h-4 text-indigo-600 shrink-0" />

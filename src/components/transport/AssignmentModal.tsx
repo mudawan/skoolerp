@@ -33,6 +33,7 @@ interface AssignmentModalProps {
   studentComboRef: React.RefObject<HTMLDivElement>;
   onSelectStudent: (studentId: string) => void;
   onSubmit: (e: React.FormEvent) => void;
+  formError?: string;
 }
 
 export const AssignmentModal: React.FC<AssignmentModalProps> = ({
@@ -54,8 +55,14 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
   studentComboRef,
   onSelectStudent,
   onSubmit,
+  formError,
 }) => {
   if (!show) return null;
+  const missing = [
+    !asgnData.studentId && 'a student',
+    !asgnData.busId && 'a bus',
+    !asgnData.stopId && 'a stop',
+  ].filter(Boolean) as string[];
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-fadeIn">
@@ -347,6 +354,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                     onChange={(e) => setAsgnData({ ...asgnData, busId: e.target.value })}
                     className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
                   >
+                    <option value="" disabled>Select bus…</option>
                     {buses.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.busNumber} - {b.routeName}
@@ -362,6 +370,7 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
                     onChange={(e) => setAsgnData({ ...asgnData, stopId: e.target.value })}
                     className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-medium"
                   >
+                    <option value="" disabled>Select stop…</option>
                     {stops.map((sp) => (
                       <option key={sp.id} value={sp.id}>
                         {sp.name} ({formatCurrency(sp.monthlyFare)})
@@ -536,6 +545,10 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
             })()}
           </div>
 
+          {formError && (
+            <div className="mx-6 mb-3 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-[11px] font-medium">{formError}</div>
+          )}
+
           {/* Modal Footer */}
           <div className="px-6 py-3 bg-slate-50/90 border-t border-slate-200 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
@@ -551,9 +564,13 @@ export const AssignmentModal: React.FC<AssignmentModalProps> = ({
               >
                 Cancel
               </button>
+              {missing.length > 0 && (
+                <span className="text-[11px] text-slate-500 mr-auto self-center">Select {missing.join(', ')}</span>
+              )}
               <button
                 type="submit"
-                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                disabled={missing.length > 0}
+                className="px-5 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
               >
                 <Check className="w-4 h-4" />
                 <span>{editingAsgn ? 'Update Assignment' : 'Save Assignment'}</span>

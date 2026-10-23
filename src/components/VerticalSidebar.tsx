@@ -183,6 +183,12 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           permission: () => hasPermission('fees.collect') || hasPermission('fees.view'),
         },
         {
+          id: 'bankStatements',
+          label: 'Bank Statements',
+          icon: Landmark,
+          permission: () => hasPermission('fees.collect'),
+        },
+        {
           id: 'defaulters',
           label: 'Defaulters & Arrears',
           icon: AlertTriangle,

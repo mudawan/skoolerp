@@ -14,7 +14,7 @@ import {
   PaymentReceiptData,
   VoucherCopyType,
 } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords, getCurrencyCode } from './feeMath';
+import { formatCurrency, formatMonthName, getAppliedFineAmount, numberToWords, getCurrencyCode, type StudentLedgerSummary } from './feeMath';
 
 export interface PdfExportContext {
   institute: InstituteProfile;
@@ -801,6 +801,7 @@ export function generateStudentFeeLedgerDoc(
   student: Student,
   studentClass: SchoolClass | undefined,
   entries: StudentLedgerPdfEntry[],
+  summary: StudentLedgerSummary,
   context: PdfExportContext
 ): jsPDF {
   const doc = new jsPDF({
@@ -940,11 +941,11 @@ export function generateStudentFeeLedgerDoc(
   y += 27;
 
   // 4. Financial Summary Cards
-  const totalBilled = entries.reduce((sum, e) => sum + e.total, 0);
-  const totalDeposited = entries.reduce((sum, e) => sum + e.deposit, 0);
-  const totalBalance = entries.reduce((sum, e) => sum + e.balance, 0);
-  const collectionPct = totalBilled > 0 ? Math.round((totalDeposited / totalBilled) * 100) : 0;
-  const overdueMonthsCount = entries.filter((e) => e.balance > 0).length;
+  const totalBilled = summary.billed;
+  const totalDeposited = summary.deposited;
+  const totalBalance = summary.outstanding;
+  const collectionPct = summary.recoveryRate;
+  const overdueMonthsCount = summary.unpaidMonths;
 
   const cardWidth = (contentWidth - 12) / 5;
   const cards = [
@@ -1106,7 +1107,7 @@ export function generateStudentFeeLedgerDoc(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.setTextColor(15, 23, 42);
-  doc.text('TOTAL STATEMENT BALANCE:', margin + 4, y + 4.5);
+  doc.text('TOTAL (CARRIED BALANCES COUNTED ONCE):', margin + 4, y + 4.5);
 
   const totalColX = margin + colDefs[0].width + colDefs[1].width + colDefs[2].width + colDefs[3].width + colDefs[4].width;
   doc.text(formatCurrency(totalBilled), totalColX + colDefs[5].width - 2, y + 4.5, { align: 'right' });
@@ -1161,6 +1162,7 @@ export async function exportStudentFeeLedgerPdf(
   student: Student,
   studentClass: SchoolClass | undefined,
   entries: StudentLedgerPdfEntry[],
+  summary: StudentLedgerSummary,
   context: PdfExportContext,
   filename?: string
 ) {
@@ -1171,7 +1173,7 @@ export async function exportStudentFeeLedgerPdf(
     }
   }
 
-  const doc = generateStudentFeeLedgerDoc(student, studentClass, entries, context);
+  const doc = generateStudentFeeLedgerDoc(student, studentClass, entries, summary, context);
   const cleanRegNo = student.regNo.replace(/[^a-zA-Z0-9_-]/g, '_');
   const finalFilename = filename || `Fee_Collections_${cleanRegNo}.pdf`;
   doc.save(finalFilename);
@@ -1184,6 +1186,7 @@ export async function printStudentFeeLedgerPdf(
   student: Student,
   studentClass: SchoolClass | undefined,
   entries: StudentLedgerPdfEntry[],
+  summary: StudentLedgerSummary,
   context: PdfExportContext
 ) {
   if (context.institute.logoUrl && !context.institute.logoUrl.startsWith('data:image/')) {
@@ -1193,7 +1196,7 @@ export async function printStudentFeeLedgerPdf(
     }
   }
 
-  const doc = generateStudentFeeLedgerDoc(student, studentClass, entries, context);
+  const doc = generateStudentFeeLedgerDoc(student, studentClass, entries, summary, context);
   doc.autoPrint();
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);

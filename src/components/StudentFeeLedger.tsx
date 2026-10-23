@@ -4,7 +4,7 @@ import { DEFAULT_PAYMENT_MODE, paymentModeText } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, PaymentTransaction, Student, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, formatStudentAge, calculateAge, getEffectiveMultiple, roundUpToMultiple, getCurrencyCode, getStudentArrears } from '../utils/feeMath';
+import { buildLatestVoucherMap, formatCurrency, formatMonthName, formatStudentAge, calculateAge, getEffectiveMultiple, roundUpToMultiple, getCurrencyCode, getStudentArrears, getStudentLedgerSummary } from '../utils/feeMath';
 import { downloadCsv } from '../utils/csv';
 import { exportStudentFeeLedgerPdf, printStudentFeeLedgerPdf } from '../utils/pdfGenerator';
 import { StudentAvatar } from './StudentAvatar';
@@ -56,6 +56,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     students,
     classes,
     vouchers,
+    isMonthLocked,
     transactions,
     ensureStudentHistory,
     institute,
@@ -64,11 +65,16 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     roundingMultiple,
     roundingEnabled,
     collectVoucherPayment,
+    financialSaving,
     updateVoucherParticulars,
     hasPermission,
     themeConfig,
     showToast,
   } = useApp();
+  const latestVoucherByStudent = useMemo(() => buildLatestVoucherMap(vouchers), [vouchers]);
+  const canTakePayment = (v: { id: string; studentId: string; month: string }) =>
+    latestVoucherByStudent.get(v.studentId)?.id === v.id && !isMonthLocked(v.month);
+
 
   // Search & Student Selection
   const [selectedStudentId, setSelectedStudentId] = useState<string>(initialStudentId || '');
@@ -304,10 +310,14 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
   }, [studentVouchers, studentTransactions, sortColumn, sortOrder, statusFilter, tableSearch]);
 
   // Overall Financial Totals
-  const totalBilled = studentVouchers.reduce((s, v) => s + v.netDue, 0);
   const totalDeposited = ledgerEntries.reduce((s, e) => s + e.deposit, 0);
-  const totalBalance = Math.max(0, totalBilled - totalDeposited);
-  const recoveryRate = totalBilled > 0 ? Math.round((totalDeposited / totalBilled) * 100) : 0;
+  const summary = useMemo(
+    () => getStudentLedgerSummary(studentVouchers, selectedStudentId, totalDeposited),
+    [studentVouchers, selectedStudentId, totalDeposited]
+  );
+  const totalBilled = summary.billed;
+  const totalBalance = summary.outstanding;
+  const recoveryRate = summary.recoveryRate;
   const unpaidCount = ledgerEntries.filter((e) => e.total > e.deposit).length;
 
   // Overdue months analysis: only open (not yet carried-forward) balances count.
@@ -446,7 +456,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     try {
       setIsExportingPdf(true);
       const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
-      await exportStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+      await exportStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, summary, context);
       showToast('Student fee ledger PDF downloaded successfully!', 'success');
     } catch (err) {
       console.error('Failed to export student fee ledger PDF:', err);
@@ -469,7 +479,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     try {
       setIsPrinting(true);
       const context = { institute, bankAccounts, students, classes, templates, roundingMultiple: roundingEnabled ? roundingMultiple : 1 };
-      await printStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, context);
+      await printStudentFeeLedgerPdf(currentStudent, currentClass, ledgerEntries, summary, context);
     } catch (err) {
       console.error('Failed to print student fee ledger:', err);
       showToast('Failed to open print preview. Please try again.', 'error');
@@ -490,9 +500,9 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     setCollectNotes(`Direct student ledger collection for ${voucher.voucherNo}`);
   };
 
-  const handleSaveLineItemsOnly = () => {
+  const handleSaveLineItemsOnly = async () => {
     if (!collectModalVoucher) return;
-    const res = updateVoucherParticulars(collectModalVoucher.id, collectItems);
+    const res = await updateVoucherParticulars(collectModalVoucher.id, collectItems);
     if (res.success) {
       showToast('Voucher line items and totals updated successfully!', 'success');
       if (res.voucher) {
@@ -503,16 +513,16 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
     }
   };
 
-  const handleSaveCollection = (e: React.FormEvent) => {
+  const handleSaveCollection = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!collectModalVoucher) return;
+    if (!collectModalVoucher || financialSaving) return;
     const amt = typeof collectAmount === 'string' ? parseFloat(collectAmount) : collectAmount;
     if (isNaN(amt) || amt <= 0) {
       showToast('Please enter a valid collection deposit amount.', 'error');
       return;
     }
 
-    const res = collectVoucherPayment(
+    const res = await collectVoucherPayment(
       collectModalVoucher.id,
       amt,
       collectMode,
@@ -893,6 +903,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
               </span>
               <span className="text-[11px] text-slate-400 font-medium">
                 Across {studentVouchers.length} billing cycle(s)
+                {summary.openingBalance > 0 ? ` · incl. opening balance ${formatCurrency(summary.openingBalance)}` : ''}
               </span>
             </div>
 
@@ -1264,7 +1275,8 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                               {/* Quick Collect Deposit (if allowed) */}
                               {(hasPermission('fees.collect') || hasPermission('fees.edit')) &&
                                 entry.voucher.status !== 'Carried' &&
-                                entry.voucher.status !== 'Reversed' && (
+                                entry.voucher.status !== 'Reversed' &&
+                                canTakePayment(entry.voucher) && (
                                 <button
                                   onClick={() => handleOpenCollectModal(entry.voucher)}
                                   className={`px-2 py-1 rounded-lg font-bold text-[11px] shadow-2xs transition flex items-center gap-1 cursor-pointer ${
@@ -1297,7 +1309,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                   <tfoot className="bg-slate-900 text-white font-bold border-t border-slate-800">
                     <tr>
                       <td colSpan={5} className="p-3 font-bold text-xs uppercase tracking-wider">
-                        TOTAL STATEMENT SUMMARY:
+                        TOTAL STATEMENT SUMMARY (carried balances counted once):
                       </td>
                       <td className="p-3 text-right text-teal-300 text-xs">
                         {formatCurrency(totalBilled)}
@@ -1723,7 +1735,7 @@ export const StudentFeeLedger: React.FC<StudentFeeLedgerProps> = ({
                       </button>
                       <button
                         type="submit"
-                        disabled={!collectAmount || Number(collectAmount) <= 0}
+                        disabled={!collectAmount || Number(collectAmount) <= 0 || financialSaving}
                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                       >
                         <CheckCircle2 className="w-4 h-4" />

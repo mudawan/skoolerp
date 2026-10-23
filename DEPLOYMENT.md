@@ -29,7 +29,7 @@ In this setup, `REQUIRE_POSTGRES=true` is enabled by default with PostgreSQL 16 
    ```bash
    curl -s http://localhost:3000/api/health | jq .
    ```
-   You will receive the PostgreSQL engine confirmation, latency probe (`database.latencyMs`), and connection pool metrics (`database.pool`).
+   You will receive `"status": "ok"` (or `"degraded"` with HTTP 503 when the database cannot be reached). Detailed figures (latency, connection pool, database size, errors) are in the platform area, see "Platform owner area" below.
 
 5. **Access the application**:
    Open `http://localhost:3000` (or `http://YOUR_SERVER_IP:3000`).
@@ -149,3 +149,60 @@ This is a production release with **no seeded demo accounts** — there is no de
 3. Once logged in as Admin, invite additional operators (Accountant, Viewer, etc.) from **Settings → Users & Permissions**. Each invite generates a one-time code that the invited person uses at the **Join Institution** screen to set up their own account.
 
 There is no way to log in before completing step 1 — attempting a login before any institution has been registered will correctly return "User not found."
+
+## Platform owner area (app owner / support staff)
+
+Schools never see server or database settings. Those belong to you, the app owner, and live in a separate area at
+`/platform` with its own sign-in, its own sessions and its own accounts. A school account never works there and a
+platform account never works on a school screen.
+
+**Create the first platform admin** (on the server, in the app folder; needed once):
+```bash
+npm run platform:create-admin -- <username> "<Full Name>" owner
+```
+You are asked for a password (12 to 128 characters; typing is hidden). For scripted installs set `PLATFORM_ADMIN_PASSWORD`
+instead. Then open `https://your-domain/platform`. More people can be added from **Platform admins** in that area.
+
+| Role | Can do |
+|---|---|
+| Owner | Everything, including adding and managing platform admins |
+| Support | Dashboards, school list, reset passwords, sign users out, deactivate and reactivate users, suspend and reactivate schools, read the audit log |
+| Observer | Dashboards, school list, audit log (view only) |
+
+What is there:
+- **Overview, API health, Database, Errors**: dashboards. They keep 14 days of request and database figures, 30 days of error events and 180 days of size snapshots, and clean up after themselves.
+- **Schools**: per-school users with *Reset password* (one-time password, shown once, valid 72 hours, must be replaced at next sign-in), *Sign out*, *Deactivate / Reactivate*, and *Suspend / Reactivate school*. A suspended school cannot sign in; nothing is deleted.
+- **Audit log**: every platform action. The school's own audit trail also records that "Platform support" did it. Passwords are never recorded.
+
+### Where the database connection is set
+
+The connection is read-only reference information, set only in the server environment and never from a screen:
+- Either `DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/school_db"`, or `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`,
+  `POSTGRES_PASSWORD`, `POSTGRES_DB`.
+- Put it in the systemd unit (`Environment=...`), the Docker `.env`, or a `.env` file next to the app, then restart the app.
+- The platform **Database** page shows host, port, database and user for checking. The password is never shown.
+
+### Backups
+
+Schedule `scripts/backup.sh` as shown in "Automated Daily Backups" above. It is a server-side job, so there is no setting for
+it in the app. Schools can still export their own data and restore it from **Settings > Backups** in their own account.
+
+---
+
+## Upgrading an existing database (announced offline deploy)
+
+New installs create the full schema on first start. An older database is brought up to date by running the SQL files in
+`db/migrations/` once, in date order. The app does **not** run migrations by itself, and it will refuse to start (with a message naming the file
+to run) when its schema is out of date, so a mismatch cannot cause confusing errors later.
+
+Procedure for each upgrade:
+1. **Announce** the maintenance window to the schools.
+2. **Take the server offline**: `sudo systemctl stop skooler` (or `docker compose stop app`).
+3. **Back up**: run `scripts/backup.sh` once more.
+4. **Run the SQL** in DBeaver (or `psql`) as a script. Step 1 of each file only previews; step 2 applies the change in one transaction; step 3 checks the result. Every file is safe to run twice.
+   - `db/migrations/2026-10-integrity.sql`: row versions, foreign keys, `vouchers.fine_since_payment`.
+   - `db/migrations/2026-11-platform.sql`: forced password change, platform-locked accounts and school suspension columns. If a school is already marked `suspended` it will be refused at sign-in afterwards; reactivate it first if that is not intended.
+5. **Recompile and deploy**: `npm install && npm run build`, then `sudo systemctl start skooler` (or `docker compose up -d --build`).
+6. **Check**: open `/platform`, look at Overview and Database, and sign in to one school.
+
+If a file has already been applied, step 1 shows nothing left to change and step 2 changes nothing.

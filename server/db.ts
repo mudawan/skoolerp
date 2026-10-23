@@ -15,6 +15,9 @@ export interface DbInstitution {
   currency: string;
   logo_url?: string;
   status: 'active' | 'suspended' | 'trial';
+  suspended_at?: string | null;
+  suspended_by?: string | null;
+  suspend_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -29,10 +32,68 @@ export interface DbUser {
   role: string;
   permissions: string[];
   status: 'active' | 'invited' | 'deactivated';
+  must_change_password?: boolean;
+  temp_password_expires_at?: string | null;
+  platform_locked?: boolean;
   created_by?: string;
   last_login_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbPlatformAdmin {
+  id: string;
+  username: string;
+  password_hash: string;
+  full_name: string;
+  role: string;
+  status: string;
+  last_login_at?: string;
+  created_at: string;
+}
+
+export interface MonitorMetricRow {
+  minute: string;
+  method: string;
+  route: string;
+  count: number;
+  errors4xx: number;
+  errors5xx: number;
+  totalMs: number;
+  maxMs: number;
+  buckets: number[];
+}
+
+export interface MonitorEvent {
+  ts: string;
+  kind: string;
+  institutionId?: string;
+  userId?: string;
+  method?: string;
+  route?: string;
+  status?: number;
+  code?: string;
+  message?: string;
+  requestId?: string;
+  durationMs?: number;
+  meta?: Record<string, any>;
+}
+
+export interface MonitorDbSample {
+  ts: string;
+  ok: boolean;
+  latencyMs?: number;
+  poolTotal?: number;
+  poolIdle?: number;
+  poolWaiting?: number;
+  connections?: number;
+  dbSizeBytes?: number;
+  xactCommit?: number;
+  xactRollback?: number;
+  deadlocks?: number;
+  blksHit?: number;
+  blksRead?: number;
+  error?: string;
 }
 
 export interface DbOperatorInvite {
@@ -156,6 +217,13 @@ export interface VoucherTxWrites {
   collectionUpdates?: Record<string, { totalAmount: number; transactionCount: number }>;
   /** Collection ids to delete entirely (e.g. once their last transaction is removed). */
   deleteCollectionIds?: string[];
+  /**
+   * Extra statements that must commit or roll back together with the writes above (they run on the same
+   * database client, after every write and the fine_since_payment refresh, immediately before COMMIT).
+   * Used by add-on modules (e.g. bank-statement loading) that mark their own rows in the same transaction as
+   * the payment. A throw here rolls the whole transaction back.
+   */
+  afterWrites?: (client: any) => Promise<void>;
 }
 
 /**
@@ -168,9 +236,37 @@ export interface VoucherTxWrites {
  * structurally-simple, low-cardinality collections (classes, families,
  * buses, stops, transport assignments, fee templates, bank accounts).
  */
+/**
+ * A write that the database refused for a business reason the operator can act
+ * on: the record changed since it was loaded (stale version), or it is still
+ * referenced by other records. The API layer answers these with HTTP 409.
+ */
+/** What a student batch really changed; the basis of its one audit entry. */
+export interface StudentBatchSummary {
+  created: Array<{ name: string; regNo: string }>;
+  updated: Array<{ name: string; regNo: string; fields: string[]; statusFrom?: string; statusTo?: string }>;
+  deleted: Array<{ name: string; regNo: string }>;
+}
+
+export class ConflictError extends Error {
+  public readonly code: 'STALE_VERSION' | 'IN_USE' | 'DUPLICATE';
+  public readonly current?: any;
+  constructor(code: 'STALE_VERSION' | 'IN_USE' | 'DUPLICATE', message: string, current?: any) {
+    super(message);
+    this.name = 'ConflictError';
+    this.code = code;
+    this.current = current;
+  }
+}
+
+const STALE_MESSAGE =
+  'This record was changed by someone else since you opened it. The latest version has been loaded; please redo your change if it is still needed.';
+
 interface EntityFieldSpec {
   /** snake_case DB column name */
   column: string;
+  /** Store an empty string as NULL (needed for columns that are foreign keys). */
+  nullIfEmpty?: boolean;
   /** camelCase field name as used in API request/response bodies */
   field: string;
   type: 'string' | 'number' | 'boolean' | 'json';
@@ -203,6 +299,7 @@ function assertAllowedSimpleTable(table: string) {
 }
 
 function serializeFieldValue(spec: EntityFieldSpec, value: any): any {
+  if (spec.nullIfEmpty && (value === '' || value === undefined)) return null;
   if (spec.type === 'boolean') return !!value;
   if (spec.type === 'json') return JSON.stringify(value ?? null);
   if (spec.type === 'number') return value === undefined || value === null || value === '' ? 0 : Number(value);
@@ -210,7 +307,7 @@ function serializeFieldValue(spec: EntityFieldSpec, value: any): any {
 }
 
 function deserializeSimpleEntityRow(fields: EntityFieldSpec[], row: any): any {
-  const out: any = { id: row.id };
+  const out: any = { id: row.id, version: Number(row.version) || 1 };
   for (const spec of fields) {
     let v = row[spec.column];
     if (spec.type === 'boolean') v = v === true || v === 1 || v === '1';
@@ -275,8 +372,8 @@ export const TRANSPORT_ASSIGNMENT_ENTITY_CONFIG: SimpleEntityConfig = {
   fields: [
     { column: 'student_id', field: 'studentId', type: 'string' },
     { column: 'month', field: 'month', type: 'string' },
-    { column: 'bus_id', field: 'busId', type: 'string' },
-    { column: 'stop_id', field: 'stopId', type: 'string' },
+    { column: 'bus_id', field: 'busId', type: 'string', nullIfEmpty: true },
+    { column: 'stop_id', field: 'stopId', type: 'string', nullIfEmpty: true },
     { column: 'trip_type', field: 'tripType', type: 'string' },
     { column: 'days_charged', field: 'daysCharged', type: 'number' },
     { column: 'discount', field: 'discount', type: 'number' },
@@ -291,8 +388,8 @@ export const FEE_TEMPLATE_ENTITY_CONFIG: SimpleEntityConfig = {
     { column: 'label', field: 'label', type: 'string' },
     { column: 'default_amount', field: 'defaultAmount', type: 'number' },
     { column: 'sort_order', field: 'sortOrder', type: 'number' },
-    { column: 'class_id', field: 'classId', type: 'string' },
-    { column: 'student_id', field: 'studentId', type: 'string' },
+    { column: 'class_id', field: 'classId', type: 'string', nullIfEmpty: true },
+    { column: 'student_id', field: 'studentId', type: 'string', nullIfEmpty: true },
     { column: 'month', field: 'month', type: 'string' },
   ],
 };
@@ -529,8 +626,7 @@ class DatabaseService {
     if (this.isInitialized) return;
 
     if (!this.pgPool) {
-      console.error('[DB] Cannot initialize: PostgreSQL connection pool is not configured.');
-      return;
+      throw new Error('PostgreSQL connection pool is not configured. Set DATABASE_URL (or POSTGRES_HOST / POSTGRES_PORT / POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB).');
     }
 
     const maxRetries = 3;
@@ -547,6 +643,11 @@ class DatabaseService {
         return;
       } catch (err: any) {
         lastErr = err;
+        if (err?.schemaOutOfDate) {
+          // Retrying cannot fix this; stop with the instructions.
+          console.error(`[DB] ${err.message}`);
+          process.exit(1);
+        }
         console.error(`[DB] PostgreSQL connection attempt ${attempt} failed:`, err?.message || err);
         if (attempt < maxRetries) {
           const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 3000);
@@ -556,7 +657,12 @@ class DatabaseService {
       }
     }
 
-    console.error('[DB] PostgreSQL connection could not be established. PostgreSQL is required.');
+    // Without the database nothing can be saved or shown, so the server must not start
+    // half-alive (it would answer "degraded" while every screen failed). startServer()
+    // reports this and exits with a non-zero code so the process manager restarts it.
+    throw new Error(
+      `PostgreSQL connection could not be established after ${maxRetries} attempts (${lastErr?.message || 'unknown error'}). PostgreSQL is required.`
+    );
   }
 
   
@@ -580,6 +686,9 @@ class DatabaseService {
           currency VARCHAR(16) DEFAULT 'USD',
           logo_url TEXT,
           status VARCHAR(32) DEFAULT 'active',
+          suspended_at TIMESTAMPTZ,
+          suspended_by VARCHAR(128),
+          suspend_reason TEXT,
           settings JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -596,6 +705,9 @@ class DatabaseService {
           permissions JSONB DEFAULT '[]'::jsonb,
           preferences JSONB DEFAULT '{}'::jsonb,
           status VARCHAR(32) DEFAULT 'active',
+          must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+          temp_password_expires_at TIMESTAMPTZ,
+          platform_locked BOOLEAN NOT NULL DEFAULT FALSE,
           created_by VARCHAR(64),
           last_login_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -634,6 +746,109 @@ class DatabaseService {
           created_at TIMESTAMPTZ DEFAULT NOW()
         );
 
+        -- Platform (app-owner) identity. Deliberately separate from users/institutions:
+        -- a platform admin belongs to no school, has its own sessions, and is never
+        -- accepted by a school route (and the reverse).
+        CREATE TABLE IF NOT EXISTS platform_admins (
+          id VARCHAR(64) PRIMARY KEY,
+          username VARCHAR(128) NOT NULL,
+          password_hash TEXT NOT NULL,
+          full_name VARCHAR(128) NOT NULL,
+          role VARCHAR(32) NOT NULL,
+          status VARCHAR(32) NOT NULL DEFAULT 'active',
+          last_login_at TIMESTAMPTZ,
+          created_by VARCHAR(64),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_admin_username ON platform_admins (LOWER(username));
+
+        CREATE TABLE IF NOT EXISTS platform_sessions (
+          session_token VARCHAR(128) PRIMARY KEY,
+          admin_id VARCHAR(64) NOT NULL REFERENCES platform_admins(id) ON DELETE CASCADE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        -- What platform admins did. No foreign key to institutions: the record must
+        -- outlive a deleted school.
+        CREATE TABLE IF NOT EXISTS platform_audit_logs (
+          id VARCHAR(64) PRIMARY KEY,
+          timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          admin_id VARCHAR(64),
+          admin_username VARCHAR(128),
+          admin_role VARCHAR(32),
+          action_type VARCHAR(64) NOT NULL,
+          action_title VARCHAR(255),
+          description TEXT,
+          target_institution_id VARCHAR(64),
+          target_user_id VARCHAR(64),
+          metadata JSONB
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_audit_time ON platform_audit_logs(timestamp DESC);
+
+        -- Hourly picture of database size, biggest tables and orphan rows (see server/monitor.ts).
+        CREATE TABLE IF NOT EXISTS platform_db_snapshots (
+          ts TIMESTAMPTZ PRIMARY KEY,
+          payload JSONB NOT NULL
+        );
+
+        -- Monitoring (read by the platform dashboards; written by server/monitor.ts).
+        -- Nothing here holds request bodies or user-entered values.
+        CREATE TABLE IF NOT EXISTS platform_api_metrics (
+          instance VARCHAR(64) NOT NULL,
+          minute TIMESTAMPTZ NOT NULL,
+          method VARCHAR(8) NOT NULL,
+          route VARCHAR(200) NOT NULL,
+          count INTEGER NOT NULL DEFAULT 0,
+          errors_4xx INTEGER NOT NULL DEFAULT 0,
+          errors_5xx INTEGER NOT NULL DEFAULT 0,
+          total_ms BIGINT NOT NULL DEFAULT 0,
+          max_ms INTEGER NOT NULL DEFAULT 0,
+          buckets INTEGER[] NOT NULL,
+          PRIMARY KEY (instance, minute, method, route)
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_api_metrics_minute ON platform_api_metrics(minute);
+
+        CREATE TABLE IF NOT EXISTS platform_error_events (
+          id BIGSERIAL PRIMARY KEY,
+          ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          instance VARCHAR(64),
+          kind VARCHAR(32) NOT NULL,
+          institution_id VARCHAR(64),
+          user_id VARCHAR(64),
+          method VARCHAR(8),
+          route VARCHAR(200),
+          status INTEGER,
+          code VARCHAR(64),
+          message TEXT,
+          request_id VARCHAR(32),
+          duration_ms INTEGER,
+          meta JSONB
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_error_events_ts ON platform_error_events(ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_platform_error_events_kind ON platform_error_events(kind, ts DESC);
+
+        CREATE TABLE IF NOT EXISTS platform_db_samples (
+          instance VARCHAR(64) NOT NULL,
+          ts TIMESTAMPTZ NOT NULL,
+          ok BOOLEAN NOT NULL,
+          latency_ms INTEGER,
+          pool_total INTEGER,
+          pool_idle INTEGER,
+          pool_waiting INTEGER,
+          connections INTEGER,
+          db_size_bytes BIGINT,
+          xact_commit BIGINT,
+          xact_rollback BIGINT,
+          deadlocks BIGINT,
+          blks_hit BIGINT,
+          blks_read BIGINT,
+          error TEXT,
+          PRIMARY KEY (instance, ts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_db_samples_ts ON platform_db_samples(ts);
+
         -- Per-entity tables (replacing the old generic entities JSON blob store)
 
         CREATE TABLE IF NOT EXISTS classes (
@@ -644,6 +859,7 @@ class DatabaseService {
           sort_order INTEGER NOT NULL DEFAULT 0,
           active BOOLEAN NOT NULL DEFAULT TRUE,
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          version INTEGER NOT NULL DEFAULT 1,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -657,6 +873,7 @@ class DatabaseService {
           address TEXT,
           notes TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          version INTEGER NOT NULL DEFAULT 1,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -689,7 +906,10 @@ class DatabaseService {
           status VARCHAR(32) NOT NULL DEFAULT 'Active',
           created_date VARCHAR(32),
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
+          version INTEGER NOT NULL DEFAULT 1,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT fk_students_class FOREIGN KEY (class_id) REFERENCES classes(id),
+          CONSTRAINT fk_students_family FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE SET NULL
         );
 
         CREATE TABLE IF NOT EXISTS buses (
@@ -704,6 +924,7 @@ class DatabaseService {
           active BOOLEAN NOT NULL DEFAULT TRUE,
           sort_order INTEGER NOT NULL DEFAULT 0,
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          version INTEGER NOT NULL DEFAULT 1,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -716,6 +937,7 @@ class DatabaseService {
           monthly_fare NUMERIC NOT NULL DEFAULT 0,
           sort_order INTEGER NOT NULL DEFAULT 0,
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          version INTEGER NOT NULL DEFAULT 1,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -731,7 +953,11 @@ class DatabaseService {
           discount NUMERIC NOT NULL DEFAULT 0,
           active BOOLEAN NOT NULL DEFAULT TRUE,
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
+          version INTEGER NOT NULL DEFAULT 1,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT fk_assignments_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+          CONSTRAINT fk_assignments_bus FOREIGN KEY (bus_id) REFERENCES buses(id),
+          CONSTRAINT fk_assignments_stop FOREIGN KEY (stop_id) REFERENCES stops(id)
         );
 
         CREATE TABLE IF NOT EXISTS fee_templates (
@@ -745,7 +971,10 @@ class DatabaseService {
           student_id VARCHAR(64),
           month VARCHAR(16),
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
+          version INTEGER NOT NULL DEFAULT 1,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT fk_templates_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+          CONSTRAINT fk_templates_class FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS vouchers (
@@ -772,7 +1001,8 @@ class DatabaseService {
           notes TEXT,
           created_date VARCHAR(32),
           created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT fk_vouchers_student FOREIGN KEY (student_id) REFERENCES students(id)
         );
 
         CREATE TABLE IF NOT EXISTS voucher_particulars (
@@ -828,6 +1058,7 @@ class DatabaseService {
           active BOOLEAN NOT NULL DEFAULT TRUE,
           is_default BOOLEAN NOT NULL DEFAULT FALSE,
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          version INTEGER NOT NULL DEFAULT 1,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -888,21 +1119,8 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_classes_institution ON classes(institution_id);
         CREATE INDEX IF NOT EXISTS idx_families_institution ON families(institution_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution ON students(institution_id);
-        -- Family numbers must be unique per institution. The index is only created
-        -- when no duplicates exist, so a database that still holds duplicate
-        -- numbers keeps starting; renumber them (see docs) and restart to enable it.
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM families WHERE family_no IS NOT NULL AND family_no <> ''
-            GROUP BY institution_id, family_no HAVING COUNT(*) > 1
-          ) THEN
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_families_institution_family_no
-              ON families(institution_id, family_no) WHERE family_no IS NOT NULL AND family_no <> '';
-          ELSE
-            RAISE NOTICE 'families: duplicate family_no values found; unique index not created until they are renumbered.';
-          END IF;
-        END $$;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_families_institution_family_no
+          ON families(institution_id, family_no) WHERE family_no IS NOT NULL AND family_no <> '';
         CREATE INDEX IF NOT EXISTS idx_students_institution_class ON students(institution_id, class_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_family ON students(institution_id, family_id);
         CREATE INDEX IF NOT EXISTS idx_students_institution_status ON students(institution_id, status);
@@ -931,18 +1149,83 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
       `);
 
-      // Databases created before fine_since_payment existed: add the derived
-      // column and fill it once for every student.
-      const fspCol = await client.query(
-        `SELECT 1 FROM information_schema.columns WHERE table_name = 'vouchers' AND column_name = 'fine_since_payment'`
-      );
-      if (fspCol.rowCount === 0) {
-        await client.query(`ALTER TABLE vouchers ADD COLUMN fine_since_payment NUMERIC NOT NULL DEFAULT 0`);
-        await client.query(FINE_SINCE_PAYMENT_REFRESH_SQL, [null, null]);
-      }
+      await this.assertSchemaCurrent(client);
     } finally {
       client.release();
     }
+  }
+
+
+  /**
+   * The schema above is the only definition. A database created before the row
+   * versions, foreign keys and vouchers.fine_since_payment existed must be brought up
+   * once with db/migrations/2026-10-integrity.sql; this check stops the server with a
+   * clear message instead of failing later with a confusing SQL error.
+   */
+  private async assertSchemaCurrent(client: any): Promise<void> {
+    const cols = await client.query(
+      `SELECT table_name, column_name FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND ((column_name = 'version' AND table_name = ANY($1)) OR (table_name = 'vouchers' AND column_name = 'fine_since_payment'))`,
+      [['classes', 'families', 'students', 'buses', 'stops', 'transport_assignments', 'fee_templates', 'bank_accounts']]
+    );
+    const fks = await client.query(`SELECT conname FROM pg_constraint WHERE conname LIKE 'fk\\_%'`);
+    const missing: string[] = [];
+    const files: string[] = [];
+    if (cols.rowCount < 9) missing.push('version / fine_since_payment columns');
+    if (fks.rowCount < 8) missing.push('foreign keys');
+    if (missing.length > 0) files.push('db/migrations/2026-10-integrity.sql');
+    const plat = await client.query(
+      `SELECT table_name || '.' || column_name AS c FROM information_schema.columns
+       WHERE table_schema = current_schema()
+         AND ((table_name = 'users' AND column_name IN ('must_change_password', 'temp_password_expires_at', 'platform_locked'))
+           OR (table_name = 'institutions' AND column_name IN ('suspended_at', 'suspended_by', 'suspend_reason')))`
+    );
+    if (plat.rowCount < 6) {
+      missing.push('platform support columns (users / institutions)');
+      files.push('db/migrations/2026-11-platform.sql');
+    }
+    if (missing.length > 0) {
+      const err: any = new Error(
+        `Database schema is out of date (missing: ${missing.join(', ')}). Run ${files.join(' and ')} once, then start the server again.`
+      );
+      err.schemaOutOfDate = true;
+      throw err;
+    }
+  }
+
+  /** Counts of rows whose parent is missing, per relationship (read-only). */
+  private async orphanCounts(client: { query: (sql: string, params?: any[]) => Promise<any> }, tenantId?: string): Promise<Record<string, number>> {
+    const scope = tenantId ? ` AND x.institution_id = $1` : '';
+    const params = tenantId ? [tenantId] : [];
+    const q = (label: string, sql: string) => async (): Promise<[string, number]> => {
+      const r = await client.query(sql, params);
+      return [label, Number(r.rows[0]?.n) || 0];
+    };
+    // Sequential: this may run on a single client, which cannot overlap queries.
+    const queries = [
+      q('assignments_without_student', `SELECT COUNT(*) n FROM transport_assignments x WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.id = x.student_id)${scope}`),
+      q('assignments_without_bus', `SELECT COUNT(*) n FROM transport_assignments x WHERE (x.bus_id IS NULL OR NOT EXISTS (SELECT 1 FROM buses b WHERE b.id = x.bus_id))${scope}`),
+      q('assignments_without_stop', `SELECT COUNT(*) n FROM transport_assignments x WHERE (x.stop_id IS NULL OR NOT EXISTS (SELECT 1 FROM stops p WHERE p.id = x.stop_id))${scope}`),
+      q('templates_without_student', `SELECT COUNT(*) n FROM fee_templates x WHERE x.student_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM students s WHERE s.id = x.student_id)${scope}`),
+      q('templates_without_class', `SELECT COUNT(*) n FROM fee_templates x WHERE x.class_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM classes c WHERE c.id = x.class_id)${scope}`),
+      q('students_without_class', `SELECT COUNT(*) n FROM students x WHERE x.class_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM classes c WHERE c.id = x.class_id)${scope}`),
+      q('students_without_family', `SELECT COUNT(*) n FROM students x WHERE x.family_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM families f WHERE f.id = x.family_id)${scope}`),
+      q('vouchers_without_student', `SELECT COUNT(*) n FROM vouchers x WHERE NOT EXISTS (SELECT 1 FROM students s WHERE s.id = x.student_id)${scope}`),
+      q('transactions_without_voucher', `SELECT COUNT(*) n FROM transactions x WHERE NOT EXISTS (SELECT 1 FROM vouchers v WHERE v.id = x.voucher_id)${scope}`),
+      // Not counted: a deleted student's account history is kept on purpose (there is no link that cascades), so it is not a defect.
+    ];
+    const rows: Array<[string, number]> = [];
+    for (const run of queries) rows.push(await run());
+    return Object.fromEntries(rows);
+  }
+
+  /** Read-only integrity report for one institution (used by tests and diagnostics). */
+  public async getOrphanReport(institutionId: string): Promise<Record<string, number>> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) return {};
+    return this.orphanCounts(this.pgPool, tenantId);
   }
 
   // --- Multi-Tenant Institution Operations ---
@@ -1296,6 +1579,14 @@ class DatabaseService {
         fields.push(`status = $${idx++}`);
         values.push(updates.status);
       }
+      if (updates.must_change_password !== undefined) {
+        fields.push(`must_change_password = $${idx++}`);
+        values.push(updates.must_change_password);
+      }
+      if (updates.temp_password_expires_at !== undefined) {
+        fields.push(`temp_password_expires_at = $${idx++}`);
+        values.push(updates.temp_password_expires_at);
+      }
       if (updates.last_login_at !== undefined) {
         fields.push(`last_login_at = $${idx++}`);
         values.push(updates.last_login_at);
@@ -1476,7 +1767,7 @@ class DatabaseService {
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(
         `SELECT s.session_token, s.user_id, s.institution_id, s.expires_at,
-                u.username, u.email, u.full_name, u.role, u.permissions, u.status, u.created_by, u.last_login_at, u.created_at, u.updated_at
+                u.username, u.email, u.full_name, u.role, u.permissions, u.status, u.must_change_password, u.temp_password_expires_at, u.platform_locked, u.created_by, u.last_login_at, u.created_at, u.updated_at
          FROM user_sessions s
          JOIN users u ON s.user_id = u.id
          WHERE s.session_token = $1 AND s.expires_at > $2`,
@@ -1494,6 +1785,9 @@ class DatabaseService {
         role: row.role,
         permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions || [],
         status: row.status,
+        must_change_password: !!row.must_change_password,
+        temp_password_expires_at: row.temp_password_expires_at ? new Date(row.temp_password_expires_at).toISOString() : null,
+        platform_locked: !!row.platform_locked,
         created_by: row.created_by,
         last_login_at: row.last_login_at,
         created_at: row.created_at,
@@ -1513,6 +1807,698 @@ class DatabaseService {
     }
 
     return null;
+  }
+
+
+
+  /** Heavier, hourly picture: sizes, row estimates and orphan counts. */
+  public async collectDbSnapshot(): Promise<void> {
+    await this.init();
+    if (!this.pgPool) return;
+    const client = await this.pgPool.connect();
+    try {
+      const size = await client.query(`SELECT pg_database_size(current_database()) AS bytes`);
+      const tables = await client.query(
+        `SELECT c.relname AS name, pg_total_relation_size(c.oid) AS bytes, c.reltuples::bigint AS rows
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind = 'r' AND n.nspname = current_schema()
+         ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 20`
+      );
+      const orphans = await this.orphanCounts(client);
+      const payload = {
+        dbBytes: Number(size.rows[0]?.bytes) || 0,
+        tables: tables.rows.map((t: any) => ({ name: t.name, bytes: Number(t.bytes), rows: Number(t.rows) })),
+        orphans,
+      };
+      await client.query(
+        `INSERT INTO platform_db_snapshots (ts, payload) VALUES (date_trunc('minute', NOW()), $1) ON CONFLICT (ts) DO NOTHING`,
+        [JSON.stringify(payload)]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  // --- Monitoring storage (see server/monitor.ts) ---
+
+  public async insertApiMetrics(instance: string, rows: MonitorMetricRow[]): Promise<void> {
+    await this.init();
+    if (!this.pgPool || rows.length === 0) return;
+    for (const r of rows) {
+      await this.pgPool.query(
+        `INSERT INTO platform_api_metrics (instance, minute, method, route, count, errors_4xx, errors_5xx, total_ms, max_ms, buckets)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (instance, minute, method, route) DO UPDATE SET
+           count = platform_api_metrics.count + EXCLUDED.count,
+           errors_4xx = platform_api_metrics.errors_4xx + EXCLUDED.errors_4xx,
+           errors_5xx = platform_api_metrics.errors_5xx + EXCLUDED.errors_5xx,
+           total_ms = platform_api_metrics.total_ms + EXCLUDED.total_ms,
+           max_ms = GREATEST(platform_api_metrics.max_ms, EXCLUDED.max_ms),
+           buckets = ARRAY(SELECT a + b FROM unnest(platform_api_metrics.buckets, EXCLUDED.buckets) AS t(a, b))`,
+        [instance, r.minute, r.method, r.route, r.count, r.errors4xx, r.errors5xx, r.totalMs, r.maxMs, r.buckets]
+      );
+    }
+  }
+
+  public async insertErrorEvents(instance: string, events: MonitorEvent[]): Promise<void> {
+    await this.init();
+    if (!this.pgPool || events.length === 0) return;
+    const cols = 13;
+    const params: any[] = [];
+    const tuples = events.map((e, i) => {
+      params.push(e.ts, instance, e.kind, e.institutionId || null, e.userId || null, e.method || null, e.route || null,
+        e.status ?? null, e.code || null, e.message || null, e.requestId || null, e.durationMs ?? null, e.meta ? JSON.stringify(e.meta) : null);
+      const b = i * cols;
+      return `(${Array.from({ length: cols }, (_, k) => `$${b + k + 1}`).join(',')})`;
+    });
+    await this.pgPool.query(
+      `INSERT INTO platform_error_events (ts, instance, kind, institution_id, user_id, method, route, status, code, message, request_id, duration_ms, meta)
+       VALUES ${tuples.join(',')}`,
+      params
+    );
+  }
+
+  public async insertDbSamples(instance: string, samples: MonitorDbSample[]): Promise<void> {
+    await this.init();
+    if (!this.pgPool || samples.length === 0) return;
+    for (const s of samples) {
+      await this.pgPool.query(
+        `INSERT INTO platform_db_samples (instance, ts, ok, latency_ms, pool_total, pool_idle, pool_waiting, connections, db_size_bytes,
+                                          xact_commit, xact_rollback, deadlocks, blks_hit, blks_read, error)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (instance, ts) DO NOTHING`,
+        [instance, s.ts, s.ok, s.latencyMs ?? null, s.poolTotal ?? null, s.poolIdle ?? null, s.poolWaiting ?? null, s.connections ?? null,
+         s.dbSizeBytes ?? null, s.xactCommit ?? null, s.xactRollback ?? null, s.deadlocks ?? null, s.blksHit ?? null, s.blksRead ?? null,
+         s.error ? String(s.error).slice(0, 300) : null]
+      );
+    }
+  }
+
+  /** Counters and size for the current database, from the server's own statistics views. */
+  public async collectDbStats(): Promise<Omit<MonitorDbSample, 'ts' | 'ok' | 'latencyMs' | 'error'>> {
+    await this.init();
+    if (!this.pgPool) throw new Error('PostgreSQL database pool not configured');
+    const r = await this.pgPool.query(
+      `SELECT numbackends, xact_commit, xact_rollback, deadlocks, blks_hit, blks_read, pg_database_size(current_database()) AS size
+       FROM pg_stat_database WHERE datname = current_database()`
+    );
+    const row = r.rows[0] || {};
+    const pool = this.getPoolStats();
+    return {
+      poolTotal: pool?.totalCount, poolIdle: pool?.idleCount, poolWaiting: pool?.waitingCount,
+      connections: row.numbackends != null ? Number(row.numbackends) : undefined,
+      dbSizeBytes: row.size != null ? Number(row.size) : undefined,
+      xactCommit: row.xact_commit != null ? Number(row.xact_commit) : undefined,
+      xactRollback: row.xact_rollback != null ? Number(row.xact_rollback) : undefined,
+      deadlocks: row.deadlocks != null ? Number(row.deadlocks) : undefined,
+      blksHit: row.blks_hit != null ? Number(row.blks_hit) : undefined,
+      blksRead: row.blks_read != null ? Number(row.blks_read) : undefined,
+    };
+  }
+
+  // --- Monitoring reads (platform dashboards) ---
+
+  /** Edges (ms) of the latency histogram; must match LATENCY_BUCKETS_MS in server/monitor.ts. */
+  private static readonly LAT_EDGES = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+
+  /** Percentile estimated from histogram counts: the upper edge of the bucket that holds it (the last bucket reports its lower edge). */
+  private static histPercentile(hist: number[], p: number): number | null {
+    const total = hist.reduce((a, b) => a + b, 0);
+    if (total === 0) return null;
+    const target = total * p;
+    let run = 0;
+    for (let i = 0; i < hist.length; i++) {
+      run += hist[i];
+      if (run >= target) return i < DatabaseService.LAT_EDGES.length ? DatabaseService.LAT_EDGES[i] : DatabaseService.LAT_EDGES[DatabaseService.LAT_EDGES.length - 1];
+    }
+    return null;
+  }
+
+  public async getApiHealth(windowMinutes: number, stepMinutes: number): Promise<any> {
+    await this.init();
+    if (!this.pgPool) throw new Error('No database engine available.');
+    const stepSec = stepMinutes * 60;
+    const histCols = Array.from({ length: 11 }, (_, i) => `COALESCE(SUM(buckets[${i + 1}]),0)::int`).join(', ');
+    const since = `NOW() - make_interval(mins => $1)`;
+    const series = await this.pgPool.query(
+      `SELECT to_timestamp(floor(extract(epoch FROM minute) / ${stepSec}) * ${stepSec}) AS t,
+              SUM(count)::int AS count, SUM(errors_4xx)::int AS e4, SUM(errors_5xx)::int AS e5,
+              SUM(total_ms)::bigint AS total_ms, MAX(max_ms) AS max_ms, ARRAY[${histCols}] AS hist
+       FROM platform_api_metrics WHERE minute >= ${since} GROUP BY 1 ORDER BY 1`,
+      [windowMinutes]
+    );
+    const routes = await this.pgPool.query(
+      `SELECT method, route, SUM(count)::int AS count, SUM(errors_4xx)::int AS e4, SUM(errors_5xx)::int AS e5,
+              SUM(total_ms)::bigint AS total_ms, MAX(max_ms) AS max_ms, ARRAY[${histCols}] AS hist
+       FROM platform_api_metrics WHERE minute >= ${since} GROUP BY method, route`,
+      [windowMinutes]
+    );
+    const bucketRow = (r: any) => {
+      const hist = (r.hist as number[]).map(Number);
+      const count = Number(r.count) || 0;
+      return {
+        count, errors4xx: Number(r.e4) || 0, errors5xx: Number(r.e5) || 0,
+        avgMs: count ? Math.round(Number(r.total_ms) / count) : null,
+        p50Ms: DatabaseService.histPercentile(hist, 0.5), p95Ms: DatabaseService.histPercentile(hist, 0.95),
+        maxMs: Number(r.max_ms) || 0, hist,
+      };
+    };
+    const seriesOut = series.rows.map((r: any) => ({ t: new Date(r.t).toISOString(), ...bucketRow(r) }));
+    const routesOut = routes.rows.map((r: any) => ({ method: r.method, route: r.route, ...bucketRow(r) }));
+    const totalsHist = new Array(11).fill(0);
+    let count = 0, e4 = 0, e5 = 0, totalMs = 0, maxMs = 0;
+    for (const r of series.rows) {
+      count += Number(r.count); e4 += Number(r.e4); e5 += Number(r.e5); totalMs += Number(r.total_ms); maxMs = Math.max(maxMs, Number(r.max_ms) || 0);
+      (r.hist as number[]).forEach((v, i) => (totalsHist[i] += Number(v)));
+    }
+    return {
+      windowMinutes, stepMinutes,
+      totals: {
+        count, errors4xx: e4, errors5xx: e5, avgMs: count ? Math.round(totalMs / count) : null,
+        p50Ms: DatabaseService.histPercentile(totalsHist, 0.5), p95Ms: DatabaseService.histPercentile(totalsHist, 0.95), maxMs,
+        requestsPerMinute: windowMinutes ? Math.round((count / windowMinutes) * 10) / 10 : 0,
+        errorRate5xx: count ? e5 / count : 0, errorRate4xx: count ? e4 / count : 0,
+      },
+      series: seriesOut,
+      routes: routesOut,
+      latencyEdgesMs: DatabaseService.LAT_EDGES,
+    };
+  }
+
+  /** Where this server connects to, without the password. */
+  public getConnectionInfo(): { host?: string; port?: number; database?: string; user?: string; source: string } {
+    const url = process.env.DATABASE_URL;
+    try {
+      if (url) {
+        const u = new URL(url.trim());
+        return { host: u.hostname, port: u.port ? Number(u.port) : 5432, database: u.pathname.replace(/^\//, ''), user: decodeURIComponent(u.username), source: 'DATABASE_URL' };
+      }
+    } catch {
+      /* fall through to the pool's own settings */
+    }
+    // Same defaults as the connection setup above; never the password.
+    return {
+      host: process.env.POSTGRES_HOST || '127.0.0.1', port: Number(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB || 'school_db', user: process.env.POSTGRES_USER || 'postgres', source: 'POSTGRES_* settings',
+    };
+  }
+
+  public async getDatabaseHealth(windowMinutes: number, stepMinutes: number): Promise<any> {
+    await this.init();
+    if (!this.pgPool) throw new Error('No database engine available.');
+    const stepSec = stepMinutes * 60;
+    const rows = (
+      await this.pgPool.query(
+        `SELECT ts, ok, latency_ms, pool_total, pool_idle, pool_waiting, connections, db_size_bytes, xact_commit, xact_rollback, deadlocks, blks_hit, blks_read
+         FROM platform_db_samples WHERE ts >= NOW() - make_interval(mins => $1) ORDER BY ts`,
+        [windowMinutes]
+      )
+    ).rows;
+    // Counters are cumulative; take differences between consecutive samples (a drop means the server restarted: skip that step).
+    const buckets = new Map<number, any>();
+    let prev: any = null;
+    for (const r of rows) {
+      const t = Math.floor(new Date(r.ts).getTime() / 1000 / stepSec) * stepSec * 1000;
+      const b = buckets.get(t) || { t: new Date(t).toISOString(), samples: 0, failed: 0, latSum: 0, latN: 0, latMax: 0, poolInUseMax: 0, poolWaitingMax: 0, connectionsMax: 0, rollbacks: 0, commits: 0, deadlocks: 0, hit: 0, read: 0 };
+      b.samples++;
+      if (!r.ok) b.failed++;
+      if (r.latency_ms != null) { b.latSum += r.latency_ms; b.latN++; b.latMax = Math.max(b.latMax, r.latency_ms); }
+      if (r.pool_total != null) b.poolInUseMax = Math.max(b.poolInUseMax, r.pool_total - (r.pool_idle || 0));
+      if (r.pool_waiting != null) b.poolWaitingMax = Math.max(b.poolWaitingMax, r.pool_waiting);
+      if (r.connections != null) b.connectionsMax = Math.max(b.connectionsMax, r.connections);
+      if (r.ok && r.xact_commit != null) {
+        if (prev && Number(r.xact_commit) >= Number(prev.xact_commit)) {
+          b.commits += Number(r.xact_commit) - Number(prev.xact_commit);
+          b.rollbacks += Number(r.xact_rollback) - Number(prev.xact_rollback);
+          b.deadlocks += Number(r.deadlocks) - Number(prev.deadlocks);
+          b.hit += Number(r.blks_hit) - Number(prev.blks_hit);
+          b.read += Number(r.blks_read) - Number(prev.blks_read);
+        }
+        prev = r;
+      }
+      buckets.set(t, b);
+    }
+    const series = [...buckets.values()].map((b) => ({
+      t: b.t, samples: b.samples, failed: b.failed, latencyAvgMs: b.latN ? Math.round(b.latSum / b.latN) : null, latencyMaxMs: b.latN ? b.latMax : null,
+      poolInUseMax: b.poolInUseMax, poolWaitingMax: b.poolWaitingMax, connectionsMax: b.connectionsMax,
+      rollbacks: b.rollbacks, commits: b.commits, deadlocks: b.deadlocks,
+      cacheHitRatio: b.hit + b.read > 0 ? b.hit / (b.hit + b.read) : null,
+    }));
+    const okRows = rows.filter((r: any) => r.ok).length;
+    const sumRollbacks = series.reduce((a, b) => a + b.rollbacks, 0);
+    const sumCommits = series.reduce((a, b) => a + b.commits, 0);
+    const sumDeadlocks = series.reduce((a, b) => a + b.deadlocks, 0);
+    const lat = rows.filter((r: any) => r.latency_ms != null).map((r: any) => Number(r.latency_ms)).sort((a: number, b: number) => a - b);
+
+    // Live view (read now, not sampled). Only the kind of statement is shown, never its text.
+    const live: any = {};
+    try {
+      const a = await this.pgPool.query(
+        `SELECT state, COALESCE(wait_event_type,'') AS wait, split_part(regexp_replace(trim(query), '\\s+', ' ', 'g'), ' ', 1) AS verb,
+                EXTRACT(EPOCH FROM (NOW() - query_start))::float AS secs
+         FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`
+      );
+      const byState: Record<string, number> = {};
+      for (const r of a.rows) byState[r.state || 'unknown'] = (byState[r.state || 'unknown'] || 0) + 1;
+      live.connectionsByState = byState;
+      live.longRunning = a.rows
+        .filter((r: any) => r.state === 'active' && r.secs > 5)
+        .sort((x: any, y: any) => y.secs - x.secs).slice(0, 10)
+        .map((r: any) => ({ verb: String(r.verb || '').toUpperCase().slice(0, 12), seconds: Math.round(r.secs), wait: r.wait || null }));
+      live.idleInTransaction = a.rows.filter((r: any) => r.state === 'idle in transaction' && r.secs > 30).length;
+      live.lockWaiters = Number((await this.pgPool.query(`SELECT COUNT(*) n FROM pg_locks WHERE NOT granted`)).rows[0]?.n) || 0;
+      const meta = await this.pgPool.query(
+        `SELECT current_setting('server_version') AS version, current_setting('max_connections')::int AS max_connections,
+                EXTRACT(EPOCH FROM (NOW() - pg_postmaster_start_time()))::bigint AS uptime_s, pg_database_size(current_database()) AS size`
+      );
+      live.version = meta.rows[0]?.version; live.maxConnections = meta.rows[0]?.max_connections;
+      live.uptimeSeconds = Number(meta.rows[0]?.uptime_s) || 0; live.sizeBytes = Number(meta.rows[0]?.size) || 0;
+      live.activeSessions = Number((await this.pgPool.query(`SELECT COUNT(*) n FROM user_sessions WHERE expires_at > NOW()`)).rows[0]?.n) || 0;
+      live.schools = Number((await this.pgPool.query(`SELECT COUNT(*) n FROM institutions`)).rows[0]?.n) || 0;
+    } catch (err: any) {
+      live.error = 'The live statistics could not be read.';
+    }
+    const snap = (await this.pgPool.query(`SELECT ts, payload FROM platform_db_snapshots ORDER BY ts DESC LIMIT 1`)).rows[0];
+    const sizeSeries = (await this.pgPool.query(`SELECT ts, (payload->>'dbBytes')::bigint AS bytes FROM platform_db_snapshots WHERE ts >= NOW() - INTERVAL '30 days' ORDER BY ts`)).rows
+      .map((r: any) => ({ t: new Date(r.ts).toISOString(), bytes: Number(r.bytes) }));
+    const pool = this.getPoolStats();
+    return {
+      windowMinutes, stepMinutes,
+      connection: this.getConnectionInfo(),
+      pool: pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : null,
+      summary: {
+        samples: rows.length, availability: rows.length ? okRows / rows.length : null,
+        latencyP50Ms: lat.length ? lat[Math.floor(lat.length * 0.5)] : null, latencyP95Ms: lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))] : null,
+        rollbackRatio: sumCommits + sumRollbacks > 0 ? sumRollbacks / (sumCommits + sumRollbacks) : null, deadlocks: sumDeadlocks,
+      },
+      series, live,
+      snapshot: snap ? { at: new Date(snap.ts).toISOString(), ...snap.payload } : null,
+      sizeSeries,
+    };
+  }
+
+  public async getErrorOverview(
+    windowMinutes: number,
+    stepMinutes: number,
+    f: { kind?: string; institutionId?: string; route?: string; requestId?: string; limit?: number }
+  ): Promise<any> {
+    await this.init();
+    if (!this.pgPool) throw new Error('No database engine available.');
+    const stepSec = stepMinutes * 60;
+    const w = `ts >= NOW() - make_interval(mins => $1)`;
+    const byKind = await this.pgPool.query(`SELECT kind, COUNT(*)::int AS n FROM platform_error_events WHERE ${w} GROUP BY kind ORDER BY n DESC`, [windowMinutes]);
+    const series = await this.pgPool.query(
+      `SELECT to_timestamp(floor(extract(epoch FROM ts) / ${stepSec}) * ${stepSec}) AS t, kind, COUNT(*)::int AS n
+       FROM platform_error_events WHERE ${w} GROUP BY 1, 2 ORDER BY 1`,
+      [windowMinutes]
+    );
+    const byRoute = await this.pgPool.query(
+      `SELECT COALESCE(method,'') AS method, COALESCE(route,'') AS route, kind, COUNT(*)::int AS n
+       FROM platform_error_events WHERE ${w} AND route IS NOT NULL GROUP BY 1,2,3 ORDER BY n DESC LIMIT 60`,
+      [windowMinutes]
+    );
+    const bySchool = await this.pgPool.query(
+      `SELECT e.institution_id AS id, COALESCE(i.name, '(deleted school)') AS name, COUNT(*)::int AS n
+       FROM platform_error_events e LEFT JOIN institutions i ON i.id = e.institution_id
+       WHERE e.${w} AND e.institution_id IS NOT NULL GROUP BY 1, 2 ORDER BY n DESC LIMIT 10`,
+      [windowMinutes]
+    );
+    const params: any[] = [windowMinutes];
+    let where = `e.${w}`;
+    if (f.kind) { params.push(f.kind); where += ` AND e.kind = $${params.length}`; }
+    if (f.institutionId) { params.push(f.institutionId); where += ` AND e.institution_id = $${params.length}`; }
+    if (f.route) { params.push(f.route); where += ` AND e.route = $${params.length}`; }
+    if (f.requestId) { params.push(f.requestId); where += ` AND e.request_id = $${params.length}`; }
+    params.push(Math.min(Math.max(f.limit || 100, 1), 500));
+    const recent = await this.pgPool.query(
+      `SELECT e.id, e.ts, e.kind, e.institution_id, COALESCE(i.name, NULL) AS school, e.method, e.route, e.status, e.code, e.message, e.request_id, e.duration_ms, e.meta
+       FROM platform_error_events e LEFT JOIN institutions i ON i.id = e.institution_id
+       WHERE ${where} ORDER BY e.ts DESC LIMIT $${params.length}`,
+      params
+    );
+    return {
+      windowMinutes, stepMinutes,
+      byKind: byKind.rows,
+      series: series.rows.map((r: any) => ({ t: new Date(r.t).toISOString(), kind: r.kind, n: r.n })),
+      byRoute: byRoute.rows,
+      bySchool: bySchool.rows,
+      recent: recent.rows.map((r: any) => ({
+        id: String(r.id), ts: new Date(r.ts).toISOString(), kind: r.kind, institutionId: r.institution_id, school: r.school, method: r.method, route: r.route,
+        status: r.status, code: r.code, message: r.message, requestId: r.request_id, durationMs: r.duration_ms, meta: r.meta,
+      })),
+    };
+  }
+
+  public async purgeMonitoring(metricsDays: number, eventDays: number): Promise<{ metrics: number; samples: number; events: number }> {
+    await this.init();
+    if (!this.pgPool) return { metrics: 0, samples: 0, events: 0 };
+    const m = await this.pgPool.query(`DELETE FROM platform_api_metrics WHERE minute < NOW() - make_interval(days => $1)`, [metricsDays]);
+    const s = await this.pgPool.query(`DELETE FROM platform_db_samples WHERE ts < NOW() - make_interval(days => $1)`, [metricsDays]);
+    const e = await this.pgPool.query(`DELETE FROM platform_error_events WHERE ts < NOW() - make_interval(days => $1)`, [eventDays]);
+    await this.pgPool.query(`DELETE FROM platform_db_snapshots WHERE ts < NOW() - INTERVAL '180 days'`);
+    return { metrics: m.rowCount || 0, samples: s.rowCount || 0, events: e.rowCount || 0 };
+  }
+
+  // --- Platform (app owner) identity ---
+
+  private platformAdminRow(row: any): DbPlatformAdmin {
+    return {
+      id: row.id,
+      username: row.username,
+      password_hash: row.password_hash,
+      full_name: row.full_name,
+      role: row.role,
+      status: row.status,
+      last_login_at: row.last_login_at ? new Date(row.last_login_at).toISOString() : undefined,
+      created_at: row.created_at ? new Date(row.created_at).toISOString() : '',
+    };
+  }
+
+  public async getPlatformAdminByUsername(username: string): Promise<DbPlatformAdmin | null> {
+    await this.init();
+    if (!this.pgPool) return null;
+    const r = await this.pgPool.query(`SELECT * FROM platform_admins WHERE LOWER(username) = LOWER($1)`, [username]);
+    return r.rows.length ? this.platformAdminRow(r.rows[0]) : null;
+  }
+
+  public async getPlatformAdminById(id: string): Promise<DbPlatformAdmin | null> {
+    await this.init();
+    if (!this.pgPool) return null;
+    const r = await this.pgPool.query(`SELECT * FROM platform_admins WHERE id = $1`, [id]);
+    return r.rows.length ? this.platformAdminRow(r.rows[0]) : null;
+  }
+
+  public async listPlatformAdmins(): Promise<DbPlatformAdmin[]> {
+    await this.init();
+    if (!this.pgPool) return [];
+    const r = await this.pgPool.query(`SELECT * FROM platform_admins ORDER BY created_at`);
+    return r.rows.map((x: any) => this.platformAdminRow(x));
+  }
+
+  public async createPlatformAdmin(a: {
+    username: string;
+    passwordHash: string;
+    fullName: string;
+    role: string;
+    createdBy?: string;
+  }): Promise<DbPlatformAdmin> {
+    await this.init();
+    if (!this.pgPool) throw new Error('No database engine available.');
+    const id = `padm_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+    await this.pgPool.query(
+      `INSERT INTO platform_admins (id, username, password_hash, full_name, role, status, created_by)
+       VALUES ($1,$2,$3,$4,$5,'active',$6)`,
+      [id, a.username.trim().toLowerCase(), a.passwordHash, a.fullName.trim(), a.role, a.createdBy || null]
+    );
+    return (await this.getPlatformAdminById(id)) as DbPlatformAdmin;
+  }
+
+  public async updatePlatformAdmin(
+    id: string,
+    u: { fullName?: string; role?: string; status?: string; passwordHash?: string; lastLoginAt?: string }
+  ): Promise<void> {
+    await this.init();
+    if (!this.pgPool) return;
+    const sets: string[] = [];
+    const vals: any[] = [];
+    const add = (col: string, v: any) => {
+      vals.push(v);
+      sets.push(`${col} = $${vals.length}`);
+    };
+    if (u.fullName !== undefined) add('full_name', u.fullName);
+    if (u.role !== undefined) add('role', u.role);
+    if (u.status !== undefined) add('status', u.status);
+    if (u.passwordHash !== undefined) add('password_hash', u.passwordHash);
+    if (u.lastLoginAt !== undefined) add('last_login_at', u.lastLoginAt);
+    if (sets.length === 0) return;
+    sets.push('updated_at = NOW()');
+    vals.push(id);
+    await this.pgPool.query(`UPDATE platform_admins SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
+  }
+
+  public async countActivePlatformOwners(): Promise<number> {
+    await this.init();
+    if (!this.pgPool) return 0;
+    const r = await this.pgPool.query(`SELECT COUNT(*) n FROM platform_admins WHERE role = 'owner' AND status = 'active'`);
+    return Number(r.rows[0]?.n) || 0;
+  }
+
+  public async createPlatformSession(token: string, adminId: string, durationMs: number): Promise<void> {
+    await this.init();
+    if (!this.pgPool) throw new Error('No database engine available.');
+    await this.pgPool.query(
+      `INSERT INTO platform_sessions (session_token, admin_id, expires_at) VALUES ($1,$2,$3)`,
+      [token, adminId, new Date(Date.now() + durationMs).toISOString()]
+    );
+  }
+
+  /** The session's admin, only while the session is unexpired. The caller must still check the admin's status. */
+  public async getPlatformSession(token: string): Promise<DbPlatformAdmin | null> {
+    await this.init();
+    if (!this.pgPool) return null;
+    const r = await this.pgPool.query(
+      `SELECT a.* FROM platform_sessions s JOIN platform_admins a ON a.id = s.admin_id
+       WHERE s.session_token = $1 AND s.expires_at > NOW()`,
+      [token]
+    );
+    return r.rows.length ? this.platformAdminRow(r.rows[0]) : null;
+  }
+
+  public async deletePlatformSession(token: string): Promise<void> {
+    await this.init();
+    if (this.pgPool) await this.pgPool.query(`DELETE FROM platform_sessions WHERE session_token = $1`, [token]);
+  }
+
+  public async deletePlatformAdminSessions(adminId: string): Promise<void> {
+    await this.init();
+    if (this.pgPool) await this.pgPool.query(`DELETE FROM platform_sessions WHERE admin_id = $1`, [adminId]);
+  }
+
+  public async appendPlatformAudit(e: {
+    adminId?: string;
+    adminUsername?: string;
+    adminRole?: string;
+    actionType: string;
+    actionTitle?: string;
+    description?: string;
+    targetInstitutionId?: string;
+    targetUserId?: string;
+    metadata?: Record<string, any>;
+  }, client?: any): Promise<void> {
+    await this.init();
+    if (!this.pgPool) return;
+    const id = `paud_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+    await (client || this.pgPool).query(
+      `INSERT INTO platform_audit_logs (id, admin_id, admin_username, admin_role, action_type, action_title, description, target_institution_id, target_user_id, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, e.adminId || null, e.adminUsername || null, e.adminRole || null, e.actionType, e.actionTitle || null, e.description || null,
+       e.targetInstitutionId || null, e.targetUserId || null, e.metadata ? JSON.stringify(e.metadata) : null]
+    );
+  }
+
+  public async listPlatformAudit(limit = 200): Promise<any[]> {
+    await this.init();
+    if (!this.pgPool) return [];
+    const r = await this.pgPool.query(
+      `SELECT a.*, i.name AS school_name FROM platform_audit_logs a LEFT JOIN institutions i ON i.id = a.target_institution_id
+       ORDER BY a.timestamp DESC LIMIT $1`,
+      [Math.min(Math.max(limit, 1), 1000)]
+    );
+    return r.rows.map((x: any) => ({
+      schoolName: x.school_name || null,
+      id: x.id, timestamp: new Date(x.timestamp).toISOString(), adminId: x.admin_id, adminUsername: x.admin_username, adminRole: x.admin_role,
+      actionType: x.action_type, actionTitle: x.action_title, description: x.description,
+      targetInstitutionId: x.target_institution_id, targetUserId: x.target_user_id, metadata: x.metadata,
+    }));
+  }
+
+  // ---- Platform support actions (app owner / support staff) ----
+  // Each action runs in one transaction with its audit entries (the platform's and the school's own), so
+  // an action is never half-recorded. Admin identity is passed in by the platform route, never read here.
+
+  private async supportAudit(
+    client: any,
+    admin: { id: string; username: string; role: string },
+    institutionId: string,
+    e: { actionType: string; title: string; description: string; targetUserId?: string; targetLabel?: string; metadata?: Record<string, any> }
+  ): Promise<void> {
+    await this.appendPlatformAudit(
+      { adminId: admin.id, adminUsername: admin.username, adminRole: admin.role, actionType: e.actionType, actionTitle: e.title, description: e.description,
+        targetInstitutionId: institutionId, targetUserId: e.targetUserId, metadata: e.metadata },
+      client
+    );
+    await this.appendAuditLog(institutionId, {
+      operatorUsername: `platform:${admin.username}`, operatorName: 'Platform support', operatorRole: 'Platform',
+      actionType: 'operator_security', actionTitle: e.title, module: 'Security', description: e.description,
+      targetId: e.targetUserId, targetLabel: e.targetLabel,
+    }, client);
+  }
+
+  public async countRecentPlatformActions(adminId: string, actionType: string, minutes: number): Promise<number> {
+    await this.init();
+    if (!this.pgPool) return 0;
+    const r = await this.pgPool.query(
+      `SELECT COUNT(*)::int AS n FROM platform_audit_logs WHERE admin_id = $1 AND action_type = $2 AND timestamp >= NOW() - make_interval(mins => $3)`,
+      [adminId, actionType, minutes]
+    );
+    return r.rows[0].n;
+  }
+
+  public async listSchoolsForPlatform(): Promise<any[]> {
+    await this.init();
+    if (!this.pgPool) return [];
+    const r = await this.pgPool.query(
+      `SELECT i.id, i.name, i.code, i.status, i.suspended_at, i.suspended_by, i.suspend_reason, i.created_at,
+              (SELECT COUNT(*)::int FROM users u WHERE u.institution_id = i.id) AS users,
+              (SELECT COUNT(*)::int FROM users u WHERE u.institution_id = i.id AND u.status = 'active') AS active_users,
+              (SELECT MAX(u.last_login_at) FROM users u WHERE u.institution_id = i.id) AS last_login,
+              (SELECT COUNT(*)::int FROM user_sessions s WHERE s.institution_id = i.id AND s.expires_at > NOW()) AS sessions,
+              (SELECT COUNT(*)::int FROM platform_error_events e WHERE e.institution_id = i.id AND e.ts >= NOW() - INTERVAL '7 days'
+                 AND e.kind IN ('server_error','conflict','rejected','aborted','client_network','unhandled_exception')) AS errors7d
+       FROM institutions i ORDER BY i.name ASC`
+    );
+    return r.rows.map((x: any) => ({
+      id: x.id, name: x.name, code: x.code, status: x.status,
+      suspendedAt: x.suspended_at ? new Date(x.suspended_at).toISOString() : null, suspendedBy: x.suspended_by, suspendReason: x.suspend_reason,
+      createdAt: x.created_at ? new Date(x.created_at).toISOString() : null,
+      users: x.users, activeUsers: x.active_users, lastLogin: x.last_login ? new Date(x.last_login).toISOString() : null,
+      sessions: x.sessions, errors7d: x.errors7d,
+    }));
+  }
+
+  public async listSchoolUsersForPlatform(institutionId: string): Promise<any[] | null> {
+    await this.init();
+    if (!this.pgPool) return null;
+    const inst = await this.pgPool.query(`SELECT 1 FROM institutions WHERE id = $1`, [institutionId]);
+    if (inst.rowCount === 0) return null;
+    const r = await this.pgPool.query(
+      `SELECT u.id, u.username, u.full_name, u.role, u.status, u.last_login_at, u.must_change_password, u.temp_password_expires_at, u.platform_locked,
+              (SELECT COUNT(*)::int FROM user_sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS sessions
+       FROM users u WHERE u.institution_id = $1 ORDER BY u.created_at ASC`,
+      [institutionId]
+    );
+    return r.rows.map((x: any) => ({
+      id: x.id, username: x.username, name: x.full_name, role: x.role, status: x.status,
+      lastLogin: x.last_login_at ? new Date(x.last_login_at).toISOString() : null,
+      mustChangePassword: !!x.must_change_password,
+      tempPasswordExpiresAt: x.temp_password_expires_at ? new Date(x.temp_password_expires_at).toISOString() : null,
+      platformLocked: !!x.platform_locked, sessions: x.sessions,
+    }));
+  }
+
+  /** Sets a one-time password the user must replace at next login, ends their sessions. Null if the user is not in that school. */
+  public async platformResetUserPassword(
+    admin: { id: string; username: string; role: string }, institutionId: string, userId: string, passwordHash: string, expiresAt: Date
+  ): Promise<{ username: string; sessionsEnded: number } | null> {
+    await this.init();
+    return this.withTx(async (c) => {
+      const u = await c.query(`SELECT id, username, full_name FROM users WHERE id = $1 AND institution_id = $2 FOR UPDATE`, [userId, institutionId]);
+      if (u.rowCount === 0) return null;
+      await c.query(
+        `UPDATE users SET password_hash = $1, must_change_password = TRUE, temp_password_expires_at = $2, updated_at = NOW() WHERE id = $3`,
+        [passwordHash, expiresAt.toISOString(), userId]
+      );
+      const del = await c.query(`DELETE FROM user_sessions WHERE user_id = $1`, [userId]);
+      await this.supportAudit(c, admin, institutionId, {
+        actionType: 'user_password_reset', title: 'Operator Password Reset by Platform Support',
+        description: `A temporary password was issued for '${u.rows[0].username}'. It must be changed at next sign-in; all sessions were ended.`,
+        targetUserId: userId, targetLabel: u.rows[0].full_name, metadata: { sessionsEnded: del.rowCount, expiresAt: expiresAt.toISOString() },
+      });
+      return { username: u.rows[0].username, sessionsEnded: del.rowCount || 0 };
+    });
+  }
+
+  public async platformRevokeUserSessions(admin: { id: string; username: string; role: string }, institutionId: string, userId: string): Promise<{ sessionsEnded: number } | null> {
+    await this.init();
+    return this.withTx(async (c) => {
+      const u = await c.query(`SELECT username, full_name FROM users WHERE id = $1 AND institution_id = $2`, [userId, institutionId]);
+      if (u.rowCount === 0) return null;
+      const del = await c.query(`DELETE FROM user_sessions WHERE user_id = $1`, [userId]);
+      await this.supportAudit(c, admin, institutionId, {
+        actionType: 'user_sessions_revoked', title: 'Operator Signed Out by Platform Support',
+        description: `All sessions for '${u.rows[0].username}' were ended (${del.rowCount}).`, targetUserId: userId, targetLabel: u.rows[0].full_name, metadata: { sessionsEnded: del.rowCount },
+      });
+      return { sessionsEnded: del.rowCount || 0 };
+    });
+  }
+
+  public async platformRevokeSchoolSessions(admin: { id: string; username: string; role: string }, institutionId: string): Promise<{ sessionsEnded: number } | null> {
+    await this.init();
+    return this.withTx(async (c) => {
+      const i = await c.query(`SELECT name FROM institutions WHERE id = $1`, [institutionId]);
+      if (i.rowCount === 0) return null;
+      const del = await c.query(`DELETE FROM user_sessions WHERE institution_id = $1`, [institutionId]);
+      await this.supportAudit(c, admin, institutionId, {
+        actionType: 'school_sessions_revoked', title: 'All Operators Signed Out by Platform Support',
+        description: `All sessions of the school were ended (${del.rowCount}).`, metadata: { sessionsEnded: del.rowCount },
+      });
+      return { sessionsEnded: del.rowCount || 0 };
+    });
+  }
+
+  /** Deactivate or reactivate one user. Refuses to deactivate the last active admin (code LAST_ADMIN). */
+  public async platformSetUserActive(
+    admin: { id: string; username: string; role: string }, institutionId: string, userId: string, active: boolean
+  ): Promise<{ username: string; sessionsEnded: number } | null> {
+    await this.init();
+    return this.withTx(async (c) => {
+      const u = await c.query(`SELECT id, username, full_name, role, permissions, status FROM users WHERE id = $1 AND institution_id = $2 FOR UPDATE`, [userId, institutionId]);
+      if (u.rowCount === 0) return null;
+      const row = u.rows[0];
+      let ended = 0;
+      if (!active) {
+        const isAdmin = row.role === 'Admin' || (Array.isArray(row.permissions) && row.permissions.includes('*'));
+        if (isAdmin && row.status === 'active') {
+          const others = await c.query(
+            `SELECT COUNT(*)::int AS n FROM users WHERE institution_id = $1 AND id <> $2 AND status = 'active' AND (role = 'Admin' OR permissions ? '*')`,
+            [institutionId, userId]
+          );
+          if (others.rows[0].n === 0) { const e: any = new Error('This is the last active administrator of the school.'); e.code = 'LAST_ADMIN'; throw e; }
+        }
+        await c.query(`UPDATE users SET status = 'deactivated', platform_locked = TRUE, updated_at = NOW() WHERE id = $1`, [userId]);
+        ended = (await c.query(`DELETE FROM user_sessions WHERE user_id = $1`, [userId])).rowCount || 0;
+      } else {
+        await c.query(`UPDATE users SET status = 'active', platform_locked = FALSE, updated_at = NOW() WHERE id = $1`, [userId]);
+      }
+      await this.supportAudit(c, admin, institutionId, {
+        actionType: active ? 'user_reactivated' : 'user_deactivated',
+        title: active ? 'Operator Account Reactivated by Platform Support' : 'Operator Account Deactivated by Platform Support',
+        description: `Account '${row.username}' was ${active ? 'reactivated' : 'deactivated'}.`, targetUserId: userId, targetLabel: row.full_name, metadata: { sessionsEnded: ended },
+      });
+      return { username: row.username, sessionsEnded: ended };
+    });
+  }
+
+  public async platformSetSchoolSuspended(
+    admin: { id: string; username: string; role: string }, institutionId: string, suspend: boolean, reason: string
+  ): Promise<{ name: string; sessionsEnded: number } | null> {
+    await this.init();
+    return this.withTx(async (c) => {
+      const i = await c.query(`SELECT id, name, status FROM institutions WHERE id = $1 FOR UPDATE`, [institutionId]);
+      if (i.rowCount === 0) return null;
+      let ended = 0;
+      if (suspend) {
+        await c.query(`UPDATE institutions SET status = 'suspended', suspended_at = NOW(), suspended_by = $1, suspend_reason = $2, updated_at = NOW() WHERE id = $3`, [admin.username, reason, institutionId]);
+        ended = (await c.query(`DELETE FROM user_sessions WHERE institution_id = $1`, [institutionId])).rowCount || 0;
+      } else {
+        await c.query(`UPDATE institutions SET status = 'active', suspended_at = NULL, suspended_by = NULL, suspend_reason = NULL, updated_at = NOW() WHERE id = $1`, [institutionId]);
+      }
+      await this.supportAudit(c, admin, institutionId, {
+        actionType: suspend ? 'school_suspended' : 'school_reactivated',
+        title: suspend ? 'School Suspended by Platform' : 'School Reactivated by Platform',
+        description: suspend ? `School access was suspended. Reason: ${reason}` : 'School access was restored.', metadata: { sessionsEnded: ended, reason: suspend ? reason : undefined },
+      });
+      return { name: i.rows[0].name, sessionsEnded: ended };
+    });
+  }
+
+  /** School-side: the signed-in user sets a new password. Clears the forced-change flag, ends their other sessions. */
+  public async changeOwnPassword(userId: string, passwordHash: string, keepToken: string): Promise<void> {
+    await this.init();
+    await this.withTx(async (c) => {
+      await c.query(`UPDATE users SET password_hash = $1, must_change_password = FALSE, temp_password_expires_at = NULL, updated_at = NOW() WHERE id = $2`, [passwordHash, userId]);
+      await c.query(`DELETE FROM user_sessions WHERE user_id = $1 AND session_token <> $2`, [userId, keepToken]);
+    });
   }
 
   public async deleteSession(token: string): Promise<boolean> {
@@ -1784,6 +2770,10 @@ class DatabaseService {
       helpers: {
         mintDocumentNumber: (prefix: string, year: string, digits?: number) => Promise<string>;
         mintDocumentNumberBlock: (prefix: string, year: string, count?: number, digits?: number) => Promise<string[]>;
+        /** Non-reversed vouchers of a student other than `excludeId` (serialised per student). */
+        countOtherActiveVouchers: (studentId: string, excludeId: string) => Promise<number>;
+        /** True when the student has a later non-reversed voucher than this one (so it is no longer the payable voucher). */
+        hasLaterActiveVoucher: (voucherId: string) => Promise<boolean>;
       }
     ) => Promise<{ writes: VoucherTxWrites; result: T }>
   ): Promise<T> {
@@ -1883,6 +2873,23 @@ class DatabaseService {
           mintDocumentNumber: async (prefix: string, year: string, digits: number = 6): Promise<string> => {
             const list = await helpers.mintDocumentNumberBlock(prefix, year, 1, digits);
             return list[0];
+          },
+          hasLaterActiveVoucher: async (voucherId: string): Promise<boolean> => {
+            const r = await client.query(
+              `SELECT 1 FROM vouchers v JOIN vouchers t
+                 ON t.institution_id = v.institution_id AND t.student_id = v.student_id AND t.month > v.month AND t.status <> 'Reversed'
+               WHERE v.institution_id = $1 AND v.id = $2 LIMIT 1`,
+              [tenantId, voucherId]
+            );
+            return r.rows.length > 0;
+          },
+          countOtherActiveVouchers: async (studentId: string, excludeId: string): Promise<number> => {
+            await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`${tenantId}:student-vouchers:${studentId}`]);
+            const r = await client.query(
+              `SELECT COUNT(*)::int AS n FROM vouchers WHERE institution_id = $1 AND student_id = $2 AND status <> 'Reversed' AND id <> $3`,
+              [tenantId, studentId, excludeId]
+            );
+            return Number(r.rows[0].n);
           },
         };
 
@@ -2004,6 +3011,8 @@ class DatabaseService {
           await client.query(FINE_SINCE_PAYMENT_REFRESH_SQL, [tenantId, Array.from(touchedStudents)]);
         }
 
+        if (writes.afterWrites) await writes.afterWrites(client);
+
         await client.query('COMMIT');
         return result;
       } catch (err) {
@@ -2044,7 +3053,7 @@ class DatabaseService {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = requireTenantId(institutionId);
-    const cols = ['id', ...cfg.fields.map((f) => f.column)].join(', ');
+    const cols = ['id', 'version', ...cfg.fields.map((f) => f.column)].join(', ');
     const orderClause = orderByColumn ? ` ORDER BY ${orderByColumn}` : '';
 
     if (this.engine === 'postgres' && this.pgPool) {
@@ -2056,11 +3065,68 @@ class DatabaseService {
     return [];
   }
 
+  /** Which of the given references do not exist for this institution (empty values are ignored). */
+  public async missingRefs(
+    institutionId: string,
+    refs: { classId?: string; familyId?: string; studentId?: string }
+  ): Promise<Array<'class' | 'family' | 'student'>> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    const missing: Array<'class' | 'family' | 'student'> = [];
+    if (!(this.engine === 'postgres' && this.pgPool)) return missing;
+    const check = async (table: string, id: string | undefined, label: 'class' | 'family' | 'student') => {
+      if (!id) return;
+      const r = await this.pgPool!.query(`SELECT 1 FROM ${table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
+      if (r.rows.length === 0) missing.push(label);
+    };
+    await check('classes', refs.classId, 'class');
+    await check('families', refs.familyId, 'family');
+    await check('students', refs.studentId, 'student');
+    return missing;
+  }
+
+  /** True when another row of the table already has this value in the column (case-insensitive). */
+  public async valueTaken(
+    institutionId: string,
+    table: 'classes' | 'stops' | 'buses',
+    column: 'name' | 'bus_number',
+    value: string,
+    excludeId?: string
+  ): Promise<boolean> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) return false;
+    const allowed = { classes: 'name', stops: 'name', buses: 'bus_number' } as const;
+    if (allowed[table] !== column) throw new Error('[DB] valueTaken: column not allowed for table.');
+    const r = await this.pgPool.query(
+      `SELECT 1 FROM ${table} WHERE institution_id = $1 AND LOWER(TRIM(${column})) = LOWER(TRIM($2)) AND id <> $3 LIMIT 1`,
+      [tenantId, value, excludeId || '']
+    );
+    return r.rows.length > 0;
+  }
+
+  /** True when the student, bus and stop all exist for this institution (used to reject orphan transport assignments). */
+  public async transportRefsExist(
+    institutionId: string,
+    refs: { studentId?: string; busId?: string; stopId?: string }
+  ): Promise<{ student: boolean; bus: boolean; stop: boolean }> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    const out = { student: true, bus: true, stop: true };
+    if (!(this.engine === 'postgres' && this.pgPool)) return out;
+    const exists = async (table: string, id: string) =>
+      (await this.pgPool!.query(`SELECT 1 FROM ${table} WHERE id = $1 AND institution_id = $2`, [id, tenantId])).rows.length > 0;
+    if (refs.studentId !== undefined) out.student = !!refs.studentId && (await exists('students', refs.studentId));
+    if (refs.busId !== undefined) out.bus = !!refs.busId && (await exists('buses', refs.busId));
+    if (refs.stopId !== undefined) out.stop = !!refs.stopId && (await exists('stops', refs.stopId));
+    return out;
+  }
+
   public async getSimpleEntityById(cfg: SimpleEntityConfig, institutionId: string, id: string): Promise<any | null> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = requireTenantId(institutionId);
-    const cols = ['id', ...cfg.fields.map((f) => f.column)].join(', ');
+    const cols = ['id', 'version', ...cfg.fields.map((f) => f.column)].join(', ');
 
     if (this.engine === 'postgres' && this.pgPool) {
       const res = await this.pgPool.query(`SELECT ${cols} FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [
@@ -2072,80 +3138,266 @@ class DatabaseService {
     return null;
   }
 
+  /** Runs `fn` in one database transaction; commits on success, rolls back and rethrows on any error. */
+  public async withTx<T>(fn: (client: any) => Promise<T>): Promise<T> {
+    if (!(this.engine === 'postgres' && this.pgPool)) throw new Error('No database engine available.');
+    const client = await this.pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      const out = await fn(client);
+      await client.query('COMMIT');
+      return out;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async txReadOne(client: any, cfg: SimpleEntityConfig, tenantId: string, id: string): Promise<any | null> {
+    const cols = ['id', 'version', ...cfg.fields.map((f) => f.column)].join(', ');
+    const res = await client.query(`SELECT ${cols} FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
+    return res.rows.length ? deserializeSimpleEntityRow(cfg.fields, res.rows[0]) : null;
+  }
+
+  /** Only one bank account may be the default: clears the flag on every other account of the tenant. */
+  private async clearOtherDefaultBankAccounts(client: any, tenantId: string, keepId: string): Promise<void> {
+    await client.query(
+      `UPDATE bank_accounts SET is_default = FALSE, version = version + 1, updated_at = NOW()
+       WHERE institution_id = $1 AND id <> $2 AND is_default = TRUE`,
+      [tenantId, keepId]
+    );
+  }
+
+  private newEntityId(table: string): string {
+    return `${table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+  }
+
+  /** Inserts one row inside a transaction. Returns the id used. */
+  private async txInsert(client: any, cfg: SimpleEntityConfig, tenantId: string, id: string, obj: any): Promise<string> {
+    const now = new Date().toISOString();
+    const values = cfg.fields.map((f) => serializeFieldValue(f, obj[f.field]));
+    const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+    await client.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`, [
+      id,
+      tenantId,
+      ...values,
+      now,
+      now,
+    ]);
+    if (cfg.table === 'bank_accounts' && obj.isDefault) await this.clearOtherDefaultBankAccounts(client, tenantId, id);
+    return id;
+  }
+
+  /** Updates one row inside a transaction. False when the row does not exist; throws on a stale version. */
+  private async txUpdate(
+    client: any,
+    cfg: SimpleEntityConfig,
+    tenantId: string,
+    id: string,
+    updates: any,
+    expectedVersion?: number
+  ): Promise<boolean> {
+    const now = new Date().toISOString();
+    const fieldsToUpdate = cfg.fields.filter((f) => Object.prototype.hasOwnProperty.call(updates, f.field));
+    const hasExpected = expectedVersion !== undefined && expectedVersion !== null && Number.isFinite(Number(expectedVersion));
+
+    if (fieldsToUpdate.length === 0) {
+      const cur = await this.txReadOne(client, cfg, tenantId, id);
+      if (cur && hasExpected && Number(cur.version) !== Number(expectedVersion)) {
+        throw new ConflictError('STALE_VERSION', STALE_MESSAGE, cur);
+      }
+      return !!cur;
+    }
+
+    const values = fieldsToUpdate.map((f) => serializeFieldValue(f, updates[f.field]));
+    const setClauses = fieldsToUpdate.map((f, i) => `${f.column} = $${i + 1}`);
+    setClauses.push(`updated_at = $${fieldsToUpdate.length + 1}`, 'version = version + 1');
+    const params: any[] = [...values, now, id, tenantId];
+    let where = `id = $${fieldsToUpdate.length + 2} AND institution_id = $${fieldsToUpdate.length + 3}`;
+    if (hasExpected) {
+      params.push(Number(expectedVersion));
+      where += ` AND version = $${fieldsToUpdate.length + 4}`;
+    }
+    const res = await client.query(`UPDATE ${cfg.table} SET ${setClauses.join(', ')} WHERE ${where}`, params);
+    if ((res.rowCount || 0) === 0) {
+      if (hasExpected) {
+        const cur = await this.txReadOne(client, cfg, tenantId, id);
+        if (cur) throw new ConflictError('STALE_VERSION', STALE_MESSAGE, cur);
+      }
+      return false;
+    }
+    if (cfg.table === 'bank_accounts' && updates.isDefault) await this.clearOtherDefaultBankAccounts(client, tenantId, id);
+    return true;
+  }
+
+  /**
+   * Deletes one row inside a transaction, with the version check and the referential
+   * rules: a bus or stop still used by an active student's assignment, or a class that
+   * still has students, cannot be deleted (ConflictError IN_USE); assignments of
+   * inactive students are removed together with the bus or stop.
+   */
+  private async txDelete(
+    client: any,
+    cfg: SimpleEntityConfig,
+    tenantId: string,
+    id: string,
+    expectedVersion?: number
+  ): Promise<boolean> {
+    const hasExpected = expectedVersion !== undefined && expectedVersion !== null && Number.isFinite(Number(expectedVersion));
+    const row = await client.query(
+      `SELECT version FROM ${cfg.table} WHERE id = $1 AND institution_id = $2 FOR UPDATE`,
+      [id, tenantId]
+    );
+    if (row.rows.length === 0) return false;
+    if (hasExpected && Number(row.rows[0].version) !== Number(expectedVersion)) {
+      throw new ConflictError('STALE_VERSION', STALE_MESSAGE, await this.txReadOne(client, cfg, tenantId, id));
+    }
+
+    if (cfg.table === 'stops' || cfg.table === 'buses') {
+      const col = cfg.table === 'stops' ? 'stop_id' : 'bus_id';
+      const noun = cfg.table === 'stops' ? 'bus stop' : 'bus';
+      const active = await client.query(
+        `SELECT COUNT(*) AS n FROM transport_assignments a
+         JOIN students s ON s.id = a.student_id
+         WHERE a.${col} = $1 AND a.institution_id = $2 AND s.status = 'Active'`,
+        [id, tenantId]
+      );
+      const n = Number(active.rows[0]?.n) || 0;
+      if (n > 0) {
+        throw new ConflictError('IN_USE', `Cannot delete ${noun}. ${n} active student transport assignments refer to this ${noun}.`);
+      }
+      await client.query(`DELETE FROM transport_assignments WHERE ${col} = $1 AND institution_id = $2`, [id, tenantId]);
+    } else if (cfg.table === 'classes') {
+      const used = await client.query(`SELECT COUNT(*) AS n FROM students WHERE class_id = $1 AND institution_id = $2`, [id, tenantId]);
+      const n = Number(used.rows[0]?.n) || 0;
+      if (n > 0) {
+        throw new ConflictError(
+          'IN_USE',
+          `Cannot delete class. ${n} student record(s) still reference it (including inactive ones). Reassign them first.`
+        );
+      }
+    }
+
+    const res = await client.query(`DELETE FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
+    return (res.rowCount || 0) > 0;
+  }
+
   public async createSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, obj: any): Promise<any> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = requireTenantId(institutionId);
-    let id: string = obj.id || `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
-    const now = new Date().toISOString();
+    let id: string = obj.id || this.newEntityId(cfg.table);
 
-    if (this.engine === 'postgres' && this.pgPool) {
-      if (obj.id) {
-        const existing = await this.pgPool.query(`SELECT id, institution_id FROM ${cfg.table} WHERE id = $1`, [obj.id]);
-        if (existing.rows.length > 0) {
-          if (existing.rows[0].institution_id === tenantId) {
-            return this.updateSimpleEntity(cfg, tenantId, obj.id, obj);
-          } else {
-            // ID already taken by another tenant - generate unique ID for this tenant
-            id = `${cfg.table}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
-          }
+    if (!(this.engine === 'postgres' && this.pgPool)) throw new Error('No database engine available.');
+
+    if (obj.id) {
+      const existing = await this.pgPool.query(`SELECT id, institution_id FROM ${cfg.table} WHERE id = $1`, [obj.id]);
+      if (existing.rows.length > 0) {
+        if (existing.rows[0].institution_id === tenantId) {
+          return this.updateSimpleEntity(cfg, tenantId, obj.id, obj, obj.expectedVersion);
         }
+        // ID already taken by another tenant - generate unique ID for this tenant
+        id = this.newEntityId(cfg.table);
       }
-      const values = cfg.fields.map((f) => serializeFieldValue(f, obj[f.field]));
-      const cols = ['id', 'institution_id', ...cfg.fields.map((f) => f.column), 'created_at', 'updated_at'];
-      const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      await this.pgPool.query(`INSERT INTO ${cfg.table} (${cols.join(', ')}) VALUES (${placeholders})`, [
-        id,
-        tenantId,
-        ...values,
-        now,
-        now,
-      ]);
-    } else {
-      throw new Error('No database engine available.');
     }
-
+    await this.withTx((client) => this.txInsert(client, cfg, tenantId, id, obj));
     return this.getSimpleEntityById(cfg, tenantId, id);
   }
 
-  public async updateSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, id: string, updates: any): Promise<any | null> {
+  /**
+   * Updates one row. When `expectedVersion` is given the update applies only if the
+   * row still has that version; otherwise a ConflictError(STALE_VERSION) carrying the
+   * current row is thrown (optimistic concurrency). Every applied update bumps `version`.
+   */
+  public async updateSimpleEntity(
+    cfg: SimpleEntityConfig,
+    institutionId: string,
+    id: string,
+    updates: any,
+    expectedVersion?: number
+  ): Promise<any | null> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = requireTenantId(institutionId);
-    const now = new Date().toISOString();
-    const fieldsToUpdate = cfg.fields.filter((f) => Object.prototype.hasOwnProperty.call(updates, f.field));
-
-    if (fieldsToUpdate.length === 0) {
-      return this.getSimpleEntityById(cfg, tenantId, id);
-    }
-
-    const values = fieldsToUpdate.map((f) => serializeFieldValue(f, updates[f.field]));
-
-    if (this.engine === 'postgres' && this.pgPool) {
-      const setClauses = fieldsToUpdate.map((f, i) => `${f.column} = $${i + 1}`);
-      setClauses.push(`updated_at = $${fieldsToUpdate.length + 1}`);
-      const res = await this.pgPool.query(
-        `UPDATE ${cfg.table} SET ${setClauses.join(', ')} WHERE id = $${fieldsToUpdate.length + 2} AND institution_id = $${
-          fieldsToUpdate.length + 3
-        }`,
-        [...values, now, id, tenantId]
-      );
-      if ((res.rowCount || 0) === 0) return null;
-      return this.getSimpleEntityById(cfg, tenantId, id);
-    }
-    return null;
+    const applied = await this.withTx((client) => this.txUpdate(client, cfg, tenantId, id, updates, expectedVersion));
+    return applied ? this.getSimpleEntityById(cfg, tenantId, id) : null;
   }
 
-  public async deleteSimpleEntity(cfg: SimpleEntityConfig, institutionId: string, id: string): Promise<boolean> {
+  public async deleteSimpleEntity(
+    cfg: SimpleEntityConfig,
+    institutionId: string,
+    id: string,
+    expectedVersion?: number
+  ): Promise<boolean> {
     assertAllowedSimpleTable(cfg.table);
     await this.init();
     const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) return false;
+    return this.withTx((client) => this.txDelete(client, cfg, tenantId, id, expectedVersion));
+  }
 
-    if (this.engine === 'postgres' && this.pgPool) {
-      const res = await this.pgPool.query(`DELETE FROM ${cfg.table} WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
-      return (res.rowCount || 0) > 0;
+  /**
+   * All-or-nothing batch: removes `deleteIds`, then inserts or updates `upserts`
+   * (a row with an `id` that already exists for this tenant is updated, honouring its
+   * `expectedVersion`; anything else is inserted), and appends optional account-history
+   * entries, all in one transaction. Any failure rolls the whole batch back.
+   * Returns the saved rows so the caller can adopt the server's values.
+   */
+  public async batchSimpleEntities(
+    cfg: SimpleEntityConfig,
+    institutionId: string,
+    ops: {
+      upserts?: any[];
+      deleteIds?: string[];
+      history?: Array<Record<string, any>>;
+      /** Called inside the transaction after the writes, to enforce rules that span the whole batch. */
+      afterWrites?: (client: any, tenantId: string) => Promise<void>;
     }
-    return false;
+  ): Promise<{ items: any[]; deletedIds: string[] }> {
+    assertAllowedSimpleTable(cfg.table);
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) throw new Error('No database engine available.');
+
+    return this.withTx(async (client) => {
+      const deletedIds: string[] = [];
+      for (const id of ops.deleteIds || []) {
+        if (await this.txDelete(client, cfg, tenantId, id)) deletedIds.push(id);
+      }
+      const savedIds: string[] = [];
+      for (const obj of ops.upserts || []) {
+        let id: string = obj.id || this.newEntityId(cfg.table);
+        if (obj.id) {
+          const existing = await client.query(`SELECT institution_id FROM ${cfg.table} WHERE id = $1`, [obj.id]);
+          if (existing.rows.length > 0) {
+            if (existing.rows[0].institution_id !== tenantId) {
+              id = this.newEntityId(cfg.table);
+              await this.txInsert(client, cfg, tenantId, id, obj);
+            } else {
+              await this.txUpdate(client, cfg, tenantId, obj.id, obj, obj.expectedVersion);
+            }
+          } else {
+            await this.txInsert(client, cfg, tenantId, id, obj);
+          }
+        } else {
+          await this.txInsert(client, cfg, tenantId, id, obj);
+        }
+        savedIds.push(id);
+      }
+      for (const entry of ops.history || []) {
+        await this.appendStudentAccountHistory(tenantId, entry, client);
+      }
+      if (ops.afterWrites) await ops.afterWrites(client, tenantId);
+      const items: any[] = [];
+      for (const id of savedIds) {
+        const row = await this.txReadOne(client, cfg, tenantId, id);
+        if (row) items.push(row);
+      }
+      return { items, deletedIds };
+    });
   }
 
 
@@ -2154,6 +3406,7 @@ class DatabaseService {
   private studentRowToRecord(row: any): any {
     return {
       id: row.id,
+      version: Number(row.version) || 1,
       studentNo: row.student_no || '',
       regNo: row.reg_no || '',
       name: row.name,
@@ -2323,7 +3576,7 @@ class DatabaseService {
     return null;
   }
 
-  public async createStudent(institutionId: string, obj: any): Promise<any> {
+  public async createStudent(institutionId: string, obj: any, client?: any): Promise<any> {
     await this.init();
     const tenantId = requireTenantId(institutionId);
     const id: string = obj.id || `student_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
@@ -2397,28 +3650,36 @@ class DatabaseService {
       now,
     ];
 
-    if (this.engine === 'postgres' && this.pgPool) {
+    const runner = client || (this.engine === 'postgres' ? this.pgPool : null);
+    if (runner) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      await this.pgPool.query(`INSERT INTO students (${cols.join(', ')}) VALUES (${placeholders})`, values);
+      await runner.query(`INSERT INTO students (${cols.join(', ')}) VALUES (${placeholders})`, values);
     } else {
       throw new Error('No database engine available.');
     }
 
-    return this.getStudentById(tenantId, id);
+    return client ? { id } : this.getStudentById(tenantId, id);
   }
 
-  public async updateStudent(institutionId: string, id: string, updates: any): Promise<any | null> {
+  public async updateStudent(
+    institutionId: string,
+    id: string,
+    updates: any,
+    expectedVersion?: number,
+    client?: any,
+    onChange?: (changedFields: string[], before: any) => void
+  ): Promise<any | null> {
     await this.init();
     const tenantId = requireTenantId(institutionId);
     const now = new Date().toISOString();
 
-    const fieldMap: Record<string, { column: string; type: 'string' | 'number' }> = {
+    const fieldMap: Record<string, { column: string; type: 'string' | 'number'; nullIfEmpty?: boolean }> = {
       studentNo: { column: 'student_no', type: 'string' },
       regNo: { column: 'reg_no', type: 'string' },
       name: { column: 'name', type: 'string' },
       admissionDate: { column: 'admission_date', type: 'string' },
       firstBillingMonth: { column: 'first_billing_month', type: 'string' },
-      classId: { column: 'class_id', type: 'string' },
+      classId: { column: 'class_id', type: 'string', nullIfEmpty: true },
       monthlyDiscount: { column: 'monthly_discount', type: 'number' },
       mobileNumber: { column: 'mobile_number', type: 'string' },
       notes: { column: 'notes', type: 'string' },
@@ -2426,7 +3687,7 @@ class DatabaseService {
       dob: { column: 'dob', type: 'string' },
       gender: { column: 'gender', type: 'string' },
       studentNationalId: { column: 'student_national_id', type: 'string' },
-      familyId: { column: 'family_id', type: 'string' },
+      familyId: { column: 'family_id', type: 'string', nullIfEmpty: true },
       address: { column: 'address', type: 'string' },
       fatherName: { column: 'father_name', type: 'string' },
       fatherNationalId: { column: 'father_national_id', type: 'string' },
@@ -2444,7 +3705,9 @@ class DatabaseService {
     for (const [field, spec] of Object.entries(fieldMap)) {
       if (Object.prototype.hasOwnProperty.call(updates, field)) {
         setCols.push(spec.column);
-        values.push(spec.type === 'number' ? Number(updates[field]) || 0 : updates[field] ?? null);
+        values.push(
+          spec.type === 'number' ? Number(updates[field]) || 0 : spec.nullIfEmpty ? updates[field] || null : updates[field] ?? null
+        );
       }
     }
     if (updates.document1 !== undefined || updates.document2 !== undefined || updates.document3 !== undefined) {
@@ -2459,25 +3722,143 @@ class DatabaseService {
       );
     }
 
+    if (onChange) {
+      // Reported before the write so the caller can describe what really changed
+      // (field names only, never values).
+      const before = await this.getStudentById(tenantId, id);
+      if (before) {
+        const numeric = new Set(['monthlyDiscount']);
+        const norm = (f: string, v: any) => (numeric.has(f) ? String(Number(v) || 0) : v == null ? '' : String(v));
+        const names = [...Object.keys(fieldMap), 'document1', 'document2', 'document3'];
+        onChange(
+          names.filter((f) => Object.prototype.hasOwnProperty.call(updates, f) && norm(f, updates[f]) !== norm(f, before[f])),
+          before
+        );
+      }
+    }
+
     if (setCols.length === 0) {
       return this.getStudentById(tenantId, id);
     }
 
-    if (this.engine === 'postgres' && this.pgPool) {
+    const runner = client || (this.engine === 'postgres' ? this.pgPool : null);
+    if (runner) {
       const setClauses = setCols.map((c, i) => `${c} = $${i + 1}`);
-      setClauses.push(`updated_at = $${setCols.length + 1}`);
-      const res = await this.pgPool.query(
-        `UPDATE students SET ${setClauses.join(', ')} WHERE id = $${setCols.length + 2} AND institution_id = $${
-          setCols.length + 3
-        }`,
-        [...values, now, id, tenantId]
-      );
-      if ((res.rowCount || 0) === 0) return null;
+      setClauses.push(`updated_at = $${setCols.length + 1}`, 'version = version + 1');
+      const params: any[] = [...values, now, id, tenantId];
+      let where = `id = $${setCols.length + 2} AND institution_id = $${setCols.length + 3}`;
+      const hasExpected = expectedVersion !== undefined && expectedVersion !== null && Number.isFinite(Number(expectedVersion));
+      if (hasExpected) {
+        params.push(Number(expectedVersion));
+        where += ` AND version = $${setCols.length + 4}`;
+      }
+      const res = await runner.query(`UPDATE students SET ${setClauses.join(', ')} WHERE ${where}`, params);
+      if ((res.rowCount || 0) === 0) {
+        if (hasExpected) {
+          const current = await this.getStudentById(tenantId, id);
+          if (current) throw new ConflictError('STALE_VERSION', STALE_MESSAGE, current);
+        }
+        return null;
+      }
     } else {
       return null;
     }
 
-    return this.getStudentById(tenantId, id);
+    return client ? { id } : this.getStudentById(tenantId, id);
+  }
+
+  /**
+   * All-or-nothing student batch: deletes (each refused if the student has vouchers)
+   * and creates/updates in one transaction. Assignments and fee templates of deleted
+   * students go with them through the foreign keys.
+   */
+  public async batchStudents(
+    institutionId: string,
+    ops: {
+      upserts?: any[];
+      deleteIds?: string[];
+      familyUpserts?: any[];
+      history?: Array<Record<string, any>>;
+      /** Called inside the transaction with what actually changed; may write the audit entry. */
+      audit?: (summary: StudentBatchSummary, client: any) => Promise<void>;
+    }
+  ): Promise<{ students: any[]; deletedIds: string[]; families: any[] }> {
+    await this.init();
+    const tenantId = requireTenantId(institutionId);
+    if (!(this.engine === 'postgres' && this.pgPool)) throw new Error('No database engine available.');
+
+    const { deletedIds, savedIds, familyIds } = await this.withTx(async (client) => {
+      // Families first (a new student may point at a family created in the same batch).
+      const famIds: string[] = [];
+      for (const fam of ops.familyUpserts || []) {
+        const id: string = fam.id || this.newEntityId('families');
+        const existing = fam.id ? await client.query(`SELECT institution_id FROM families WHERE id = $1`, [fam.id]) : { rows: [] as any[] };
+        if (existing.rows.length > 0 && existing.rows[0].institution_id === tenantId) {
+          await this.txUpdate(client, FAMILY_ENTITY_CONFIG, tenantId, fam.id, fam, fam.expectedVersion);
+          famIds.push(fam.id);
+        } else {
+          await this.txInsert(client, FAMILY_ENTITY_CONFIG, tenantId, existing.rows.length > 0 ? this.newEntityId('families') : id, fam);
+          famIds.push(existing.rows.length > 0 ? '' : id);
+        }
+      }
+      const summary: StudentBatchSummary = { created: [], updated: [], deleted: [] };
+      const deleted: string[] = [];
+      for (const id of ops.deleteIds || []) {
+        const before = await client.query(`SELECT name, reg_no FROM students WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
+        const res = await client.query(
+          `DELETE FROM students
+           WHERE id = $1 AND institution_id = $2
+             AND NOT EXISTS (SELECT 1 FROM vouchers WHERE student_id = $1 AND institution_id = $2)`,
+          [id, tenantId]
+        );
+        if ((res.rowCount || 0) > 0) {
+          deleted.push(id);
+          summary.deleted.push({ name: before.rows[0]?.name || '', regNo: before.rows[0]?.reg_no || '' });
+        } else {
+          const still = await client.query(`SELECT name, reg_no FROM students WHERE id = $1 AND institution_id = $2`, [id, tenantId]);
+          if (still.rows.length > 0) {
+            const label = [still.rows[0].reg_no, still.rows[0].name].filter(Boolean).join(' ');
+            throw new ConflictError('IN_USE', `Cannot delete ${label || 'student'}: fee voucher record(s) exist. Delete the vouchers first.`);
+          }
+        }
+      }
+      const saved: string[] = [];
+      for (const obj of ops.upserts || []) {
+        const existing = obj.id
+          ? await client.query(`SELECT institution_id FROM students WHERE id = $1`, [obj.id])
+          : { rows: [] as any[] };
+        if (existing.rows.length > 0 && existing.rows[0].institution_id === tenantId) {
+          await this.updateStudent(tenantId, obj.id, obj, obj.expectedVersion, client, (fields, before) => {
+            if (fields.length === 0) return; // a save that changes nothing is not an event
+            summary.updated.push({
+              name: obj.name ?? before.name,
+              regNo: obj.regNo ?? before.regNo,
+              fields,
+              statusFrom: fields.includes('status') ? before.status : undefined,
+              statusTo: fields.includes('status') ? obj.status : undefined,
+            });
+          });
+          saved.push(obj.id);
+        } else {
+          const { id: _ignored, ...rest } = obj;
+          const created = await this.createStudent(tenantId, existing.rows.length > 0 ? rest : obj, client);
+          saved.push(created.id);
+          summary.created.push({ name: obj.name, regNo: obj.regNo });
+        }
+      }
+      if (ops.audit) await ops.audit(summary, client);
+      for (const entry of ops.history || []) {
+        await this.appendStudentAccountHistory(tenantId, entry, client);
+      }
+      return { deletedIds: deleted, savedIds: saved, familyIds: famIds.filter(Boolean) };
+    });
+    const { students } = savedIds.length > 0 ? await this.searchStudents(tenantId, { ids: savedIds }) : { students: [] as any[] };
+    const families: any[] = [];
+    for (const id of familyIds) {
+      const f = await this.getSimpleEntityById(FAMILY_ENTITY_CONFIG, tenantId, id);
+      if (f) families.push(f);
+    }
+    return { students, deletedIds, families };
   }
 
   public async deleteStudent(institutionId: string, id: string): Promise<boolean> {
@@ -2505,7 +3886,8 @@ class DatabaseService {
    */
   public async deleteStudentIfNoVouchers(
     institutionId: string,
-    id: string
+    id: string,
+    expectedVersion?: number
   ): Promise<{ deleted: boolean; blockedByVouchers: boolean }> {
     await this.init();
     const tenantId = requireTenantId(institutionId);
@@ -2514,8 +3896,9 @@ class DatabaseService {
       const res = await this.pgPool.query(
         `DELETE FROM students
          WHERE id = $1 AND institution_id = $2
+           AND ($3::int IS NULL OR version = $3::int)
            AND NOT EXISTS (SELECT 1 FROM vouchers WHERE student_id = $1 AND institution_id = $2)`,
-        [id, tenantId]
+        [id, tenantId, expectedVersion !== undefined && Number.isFinite(Number(expectedVersion)) ? Number(expectedVersion) : null]
       );
       if ((res.rowCount || 0) > 0) {
         return { deleted: true, blockedByVouchers: false };
@@ -2525,10 +3908,14 @@ class DatabaseService {
       // after the atomic delete attempt, so it only affects which error
       // message we return, not whether the deletion itself was safe.
       const existsRes = await this.pgPool.query(
-        `SELECT EXISTS(SELECT 1 FROM students WHERE id = $1 AND institution_id = $2) AS exists`,
+        `SELECT version FROM students WHERE id = $1 AND institution_id = $2`,
         [id, tenantId]
       );
-      return { deleted: false, blockedByVouchers: Boolean(existsRes.rows[0]?.exists) };
+      if (existsRes.rows.length > 0 && expectedVersion !== undefined && Number.isFinite(Number(expectedVersion)) &&
+          Number(existsRes.rows[0].version) !== Number(expectedVersion)) {
+        throw new ConflictError('STALE_VERSION', STALE_MESSAGE, await this.getStudentById(tenantId, id));
+      }
+      return { deleted: false, blockedByVouchers: existsRes.rows.length > 0 };
     }
 
     return { deleted: false, blockedByVouchers: false };
@@ -3093,7 +4480,7 @@ class DatabaseService {
    * the action being audited, never accepted verbatim from a client
    * payload. See the security note on the old syncState() for why.
    */
-  public async appendAuditLog(institutionId: string, entry: Record<string, any>): Promise<any> {
+  public async appendAuditLog(institutionId: string, entry: Record<string, any>, client?: any): Promise<any> {
     await this.init();
     const tenantId = requireTenantId(institutionId);
     const id = entry.id || `audit_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
@@ -3140,9 +4527,12 @@ class DatabaseService {
       entry.metadata ? JSON.stringify(entry.metadata) : null,
     ];
 
-    if (this.engine === 'postgres' && this.pgPool) {
+    // With a client the entry joins the caller's transaction, so it commits or
+    // rolls back together with the change it describes.
+    const runner = client || (this.engine === 'postgres' ? this.pgPool : null);
+    if (runner) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      await this.pgPool.query(`INSERT INTO audit_logs (${cols.join(', ')}) VALUES (${placeholders})`, values);
+      await runner.query(`INSERT INTO audit_logs (${cols.join(', ')}) VALUES (${placeholders})`, values);
     }
     return { id, timestamp, ...entry };
   }
@@ -3200,7 +4590,7 @@ class DatabaseService {
     return { entries: [], total: 0 };
   }
 
-  public async appendStudentAccountHistory(institutionId: string, entry: Record<string, any>): Promise<any> {
+  public async appendStudentAccountHistory(institutionId: string, entry: Record<string, any>, client?: any): Promise<any> {
     await this.init();
     const tenantId = requireTenantId(institutionId);
     const id = entry.id || `hist_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
@@ -3239,9 +4629,10 @@ class DatabaseService {
       entry.metadata ? JSON.stringify(entry.metadata) : null,
     ];
 
-    if (this.engine === 'postgres' && this.pgPool) {
+    const runner = client || (this.engine === 'postgres' ? this.pgPool : null);
+    if (runner) {
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-      await this.pgPool.query(`INSERT INTO student_account_history (${cols.join(', ')}) VALUES (${placeholders})`, values);
+      await runner.query(`INSERT INTO student_account_history (${cols.join(', ')}) VALUES (${placeholders})`, values);
     }
     return { id, timestamp, ...entry };
   }
@@ -3529,24 +4920,31 @@ class DatabaseService {
         }
       }
 
-      // Reload simple entities
-      for (const [config, items] of [
+      // Reload in dependency order (foreign keys): parents first, then
+      // students, then the rows that point at students.
+      const reloadSimple = async (pairs: [SimpleEntityConfig, any[]][]) => {
+        for (const [config, items] of pairs) {
+          for (const item of items || []) {
+            await this.createSimpleEntity(config, tenantId, item);
+          }
+        }
+      };
+      await reloadSimple([
         [CLASS_ENTITY_CONFIG, backup.classes],
         [FAMILY_ENTITY_CONFIG, backup.families],
         [BUS_ENTITY_CONFIG, backup.buses],
         [STOP_ENTITY_CONFIG, backup.stops],
-        [TRANSPORT_ASSIGNMENT_ENTITY_CONFIG, backup.transportAssignments],
-        [FEE_TEMPLATE_ENTITY_CONFIG, backup.feeTemplates],
         [BANK_ACCOUNT_ENTITY_CONFIG, backup.bankAccounts],
-      ] as [SimpleEntityConfig, any[]][]) {
-        for (const item of items || []) {
-          await this.createSimpleEntity(config, tenantId, item);
-        }
-      }
+      ]);
 
       for (const student of backup.students || []) {
         await this.createStudent(tenantId, student);
       }
+
+      await reloadSimple([
+        [TRANSPORT_ASSIGNMENT_ENTITY_CONFIG, backup.transportAssignments],
+        [FEE_TEMPLATE_ENTITY_CONFIG, backup.feeTemplates],
+      ]);
 
       // Reload vouchers (with particulars) via the transactional helper so
       // nothing bypasses the normal write path.

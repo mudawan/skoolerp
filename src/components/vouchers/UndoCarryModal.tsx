@@ -1,3 +1,4 @@
+import { useApp } from '../../context/AppContext';
 import React from 'react';
 import { FeeVoucher, Student } from '../../types';
 import { formatCurrency, formatMonthName } from '../../utils/feeMath';
@@ -23,6 +24,7 @@ export const UndoCarryModal: React.FC<UndoCarryModalProps> = ({
   onClose,
   onConfirm,
 }) => {
+  const { financialSaving } = useApp();
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 space-y-4">
@@ -92,7 +94,7 @@ export const UndoCarryModal: React.FC<UndoCarryModalProps> = ({
               <div className="flex justify-between">
                 <span className="text-slate-500">Restored Status:</span>
                 <span className="font-bold text-teal-700">
-                  {(undoCarryModal.targetVoucher.paidAmount || 0) > 0 ? 'Partial' : 'Issued'}
+                  {(undoCarryModal.targetVoucher.amountPaid || 0) > 0 ? 'Partial' : 'Issued'}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -128,6 +130,7 @@ export const UndoCarryModal: React.FC<UndoCarryModalProps> = ({
             <button
               type="button"
               onClick={onConfirm}
+                  disabled={financialSaving}
               className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
             >
               <RotateCcw className="w-4 h-4" />

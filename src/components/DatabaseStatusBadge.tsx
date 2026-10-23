@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, WifiOff } from 'lucide-react';
+import { useApp } from '../context/AppContext';
 import { subscribeDbStatus, checkBackendHealth, DbStatus } from '../services/apiSync';
 
 export const DatabaseStatusBadge: React.FC = () => {
   const [status, setStatus] = useState<DbStatus>({
     isConnected: true,
-    isSyncing: false,
     engine: 'postgres',
     revision: 1,
     activePeers: 1,
@@ -32,7 +32,8 @@ export const DatabaseStatusBadge: React.FC = () => {
   }, []);
 
   const isOnline = status.isConnected;
-  const isSyncing = status.isSyncing;
+  // Shows "Saving" while any voucher or collection write is waiting for the server.
+  const { financialSaving: isSyncing } = useApp();
 
   return (
     <div
@@ -46,7 +47,7 @@ export const DatabaseStatusBadge: React.FC = () => {
       }`}
       title={
         isSyncing
-          ? 'Saving changes to server...'
+          ? 'Saving to the server...'
           : isOnline
           ? 'Connected • All records saved in real time'
           : 'Server Offline • Check network connection. Modifications and financial actions are paused until reconnected.'
@@ -72,7 +73,7 @@ export const DatabaseStatusBadge: React.FC = () => {
       </span>
 
       <span className="text-[11px] font-semibold tracking-tight">
-        {isSyncing ? 'Syncing...' : isOnline ? 'Online' : 'Offline'}
+        {isSyncing ? 'Saving...' : isOnline ? 'Online' : 'Offline'}
       </span>
 
       {isSyncing && (

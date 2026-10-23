@@ -677,8 +677,6 @@ export function calculateStudentVoucherPreview(
     if (priorMonthRule === 'strict') {
       isBlockedByPriorRule = true;
       blockReason = `Blocked: Voucher for ${formattedFutMonth} already generated (Strict Chronological Policy)`;
-    } else if (priorMonthRule === 'warning') {
-      blockReason = `Warning: Future voucher exists for ${formattedFutMonth}`;
     } else if (priorMonthRule === 'recalculate') {
       blockReason = `Auto-Recalculate: Future voucher (${formattedFutMonth}) will be updated`;
     }
@@ -1536,6 +1534,46 @@ export function getArrearsByStudent(allVouchers: FeeVoucher[]): Map<string, Stud
   return out;
 }
 
+/** Lifetime figures for one student's ledger. Every number is derived once, here. */
+export interface StudentLedgerSummary {
+  /** New charges only: each voucher's net due minus the previous balance it carries, plus any opening balance. */
+  billed: number;
+  /** Balance brought into the earliest voucher (arrears from before the first voucher on record). */
+  openingBalance: number;
+  deposited: number;
+  /** Open receivable (what the student owes now). */
+  outstanding: number;
+  unpaidMonths: number;
+  oldestOpenMonth: string;
+  cycles: number;
+  recoveryRate: number;
+}
+
+/**
+ * A voucher's net due already contains the unpaid balance of the voucher before it
+ * (Previous Balance), so summing net dues counts old debt again as a new charge.
+ * Summing only each voucher's new charges (net due - previous balance) makes
+ * billed - deposited equal the outstanding amount carried by the latest voucher.
+ */
+export function getStudentLedgerSummary(allVouchers: FeeVoucher[], studentId: string, deposited: number): StudentLedgerSummary {
+  const sv = allVouchers
+    .filter((v) => v.studentId === studentId && v.status !== 'Reversed')
+    .sort((a, b) => a.month.localeCompare(b.month));
+  const opening = sv.length > 0 ? Number(sv[0].prevBalance) || 0 : 0;
+  const billed = sv.reduce((s, v, i) => s + v.netDue - (i === 0 ? 0 : Number(v.prevBalance) || 0), 0);
+  const arrears = computeArrearsFromSorted(sv);
+  return {
+    billed,
+    openingBalance: opening > 0 ? opening : 0,
+    deposited,
+    outstanding: arrears.outstanding,
+    unpaidMonths: arrears.arrearsMonths.length,
+    oldestOpenMonth: arrears.oldestOpenMonth,
+    cycles: sv.length,
+    recoveryRate: billed > 0 ? Math.round((deposited / billed) * 100) : 0,
+  };
+}
+
 function computeArrearsFromSorted(sv: FeeVoucher[]): StudentArrears {
   const hasDestination = (v: FeeVoucher) =>
     sv.some((o) => o.id !== v.id && o.month > v.month && (!v.carryForwardMonth || o.month === v.carryForwardMonth));
@@ -1581,4 +1619,20 @@ export function formatLockedImpactMessage(months: string[], action: string): str
     `This ${action} would change ${plural ? 'locked months' : 'a locked month'}: ${names}. ` +
     `Locked months cannot be modified — an Admin must unlock ${plural ? 'them (newest first)' : 'it'} in the Month End Wizard, or the change should be reverted.`
   );
+}
+
+
+/**
+ * The only voucher of a student that can take a payment: their latest
+ * non-reversed voucher (by month). Earlier balances are folded into it, so a
+ * payment against an older voucher would bypass the chain.
+ */
+export function buildLatestVoucherMap(vouchers: FeeVoucher[]): Map<string, FeeVoucher> {
+  const latest = new Map<string, FeeVoucher>();
+  for (const v of vouchers) {
+    if (v.status === 'Reversed') continue;
+    const cur = latest.get(v.studentId);
+    if (!cur || v.month > cur.month) latest.set(v.studentId, v);
+  }
+  return latest;
 }

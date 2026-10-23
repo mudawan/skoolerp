@@ -57,6 +57,7 @@ export const CollectionsView: React.FC = () => {
     updateVoucherParticulars,
     bulkCsvCollection,
     deleteCollection,
+    financialSaving,
     hasPermission,
     themeConfig,
     roundingMultiple,
@@ -84,11 +85,11 @@ export const CollectionsView: React.FC = () => {
   const [receiptInitialIndex, setReceiptInitialIndex] = useState<number>(0);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
 
-  // Sorting state - default to oldest first (asc) so Sr# 1 refers to oldest transaction
+  // Sorting state - newest payment first by default. Sr# is the chronological number (1 = oldest), so it stays stable under any sort.
   type SortField = 'sr' | 'date' | 'type' | 'transactions' | 'totalAmount';
   type SortDirection = 'asc' | 'desc';
   const [sortField, setSortField] = useState<SortField>('sr');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -205,7 +206,7 @@ export const CollectionsView: React.FC = () => {
     }
   }, isVoucherPickerOpen || showDirectModal || showBulkModal);
 
-  // Filtered & Sorted Collections (Sr# 1 = oldest transaction of the month by default)
+  // Filtered & Sorted Collections (newest first by default)
   const sortedCollections = useMemo(() => {
     const filtered = collections.filter(
       (c) =>
@@ -232,6 +233,12 @@ export const CollectionsView: React.FC = () => {
       return sortDirection === 'asc' ? comparison : -comparison;
     });
   }, [collections, searchTerm, sortField, sortDirection]);
+
+  // Chronological number of each collection (1 = oldest), independent of the current sort
+  const srByCollectionId = useMemo(() => {
+    const chrono = [...collections].sort((a, b) => a.date.localeCompare(b.date) || a.collectionNo.localeCompare(b.collectionNo));
+    return new Map(chrono.map((c, i) => [c.id, i + 1]));
+  }, [collections]);
 
   // Available vouchers for collection - only the single latest voucher per student
   const availableVouchers = useMemo(() => {
@@ -360,9 +367,9 @@ export const CollectionsView: React.FC = () => {
     }
   };
 
-  const handleSaveLineItemsOnly = () => {
+  const handleSaveLineItemsOnly = async () => {
     if (!selectedVoucher) return;
-    const res = updateVoucherParticulars(selectedVoucher.id, directItems);
+    const res = await updateVoucherParticulars(selectedVoucher.id, directItems);
     if (res.success) {
       showToast('Voucher line items and totals updated successfully!', 'success');
     } else {
@@ -426,8 +433,9 @@ export const CollectionsView: React.FC = () => {
     setShowReceiptModal(true);
   };
 
-  const handleSaveDirectPayment = (e: React.FormEvent) => {
+  const handleSaveDirectPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (financialSaving) return;
     if (!selectedVoucher) {
       showToast('Please select a valid fee voucher.', 'error');
       return;
@@ -439,7 +447,7 @@ export const CollectionsView: React.FC = () => {
       return;
     }
 
-    const res = collectVoucherPayment(
+    const res = await collectVoucherPayment(
       selectedVoucher.id,
       numAmount,
       directMode,
@@ -458,12 +466,13 @@ export const CollectionsView: React.FC = () => {
 
       const targetStudent = selectedStudent || students.find((s) => s.id === selectedVoucher.studentId);
       const studentClass = classes.find((c) => c.id === targetStudent?.classId || c.id === selectedVoucher.classId);
+      // The receipt shows the voucher exactly as the server saved it.
       const updatedAmountPaid = (selectedVoucher.amountPaid || 0) + numAmount;
       const updatedNetDue = dynamicNetDue > 0 ? dynamicNetDue : selectedVoucher.netDue;
 
       setReceiptModalData({
         transaction: res.transaction,
-        voucher: {
+        voucher: res.voucher || {
           ...selectedVoucher,
           particulars: directItems.length > 0 ? directItems : selectedVoucher.particulars,
           amountPaid: updatedAmountPaid,
@@ -632,6 +641,11 @@ export const CollectionsView: React.FC = () => {
           } else if (targetVoucher.status === 'Reversed') {
             isValid = false;
             errorMsg = `Voucher reversed (cannot collect)`;
+          } else if (
+            vouchers.some((v) => v.studentId === targetVoucher.studentId && v.status !== 'Reversed' && v.month > targetVoucher.month)
+          ) {
+            isValid = false;
+            errorMsg = 'Not the latest voucher: pay against the student\'s newest voucher';
           } else if (amount <= 0) {
             isValid = false;
             errorMsg = 'Amount must be > 0';
@@ -710,14 +724,15 @@ export const CollectionsView: React.FC = () => {
     );
   };
 
-  const handleCommitBulkImport = () => {
+  const handleCommitBulkImport = async () => {
     const validSelectedRows = bulkPreviewRows.filter((r) => r.selected && r.isValid);
     if (validSelectedRows.length === 0) {
       showToast('No valid rows selected for import.', 'error');
       return;
     }
 
-    const res = bulkCsvCollection(
+    if (financialSaving) return;
+    const res = await bulkCsvCollection(
       validSelectedRows.map((r) => ({
         regNo: r.regNo,
         studentId: r.studentId,
@@ -737,7 +752,7 @@ export const CollectionsView: React.FC = () => {
       setBulkPreviewRows([]);
       setBulkImportStatus({ message: null, error: null });
     } else {
-      showToast('Failed to import CSV collections: ' + res.errors.join('; '), 'error');
+      showToast('Nothing was imported. ' + res.errors.join('; '), 'error');
     }
   };
 
@@ -905,9 +920,15 @@ export const CollectionsView: React.FC = () => {
     setCollectionToDelete(col);
   };
 
-  const handleConfirmDeleteSession = () => {
-    if (!collectionToDelete) return;
-    deleteCollection(collectionToDelete.id);
+  const handleConfirmDeleteSession = async () => {
+    if (!collectionToDelete || financialSaving) return;
+    const res = await deleteCollection(collectionToDelete.id);
+    if (!res.success) {
+      // Nothing was changed; the dialog closes and the server's reason is shown.
+      showToast(res.error || 'The collection could not be deleted. Nothing was changed.', 'error', 9000);
+      setCollectionToDelete(null);
+      return;
+    }
     showToast(`Collection session ${collectionToDelete.collectionNo} deleted.`, 'success');
     setCollectionToDelete(null);
   };
@@ -1313,13 +1334,13 @@ export const CollectionsView: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  sortedCollections.map((col, idx) => {
+                  sortedCollections.map((col) => {
                     const colTxns = transactions.filter((t) => t.collectionId === col.id);
 
                     return (
                       <tr key={col.id} className="hover:bg-slate-50/80 transition">
                         <td className="p-3.5 text-center font-bold text-slate-500 font-mono whitespace-nowrap">
-                          {idx + 1}
+                          {srByCollectionId.get(col.id)}
                         </td>
                         <td className="p-3.5 text-slate-600 whitespace-nowrap font-mono">
                           {col.date}
@@ -1930,7 +1951,7 @@ export const CollectionsView: React.FC = () => {
                       </button>
                       <button
                         type="submit"
-                        disabled={!selectedVoucher || Number(directAmount) <= 0}
+                        disabled={!selectedVoucher || Number(directAmount) <= 0 || financialSaving}
                         className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition cursor-pointer text-xs disabled:opacity-40 flex items-center gap-1.5"
                       >
                         <Receipt className="w-3.5 h-3.5" />
@@ -2265,9 +2286,18 @@ export const CollectionsView: React.FC = () => {
             {/* Modal Footer */}
             {bulkPreviewRows.length > 0 && (
               <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
+                {bulkPreviewRows.some((r) => !r.isValid) && (
+                  <span className="mr-3 text-[11px] font-semibold text-rose-700">
+                    Fix {bulkPreviewRows.filter((r) => !r.isValid).length} row(s) with errors in the CSV and upload it again.
+                  </span>
+                )}
                 <button
                   type="button"
-                  disabled={bulkPreviewRows.filter((r) => r.selected && r.isValid).length === 0}
+                  disabled={
+                    bulkPreviewRows.some((r) => !r.isValid) ||
+                    bulkPreviewRows.filter((r) => r.selected && r.isValid).length === 0 ||
+                    financialSaving
+                  }
                   onClick={handleCommitBulkImport}
                   className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >

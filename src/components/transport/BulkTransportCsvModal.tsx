@@ -2,7 +2,6 @@ import React from 'react';
 import { SchoolClass, Student, TransportAssignment, TransportBus, TransportStop } from '../../types';
 import { formatCurrency, formatMonthName } from '../../utils/feeMath';
 import { SortableTh } from '../SortableTh';
-import { TRANSPORT_CSV } from '../../utils/csvHeaders';
 import { useSortState, sortRows } from '../../hooks/useTableSort';
 import { Upload, X, Check, AlertCircle, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 
@@ -113,19 +112,17 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
             <p>
               Upload a CSV file with student transport assignments for <strong>{formatMonthName(activeMonth)}</strong>. First row must contain column headers.
             </p>
-            <p className="text-[11px] text-slate-500">
-              Required columns: <strong>{Object.values(TRANSPORT_CSV.columns).join(', ')}</strong>. Trip Type must be{' '}
-              <strong>RoundTrip</strong> or <strong>OneWay</strong>; Days Availed is a whole number up to the days in the month; Discount is a number (blank means none).
-            </p>
 
-            <button
-              type="button"
-              onClick={onDownloadSample}
-              className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>Download Sample Transport CSV Format</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={onDownloadSample}
+                className="flex items-center gap-2 text-teal-600 font-bold hover:underline cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Download Sample Transport CSV Format</span>
+              </button>
+            </div>
 
             {/* Status alerts */}
             {importStatus.message && (
@@ -160,9 +157,9 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
               <span className="font-bold text-slate-800 block text-sm">
                 Click to select CSV File or drag & drop
               </span>
-              <span className="text-[11px] text-slate-500 block mt-1">
-                Supports standard comma-separated .csv files
-              </span>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2 bg-slate-100 text-slate-600 rounded-md text-[11px] font-medium border border-slate-200">
+                <span>Trip Type: <strong>RoundTrip</strong> or <strong>OneWay</strong> · Discount blank = none</span>
+              </div>
               <button
                 type="button"
                 onClick={(e) => {
@@ -208,7 +205,8 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                 selected: (r) => r.selected && r.isValid && !r.isDuplicateInCsv,
                 student: (r) => r.student?.name || r.regNo,
                 class: (r) => r.studentClass?.name,
-                busStop: (r) => `${r.bus?.busNumber || r.busInput} ${r.stop?.name || r.stopInput}`,
+                bus: (r) => r.bus?.busNumber || r.busInput,
+                stop: (r) => r.stop?.name || r.stopInput,
                 trip: (r) => r.tripType,
                 days: (r) => r.daysCharged,
                 discount: (r) => r.discount,
@@ -226,39 +224,6 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
 
               return (
                 <>
-                  {/* Absent Students Warning Banner */}
-                  {absentStudents && absentStudents.length > 0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-2 shrink-0">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
-                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                          <span>{absentStudents.length} student(s) with transport in {formatMonthName(prevMonth || '')} are absent from this CSV</span>
-                        </div>
-                        <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded border border-amber-300">
-                          Discontinuing {absentStudents.length} Assignment(s)
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-amber-800">
-                        These students had active transport last month but are omitted from this CSV. Upon confirmation, their transport will be discontinued for {formatMonthName(activeMonth)} and logged in their account history as <strong>Transport Removed</strong>.
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-1">
-                        {absentStudents.map((abs) => (
-                          <span
-                            key={abs.studentId}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-slate-800 text-[11px] font-medium shadow-2xs"
-                          >
-                            <span className="font-bold text-slate-900">{abs.student?.name || 'Student'}</span>
-                            <span className="text-amber-800 font-mono text-[10px]">({abs.student?.regNo})</span>
-                            <span className="text-slate-300">&bull;</span>
-                            <span className="text-slate-600 text-[10px]">{abs.studentClass?.name || 'Class'}</span>
-                            <span className="text-slate-300">&bull;</span>
-                            <span className="text-slate-500 text-[10px]">{abs.stop?.name || 'Stop'} via {abs.bus?.busNumber || 'Bus'}</span>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Compact Status & Action Bar */}
                   <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/90 px-3 py-2 rounded-xl border border-slate-200 text-xs shrink-0">
                     <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -341,12 +306,6 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                         </span>
                         <span className="font-bold">{invalidCount}</span>
                       </button>
-                      {absentStudents && absentStudents.length > 0 && (
-                        <div className="inline-flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-300 shadow-2xs">
-                          <span className="text-amber-800 font-semibold text-[11px]">Absent in CSV:</span>
-                          <span className="font-bold text-amber-900">{absentStudents.length}</span>
-                        </div>
-                      )}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -385,7 +344,8 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                           <SortableTh label="Import" sortKey="selected" sort={rowSort} onSort={toggleRowSort} className="w-10 text-center" />
                           <SortableTh label="Student (Reg #)" sortKey="student" sort={rowSort} onSort={toggleRowSort} />
                           <SortableTh label="Class" sortKey="class" sort={rowSort} onSort={toggleRowSort} />
-                          <SortableTh label="Bus & Stop" sortKey="busStop" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Bus" sortKey="bus" sort={rowSort} onSort={toggleRowSort} />
+                          <SortableTh label="Stop" sortKey="stop" sort={rowSort} onSort={toggleRowSort} />
                           <SortableTh label="Trip" sortKey="trip" sort={rowSort} onSort={toggleRowSort} className="text-center" />
                           <SortableTh label="Days" sortKey="days" sort={rowSort} onSort={toggleRowSort} className="text-center" />
                           <SortableTh label="Discount" sortKey="discount" sort={rowSort} onSort={toggleRowSort} className="text-right" />
@@ -396,7 +356,7 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                       <tbody className="divide-y divide-slate-100">
                         {filteredRows.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="p-8 text-center bg-white text-slate-500">
+                            <td colSpan={10} className="p-8 text-center bg-white text-slate-500">
                               <div className="flex flex-col items-center justify-center gap-2">
                                 <AlertCircle className="w-6 h-6 text-slate-400" />
                                 <p className="font-semibold text-slate-700 text-sm">
@@ -456,18 +416,19 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                                 </td>
 
                                 <td className="p-3">
-                                  <div className="flex items-center gap-1.5">
-                                    {row.bus ? (
-                                      <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                        {row.bus.busNumber}
-                                      </span>
-                                    ) : (
-                                      <span className="text-rose-600 italic text-[11px]">{row.busInput || 'No Bus'}</span>
-                                    )}
-                                    <span className="font-bold text-slate-800">
-                                      {row.stop?.name || <span className="text-rose-600 italic text-[11px]">{row.stopInput || 'No Stop'}</span>}
+                                  {row.bus ? (
+                                    <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                      {row.bus.busNumber}
                                     </span>
-                                  </div>
+                                  ) : (
+                                    <span className="text-rose-600 italic text-[11px]">{row.busInput || 'No Bus'}</span>
+                                  )}
+                                </td>
+
+                                <td className="p-3">
+                                  <span className="font-bold text-slate-800">
+                                    {row.stop?.name || <span className="text-rose-600 italic text-[11px] font-normal">{row.stopInput || 'No Stop'}</span>}
+                                  </span>
                                   {row.stop && (
                                     <span className="text-[10px] text-slate-500 block mt-0.5">
                                       Base: {formatCurrency(row.stop.monthlyFare)}
@@ -544,10 +505,16 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
             {/* Modal Footer Controls */}
             {rows.length > 0 && (
               <div className="flex justify-end items-center border-t border-slate-200 pt-3 shrink-0">
+                {rows.some((r) => !r.isValid || r.isDuplicateInCsv) && (
+                  <span className="mr-3 text-[11px] font-semibold text-rose-700">
+                    Fix {rows.filter((r) => !r.isValid || r.isDuplicateInCsv).length} row(s) with errors in the CSV and upload it again.
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={onCommit}
                   disabled={
+                    rows.some((r) => !r.isValid || r.isDuplicateInCsv) ||
                     rows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length === 0
                   }
                   className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
@@ -556,9 +523,7 @@ export const BulkTransportCsvModal: React.FC<BulkTransportCsvModalProps> = ({
                   <span>
                     Confirm & Save {
                       rows.filter((r) => r.selected && r.isValid && !r.isDuplicateInCsv).length
-                    } Selected Assignment(s){
-                      absentStudents && absentStudents.length > 0 ? ` (${absentStudents.length} Removed)` : ''
-                    }
+                    } Selected Assignment(s)
                   </span>
                 </button>
               </div>

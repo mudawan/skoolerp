@@ -58,6 +58,7 @@ export const ClassesView: React.FC = () => {
   });
 
   const [formError, setFormError] = useState('');
+  const [savingClass, setSavingClass] = useState(false);
 
   useEscapeKey(() => {
     setShowAddModal(false);
@@ -112,8 +113,8 @@ export const ClassesView: React.FC = () => {
           break;
         }
         case 'status': {
-          const activeA = a.isActive !== false ? 1 : 0;
-          const activeB = b.isActive !== false ? 1 : 0;
+          const activeA = a.active !== false ? 1 : 0;
+          const activeB = b.active !== false ? 1 : 0;
           cmp = activeA - activeB;
           break;
         }
@@ -138,7 +139,7 @@ export const ClassesView: React.FC = () => {
     }
   };
 
-  const handleDrop = (e: React.DragEvent, targetCls: SchoolClass) => {
+  const handleDrop = async (e: React.DragEvent, targetCls: SchoolClass) => {
     if (!hasPermission('classes.manage')) return;
     e.preventDefault();
     const sourceId = draggedClassId || e.dataTransfer.getData('text/plain');
@@ -156,11 +157,20 @@ export const ClassesView: React.FC = () => {
     if (fromIndex !== -1 && toIndex !== -1) {
       const [movedClass] = currentClasses.splice(fromIndex, 1);
       currentClasses.splice(toIndex, 0, movedClass);
-      reorderClasses(currentClasses);
+      setDraggedClassId(null);
+      setDragOverClassId(null);
+      const res = await reorderClasses(currentClasses);
+      if (res && res.success === false) showToast(res.error || 'Could not save the new class order.', 'error');
+      return;
     }
 
     setDraggedClassId(null);
     setDragOverClassId(null);
+  };
+
+  const handleToggleActive = async (cls: SchoolClass) => {
+    const res = await toggleClassActive(cls.id);
+    if (!res.success) showToast(res.error || 'Could not change the class status.', 'error');
   };
 
   const handleDragEnd = () => {
@@ -184,8 +194,9 @@ export const ClassesView: React.FC = () => {
     setFormError('');
   };
 
-  const handleSaveClass = (e: React.FormEvent) => {
+  const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingClass) return;
     setFormError('');
 
     if (!formData.name.trim()) {
@@ -193,8 +204,10 @@ export const ClassesView: React.FC = () => {
       return;
     }
 
+    setSavingClass(true);
+    try {
     if (editingClass) {
-      const res = updateClass(editingClass.id, {
+      const res = await updateClass(editingClass.id, {
         name: formData.name.trim(),
         monthlyFee: Number(formData.monthlyFee) || 0,
         sortOrder: Number(formData.sortOrder) || 1,
@@ -202,7 +215,7 @@ export const ClassesView: React.FC = () => {
       if (res.success) setEditingClass(null);
       else setFormError(res.error || 'Failed to update class');
     } else {
-      const res = addClass(
+      const res = await addClass(
         formData.name.trim(),
         Number(formData.monthlyFee) || 0,
         Number(formData.sortOrder) || 1
@@ -210,15 +223,18 @@ export const ClassesView: React.FC = () => {
       if (res.success) setShowAddModal(false);
       else setFormError(res.error || 'Failed to add class');
     }
+    } finally {
+      setSavingClass(false);
+    }
   };
 
   const handleDelete = (cls: SchoolClass) => {
     setClassToDelete(cls);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!classToDelete) return;
-    const res = deleteClass(classToDelete.id);
+    const res = await deleteClass(classToDelete.id);
     if (!res.success) {
       showToast(res.error || 'Failed to delete class.', 'error');
     } else {
@@ -445,7 +461,7 @@ export const ClassesView: React.FC = () => {
                       <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          onClick={() => toggleClassActive(cls.id)}
+                          onClick={() => handleToggleActive(cls)}
                           title={cls.active ? 'Deactivate Class' : 'Reactivate Class'}
                           className={`p-1.5 rounded-lg transition cursor-pointer ${
                             cls.active
@@ -649,7 +665,7 @@ export const ClassesView: React.FC = () => {
                             <div className="flex items-center justify-end gap-1">
                               <button
                                 type="button"
-                                onClick={() => toggleClassActive(cls.id)}
+                                onClick={() => handleToggleActive(cls)}
                                 title={cls.active ? 'Deactivate Class' : 'Reactivate Class'}
                                 className={`p-1.5 rounded-lg transition cursor-pointer ${
                                   cls.active
@@ -766,9 +782,10 @@ export const ClassesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl cursor-pointer"
+                  disabled={savingClass}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-60 disabled:cursor-wait text-white font-bold rounded-xl cursor-pointer"
                 >
-                  Save Class
+                  {savingClass ? 'Saving…' : 'Save Class'}
                 </button>
               </div>
             </form>

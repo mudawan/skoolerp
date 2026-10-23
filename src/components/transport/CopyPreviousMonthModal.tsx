@@ -74,7 +74,8 @@ export const CopyPreviousMonthModal: React.FC<CopyPreviousMonthModalProps> = ({
     selected: (r) => r.status === 'copy' && r.selected,
     student: (r) => r.student?.name,
     class: (r) => r.studentClass?.name,
-    busStop: (r) => `${r.bus?.busNumber || ''} ${r.stop?.name || ''}`,
+    bus: (r) => r.bus?.busNumber,
+    stop: (r) => r.stop?.name,
     trip: (r) => r.tripType,
     days: (r) => r.daysCharged,
     discount: (r) => r.discount,
@@ -223,7 +224,8 @@ export const CopyPreviousMonthModal: React.FC<CopyPreviousMonthModalProps> = ({
                     <SortableTh label="Copy" sortKey="selected" sort={sort} onSort={toggleSort} className="w-10 text-center" />
                     <SortableTh label="Student (Reg #)" sortKey="student" sort={sort} onSort={toggleSort} />
                     <SortableTh label="Class" sortKey="class" sort={sort} onSort={toggleSort} />
-                    <SortableTh label="Bus & Stop" sortKey="busStop" sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Bus" sortKey="bus" sort={sort} onSort={toggleSort} />
+                    <SortableTh label="Stop" sortKey="stop" sort={sort} onSort={toggleSort} />
                     <SortableTh label="Trip" sortKey="trip" sort={sort} onSort={toggleSort} className="text-center" />
                     <SortableTh label="Days" sortKey="days" sort={sort} onSort={toggleSort} className="text-center" />
                     <SortableTh label="Discount" sortKey="discount" sort={sort} onSort={toggleSort} className="text-right" />
@@ -234,7 +236,7 @@ export const CopyPreviousMonthModal: React.FC<CopyPreviousMonthModalProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center bg-white text-slate-500">
+                      <td colSpan={10} className="p-8 text-center bg-white text-slate-500">
                         <p className="font-semibold text-slate-700 text-sm">No records match this filter.</p>
                         <button
                           type="button"
@@ -282,18 +284,16 @@ export const CopyPreviousMonthModal: React.FC<CopyPreviousMonthModalProps> = ({
                           {row.studentClass?.name || <span className="text-slate-400">—</span>}
                         </td>
                         <td className="p-3">
-                          <div className="flex items-center gap-1.5">
-                            {row.bus ? (
-                              <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                {row.bus.busNumber}
-                              </span>
-                            ) : (
-                              <span className="text-rose-600 italic text-[11px]">No Bus</span>
-                            )}
-                            <span className="font-bold text-slate-800">
-                              {row.stop?.name || <span className="text-rose-600 italic text-[11px]">No Stop</span>}
+                          {row.bus ? (
+                            <span className="font-bold font-mono text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              {row.bus.busNumber}
                             </span>
-                          </div>
+                          ) : (
+                            <span className="text-rose-600 italic text-[11px]">No Bus</span>
+                          )}
+                        </td>
+                        <td className="p-3 font-bold text-slate-800">
+                          {row.stop?.name || <span className="text-rose-600 italic text-[11px] font-normal">No Stop</span>}
                         </td>
                         <td className="p-3 text-center">
                           <span

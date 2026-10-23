@@ -147,8 +147,8 @@ To activate your account:
           break;
         }
         case 'status': {
-          const statusA = a.isActive !== false ? 1 : 0;
-          const statusB = b.isActive !== false ? 1 : 0;
+          const statusA = a.status !== 'deactivated' ? 1 : 0;
+          const statusB = b.status !== 'deactivated' ? 1 : 0;
           cmp = statusA - statusB;
           break;
         }

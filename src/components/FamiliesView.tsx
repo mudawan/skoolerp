@@ -41,6 +41,7 @@ export const FamiliesView: React.FC = () => {
     addFamily,
     updateFamily,
     deleteFamily,
+    deleteFamilies,
     addStudentToFamily,
     removeStudentFromFamily,
     hasPermission,
@@ -208,7 +209,7 @@ export const FamiliesView: React.FC = () => {
     setFormError('');
   };
 
-  const handleSaveFamily = (e: React.FormEvent) => {
+  const handleSaveFamily = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -226,7 +227,7 @@ export const FamiliesView: React.FC = () => {
     }
 
     if (editingFamily) {
-      const res = updateFamily(editingFamily.id, {
+      const res = await updateFamily(editingFamily.id, {
         headName: formData.headName.trim(),
         fatherNationalId: formData.fatherNationalId.trim(),
         contactPhone: formData.contactPhone.trim(),
@@ -236,7 +237,7 @@ export const FamiliesView: React.FC = () => {
       if (res.success) setEditingFamily(null);
       else setFormError(res.error || 'Could not save the family.');
     } else {
-      const res = addFamily({
+      const res = await addFamily({
         headName: formData.headName.trim(),
         fatherNationalId: formData.fatherNationalId.trim(),
         contactPhone: formData.contactPhone.trim(),
@@ -249,18 +250,28 @@ export const FamiliesView: React.FC = () => {
     }
   };
 
+  // Adds the picked student to the family; the picker clears only after the server confirms.
+  const linkSelectedStudent = async (familyId: string) => {
+    const studentId = selectedStudentForMember;
+    if (!studentId) return;
+    const res = await addStudentToFamily(familyId, studentId);
+    if (!res.success) {
+      showToast(res.error || 'Could not add the student to the family.', 'error');
+      return;
+    }
+    setSelectedStudentForMember('');
+    setStudentPickerSearch('');
+    setIsStudentPickerOpen(false);
+  };
+
   const handleDelete = (family: Family) => {
     setFamilyToDelete(family);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!familyToDelete) return;
-    if (familyToDelete.memberStudentIds?.length > 0) {
-      familyToDelete.memberStudentIds.forEach((sId) => {
-        removeStudentFromFamily(familyToDelete.id, sId);
-      });
-    }
-    const res = deleteFamily(familyToDelete.id);
+    // The server clears the family link on member students as part of the delete.
+    const res = await deleteFamily(familyToDelete.id);
     if (!res.success) {
       showToast(res.error || 'Failed to delete family record.', 'error');
     } else {
@@ -271,34 +282,17 @@ export const FamiliesView: React.FC = () => {
   };
 
   // Bulk Delete
-  const handleConfirmBulkDelete = () => {
+  const handleConfirmBulkDelete = async () => {
     if (selectedFamilyIds.length === 0) return;
-    let deletedCount = 0;
-    let failedCount = 0;
-
-    selectedFamilyIds.forEach((famId) => {
-      const fam = families.find((f) => f.id === famId);
-      if (fam) {
-        if (fam.memberStudentIds?.length > 0) {
-          fam.memberStudentIds.forEach((sId) => {
-            removeStudentFromFamily(fam.id, sId);
-          });
-        }
-        const res = deleteFamily(fam.id);
-        if (res.success) {
-          deletedCount++;
-        } else {
-          failedCount++;
-        }
-      }
-    });
-
-    showToast(
-      `Successfully deleted ${deletedCount} family record(s).${
-        failedCount > 0 ? ` (${failedCount} failed)` : ''
-      }`,
-      deletedCount > 0 ? 'success' : 'error'
-    );
+    const ids = selectedFamilyIds.filter((id) => families.some((f) => f.id === id));
+    const res = await deleteFamilies(ids);
+    if (!res.success) {
+      // Nothing was deleted; keep the selection so the operator can retry.
+      showToast(res.error || 'The families could not be deleted. Nothing was changed.', 'error');
+      setShowBulkDeleteModal(false);
+      return;
+    }
+    showToast(`Deleted ${ids.length} family record(s).`, 'success');
     setSelectedFamilyIds([]);
     setShowBulkDeleteModal(false);
   };
@@ -1212,7 +1206,10 @@ export const FamiliesView: React.FC = () => {
                             </div>
                             <button
                               type="button"
-                              onClick={() => removeStudentFromFamily(liveModalFamily.id, s.id)}
+                              onClick={async () => {
+                                const r = await removeStudentFromFamily(liveModalFamily.id, s.id);
+                                if (!r.success) showToast(r.error || 'Could not remove the student from the family.', 'error');
+                              }}
                               className="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-lg text-[11px] font-bold cursor-pointer shrink-0 transition"
                               title="Remove from family"
                             >
@@ -1265,10 +1262,7 @@ export const FamiliesView: React.FC = () => {
                               setIsStudentPickerOpen(false);
                             } else if (e.key === 'Enter' && selectedStudentForMember) {
                               e.preventDefault();
-                              addStudentToFamily(liveModalFamily.id, selectedStudentForMember);
-                              setSelectedStudentForMember('');
-                              setStudentPickerSearch('');
-                              setIsStudentPickerOpen(false);
+                              void linkSelectedStudent(liveModalFamily.id);
                             }
                           }}
                           className="w-full pl-9 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 focus:border-teal-500 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition truncate"
@@ -1373,10 +1367,7 @@ export const FamiliesView: React.FC = () => {
                       type="button"
                       disabled={!selectedStudentForMember}
                       onClick={() => {
-                        addStudentToFamily(liveModalFamily.id, selectedStudentForMember);
-                        setSelectedStudentForMember('');
-                        setStudentPickerSearch('');
-                        setIsStudentPickerOpen(false);
+                        void linkSelectedStudent(liveModalFamily.id);
                       }}
                       className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl text-xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0 transition shadow-xs flex items-center gap-1.5"
                     >

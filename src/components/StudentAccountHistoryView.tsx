@@ -170,7 +170,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
   };
 
   // Handle status update submission
-  const handleConfirmStatusChange = () => {
+  const handleConfirmStatusChange = async () => {
     if (targetStatus === student.status) {
       showToast(`Student is already ${student.status}.`, 'info');
       setIsStatusDialogOpen(false);
@@ -178,7 +178,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
     }
 
     setIsSubmittingStatus(true);
-    const res = updateStudentStatus(student.id, targetStatus, statusReason.trim() || undefined);
+    const res = await updateStudentStatus(student.id, targetStatus, statusReason.trim() || undefined);
     setIsSubmittingStatus(false);
 
     if (res.success) {

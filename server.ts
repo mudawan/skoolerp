@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
-import rateLimit, { Store } from 'express-rate-limit';
+import rateLimit, { Store, ipKeyGenerator } from 'express-rate-limit';
 import { createServer as createViteServer } from 'vite';
 import {
   dbService,
@@ -16,7 +16,13 @@ import {
   TRANSPORT_ASSIGNMENT_ENTITY_CONFIG,
   FEE_TEMPLATE_ENTITY_CONFIG,
   BANK_ACCOUNT_ENTITY_CONFIG,
+  ConflictError,
+  type StudentBatchSummary,
 } from './server/db';
+import { registerPlatformRoutes } from './server/platform';
+import { receivePayments } from './server/collections-core';
+import { registerBankStatementRoutes } from './server/bank-statements/routes';
+import { monitorRequests, monitorErrorHandler, registerClientReporting, startMonitoring } from './server/monitor';
 import { hashPassword, verifyPassword } from './src/utils/passwords';
 import { isPermissionAllowed, ALL_PERMISSION_CODES } from './src/utils/permissions';
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE, isPaymentMode } from './src/utils/paymentMode';
@@ -25,6 +31,7 @@ import type { FeeVoucher } from './src/types';
 
 const PORT = 3000;
 const SESSION_COOKIE_NAME = 'school_session_token';
+const SUSPENDED_MESSAGE = "This school's access is suspended. Please contact support.";
 const SESSION_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface AuthenticatedRequest extends express.Request {
@@ -38,12 +45,19 @@ function mintSecureToken(): string {
   return 'stk_' + crypto.randomBytes(32).toString('hex');
 }
 
+// The session cookie is Secure (HTTPS-only) in production. For a trusted LAN
+// served over plain http, set COOKIE_SECURE=false; browsers otherwise discard a
+// Secure cookie that arrives over http://<lan-ip>.
+const COOKIE_SECURE = process.env.COOKIE_SECURE
+  ? process.env.COOKIE_SECURE.trim().toLowerCase() === 'true'
+  : process.env.NODE_ENV === 'production';
+
 function setSessionCookie(res: express.Response, token: string) {
   // Option B: Ephemeral session cookie (no maxAge) so the browser automatically
   // discards the cookie when the browser session ends / window closes.
   res.cookie(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: COOKIE_SECURE,
     sameSite: 'lax',
     path: '/',
   });
@@ -52,7 +66,7 @@ function setSessionCookie(res: express.Response, token: string) {
 function clearSessionCookie(res: express.Response) {
   res.clearCookie(SESSION_COOKIE_NAME, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: COOKIE_SECURE,
     sameSite: 'lax',
     path: '/',
   });
@@ -70,6 +84,9 @@ async function startServer() {
   if (process.env.TRUST_PROXY === 'true') {
     app.set('trust proxy', 1); // trust exactly one hop (the nginx in nginx.conf)
   }
+
+  // Request ids, per-route metrics and failure events (server/monitor.ts). First, so it sees every /api request.
+  app.use('/api', monitorRequests);
 
   // Parse cookies first for session tokens
   app.use(cookieParser());
@@ -210,6 +227,14 @@ async function startServer() {
       if (token) {
         const sessionData = await dbService.getSessionWithUser(token);
         if (sessionData) {
+          // School-level and account-level blocks apply to every school route, in one place.
+          const apiPath = req.path.startsWith('/api/') && !req.path.startsWith('/api/platform/') && req.path !== '/api/auth/logout';
+          if (apiPath && sessionData.institution?.status === 'suspended') {
+            return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
+          }
+          if (apiPath && sessionData.user.must_change_password && req.path !== '/api/auth/me' && req.path !== '/api/auth/change-password') {
+            return res.status(403).json({ success: false, code: 'PASSWORD_CHANGE_REQUIRED', error: 'You must set a new password before continuing.' });
+          }
           req.user = sessionData.user;
           req.institution = sessionData.institution;
           req.institutionId = sessionData.user.institution_id;
@@ -340,8 +365,123 @@ async function startServer() {
       });
     } catch (err) {
       console.error('[Audit] Failed to record audit log entry:', err);
+      // The action itself succeeded, so don't fail it — but tell the caller
+      // the audit trail has a gap so it is not silent.
+      try {
+        if (req.res && !req.res.headersSent) req.res.setHeader('X-Audit-Warning', '1');
+      } catch {}
     }
   }
+
+  /**
+   * Same entry as recordAudit, but written inside the caller's transaction so it
+   * commits or rolls back with the change. A failure here fails the change: the
+   * student record and its audit entry are never out of step.
+   */
+  async function recordAuditInTx(req: AuthenticatedRequest, entry: Parameters<typeof recordAudit>[1], client: any): Promise<void> {
+    await dbService.appendAuditLog(
+      req.institutionId as string,
+      {
+        operatorId: req.user?.id,
+        operatorUsername: req.user?.username,
+        operatorName: req.user?.full_name,
+        operatorRole: req.user?.role,
+        ...entry,
+      },
+      client
+    );
+  }
+
+  /**
+   * One audit entry per operator action — never one per row. A single student
+   * gets a specific entry; several (CSV import, bulk status change, bulk delete)
+   * get one summary entry. Edits name the fields that changed, never their
+   * values, so identity numbers and phone numbers stay out of the log. Nothing
+   * changed means no entry (returns null).
+   */
+  function studentAuditEntry(s: StudentBatchSummary): Parameters<typeof recordAudit>[1] | null {
+    const total = s.created.length + s.updated.length + s.deleted.length;
+    if (total === 0) return null;
+    if (total === 1) {
+      if (s.created.length) {
+        const c = s.created[0];
+        return {
+          actionType: 'student_creation', actionTitle: 'Student Record Created', module: 'Students',
+          description: `Created student ${c.name} (${c.regNo}).`, targetId: c.regNo, targetLabel: c.name,
+        };
+      }
+      if (s.deleted.length) {
+        const d = s.deleted[0];
+        return {
+          actionType: 'student_deletion', actionTitle: 'Student Record Deleted', module: 'Students',
+          description: `Deleted student record for ${d.name} (${d.regNo}).`, targetId: d.regNo, targetLabel: d.name,
+        };
+      }
+      const u = s.updated[0];
+      const statusChanged = u.fields.includes('status');
+      const others = u.fields.filter((f) => f !== 'status');
+      return {
+        actionType: 'student_update',
+        actionTitle: statusChanged ? 'Student Status Changed' : 'Student Record Updated',
+        module: 'Students',
+        description:
+          `${statusChanged ? `Status changed from ${u.statusFrom} to ${u.statusTo} for` : 'Updated'} ${u.name} (${u.regNo})` +
+          (others.length ? `${statusChanged ? '; also changed' : ': changed'} ${others.join(', ')}` : '') + '.',
+        targetId: u.regNo,
+        targetLabel: u.name,
+        previousValue: statusChanged ? u.statusFrom : undefined,
+        newValue: statusChanged ? u.statusTo : undefined,
+        metadata: { changedFields: u.fields },
+      };
+    }
+    const parts: string[] = [];
+    if (s.created.length) parts.push(`created ${s.created.length}`);
+    if (s.updated.length) parts.push(`updated ${s.updated.length}`);
+    if (s.deleted.length) parts.push(`deleted ${s.deleted.length}`);
+    const statusChanges = s.updated.filter((u) => u.fields.includes('status'));
+    const onlyCreated = s.updated.length === 0 && s.deleted.length === 0;
+    const onlyDeleted = s.updated.length === 0 && s.created.length === 0;
+    const title = onlyCreated
+      ? `Imported ${s.created.length} students`
+      : onlyDeleted
+        ? `Deleted ${s.deleted.length} students`
+        : 'Bulk Student Change';
+    const statusNote = statusChanges.length ? ` Status changed for ${statusChanges.length}.` : '';
+    return {
+      actionType: 'student_bulk', actionTitle: title, module: 'Students',
+      description: `${parts.join(', ').replace(/^./, (c) => c.toUpperCase())} students.${statusNote}`,
+      targetLabel: `${total} students`,
+      metadata: { created: s.created.length, updated: s.updated.length, deleted: s.deleted.length, statusChanged: statusChanges.length },
+    };
+  }
+
+  /**
+   * Maps a database-layer failure to the right HTTP answer: a stale version, a
+   * record still in use, or a foreign-key violation is a 409 the operator can act
+   * on; anything else is a genuine 500.
+   */
+  function sendDbError(res: express.Response, err: any, logLabel: string, fallback: string) {
+    if (err instanceof ConflictError) {
+      return res.status(409).json({ success: false, code: err.code, error: err.message, current: err.current });
+    }
+    if (err?.code === '23503') {
+      return res.status(409).json({
+        success: false,
+        code: 'IN_USE',
+        error: 'This change conflicts with related records: a referenced record does not exist, or the record is still in use.',
+      });
+    }
+    console.error(`[API] ${logLabel}:`, err);
+    return res.status(500).json({ success: false, error: err?.message || fallback });
+  }
+
+  /** Optimistic-concurrency token sent by the client: body.expectedVersion or ?expectedVersion=. */
+  const readExpectedVersion = (req: express.Request): number | undefined => {
+    const raw = (req.body && (req.body as any).expectedVersion) ?? req.query.expectedVersion;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
 
   // Setup edits are audited only for tables that change what students owe or
   // where payments go; classes, families, transport rosters etc. are not.
@@ -378,9 +518,90 @@ async function startServer() {
     managePermission: string;
     deletePermission?: string;
     orderBy?: string;
+    /** Optional write check; return an error message to reject with HTTP 400. */
+    validate?: (institutionId: string, body: any, isUpdate: boolean, id?: string) => Promise<string | null>;
+    /** Field that must be unique (case-insensitive) within one batch, in addition to `validate`. */
+    uniqueField?: 'name' | 'busNumber';
   }) {
     const { path, config, viewPermission, managePermission } = opts;
     const deletePermission = opts.deletePermission || managePermission;
+
+
+    /**
+     * All-or-nothing batch for this collection: { upserts, deleteIds, history }.
+     * Everything is validated first, then applied in one database transaction, so a
+     * bulk import, a reorder or a "replace this month" either fully happens or does not.
+     * `history` entries (student account history) are written in the same transaction.
+     */
+    const requireDeleteIfNeeded = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+      const ids = (req.body || {}).deleteIds;
+      if (Array.isArray(ids) && ids.length > 0 && deletePermission !== managePermission) {
+        return requireAuth(deletePermission)(req, res, next);
+      }
+      next();
+    };
+    app.post(`${path}/batch`, requireAuth(managePermission), requireDeleteIfNeeded, async (req: AuthenticatedRequest, res) => {
+      try {
+        const institutionId = req.institutionId as string;
+        const body = req.body || {};
+        const upserts: any[] = Array.isArray(body.upserts) ? body.upserts.map((u: any) => ({ ...u })) : [];
+        const deleteIds: string[] = Array.isArray(body.deleteIds) ? body.deleteIds.map(String) : [];
+        const history: any[] = Array.isArray(body.history) ? body.history : [];
+        if (upserts.length + deleteIds.length > 5000) {
+          return res.status(400).json({ success: false, error: 'Batch is too large (limit 5000 rows).' });
+        }
+        if (upserts.some((u) => !u || typeof u !== 'object')) {
+          return res.status(400).json({ success: false, error: 'Every upsert must be an object.' });
+        }
+        if (history.some((h) => !h || typeof h !== 'object' || !h.studentId)) {
+          return res.status(400).json({ success: false, error: 'Every history entry needs a studentId.' });
+        }
+
+        if (opts.uniqueField) {
+          const seen = new Set<string>();
+          for (const u of upserts) {
+            const key = String(u[opts.uniqueField] ?? '').trim().toLowerCase();
+            if (!key) continue;
+            if (seen.has(key)) {
+              return res.status(400).json({ success: false, error: `"${String(u[opts.uniqueField]).trim()}" appears more than once in the batch.` });
+            }
+            seen.add(key);
+          }
+        }
+        if (opts.validate) {
+          for (const u of upserts) {
+            const exists = u.id ? !!(await dbService.getSimpleEntityById(config, institutionId, String(u.id))) : false;
+            const problem = await opts.validate(institutionId, u, exists, u.id);
+            if (problem) return res.status(400).json({ success: false, error: problem });
+          }
+        }
+        if (config.table === 'families') {
+          for (const u of upserts) {
+            const given = typeof u.familyNo === 'string' ? u.familyNo.trim() : '';
+            if (!given || given === 'FAM-PENDING') u.familyNo = await dbService.allocateFamilyNumber(institutionId);
+          }
+        }
+
+        const result = await dbService.batchSimpleEntities(config, institutionId, {
+          upserts,
+          deleteIds,
+          history: history.map((h) => ({ ...h, operatorName: req.user?.full_name, operatorRole: req.user?.role })),
+        });
+        dbService.incrementRevision(institutionId);
+        if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
+          await recordAudit(req, {
+            actionType: 'settings_change',
+            actionTitle: `${AUDIT_ENTITY_NOUN[config.table] || config.table} batch update`,
+            module: 'Settings',
+            description: `Saved ${result.items.length} and removed ${result.deletedIds.length} ${(AUDIT_ENTITY_NOUN[config.table] || config.table).toLowerCase()} record(s) in one batch.`,
+            metadata: { saved: result.items.length, removed: result.deletedIds.length },
+          });
+        }
+        res.json({ success: true, items: result.items, deletedIds: result.deletedIds });
+      } catch (err: any) {
+        sendDbError(res, err, `Failed batch ${path}/batch`, 'Batch failed; nothing was saved.');
+      }
+    });
 
     app.get(path, requireAuth(viewPermission), async (req: AuthenticatedRequest, res) => {
       try {
@@ -397,6 +618,10 @@ async function startServer() {
       try {
         const institutionId = req.institutionId as string;
         const body = { ...(req.body || {}) };
+        if (opts.validate) {
+          const problem = await opts.validate(institutionId, body, false, body.id);
+          if (problem) return res.status(400).json({ success: false, error: problem });
+        }
         // Family numbers are issued by the server (atomic sequence) so they can never repeat.
         // A caller-supplied number is kept only when it is a real one (e.g. a restore);
         // blank or the client's provisional marker is replaced.
@@ -420,15 +645,18 @@ async function startServer() {
         }
         res.json({ success: true, item: created });
       } catch (err: any) {
-        console.error(`[API] Failed to create ${path}:`, err);
-        res.status(500).json({ success: false, error: err?.message || 'Failed to create.' });
+        sendDbError(res, err, `Failed to create ${path}`, 'Failed to create.');
       }
     });
 
     app.put(`${path}/:id`, requireAuth(managePermission), async (req: AuthenticatedRequest, res) => {
       try {
         const institutionId = req.institutionId as string;
-        const updated = await dbService.updateSimpleEntity(config, institutionId, req.params.id, req.body || {});
+        if (opts.validate) {
+          const problem = await opts.validate(institutionId, req.body || {}, true, req.params.id);
+          if (problem) return res.status(400).json({ success: false, error: problem });
+        }
+        const updated = await dbService.updateSimpleEntity(config, institutionId, req.params.id, req.body || {}, readExpectedVersion(req));
         if (!updated) return res.status(404).json({ success: false, error: 'Not found.' });
         dbService.incrementRevision(institutionId);
         if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
@@ -443,8 +671,7 @@ async function startServer() {
         }
         res.json({ success: true, item: updated });
       } catch (err: any) {
-        console.error(`[API] Failed to update ${path}/${req.params.id}:`, err);
-        res.status(500).json({ success: false, error: err?.message || 'Failed to update.' });
+        sendDbError(res, err, `Failed to update ${path}/${req.params.id}`, 'Failed to update.');
       }
     });
 
@@ -455,7 +682,7 @@ async function startServer() {
         const before = AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)
           ? await dbService.getSimpleEntityById(config, institutionId, req.params.id)
           : null;
-        const deleted = await dbService.deleteSimpleEntity(config, institutionId, req.params.id);
+        const deleted = await dbService.deleteSimpleEntity(config, institutionId, req.params.id, readExpectedVersion(req));
         if (!deleted) return res.status(404).json({ success: false, error: 'Not found.' });
         dbService.incrementRevision(institutionId);
         if (AUDITED_SIMPLE_ENTITY_TABLES.has(config.table)) {
@@ -470,14 +697,30 @@ async function startServer() {
         }
         res.json({ success: true });
       } catch (err: any) {
-        console.error(`[API] Failed to delete ${path}/${req.params.id}:`, err);
-        res.status(500).json({ success: false, error: err?.message || 'Failed to delete.' });
+        sendDbError(res, err, `Failed to delete ${path}/${req.params.id}`, 'Failed to delete.');
       }
     });
   }
 
   // Apply authentication resolution globally
   app.use(resolveAuthSession);
+
+  // Platform (app-owner) API: its own identity, session and guard; see server/platform.ts.
+  // Stricter than the school login limit because this account can reach every school.
+  registerPlatformRoutes(app, {
+    cookieSecure: COOKIE_SECURE,
+    getSseCount: () => sseClients.length,
+    loginLimiter: rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 5,
+      // Its own counter: school sign-ins from the same address must not use up (or reset) this one.
+      keyGenerator: (req) => 'platform:' + ipKeyGenerator(req.ip || ''),
+      standardHeaders: true,
+      legacyHeaders: false,
+      store: new SharedRateLimitStore(),
+      message: { success: false, error: 'Too many attempts. Please wait a while and try again.' },
+    }),
+  });
 
   // Live SSE clients list partitioned by institution
   interface SseClient {
@@ -666,6 +909,7 @@ async function startServer() {
           return res.status(400).json({ success: false, error: 'This invite code has expired.' });
         }
         const institution = await dbService.getInstitutionById(invite.institution_id);
+        if (institution?.status === 'suspended') return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
         return res.json({
           success: true,
           type: 'invite',
@@ -690,6 +934,7 @@ async function startServer() {
 
       // Otherwise check if it matches an institution shortcode
       const institution = await dbService.getInstitutionByCode(code);
+      if (institution?.status === 'suspended') return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
       if (institution) {
         return res.json({
           success: true,
@@ -739,6 +984,8 @@ async function startServer() {
         if (new Date(invite.expires_at).getTime() < Date.now()) {
           return res.status(400).json({ success: false, error: 'This invite code has expired.' });
         }
+        const invitedInst = await dbService.getInstitutionById(invite.institution_id);
+        if (invitedInst?.status === 'suspended') return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
         targetInstitutionId = invite.institution_id;
         assignedRole = invite.assigned_role;
         permissions = invite.permissions || [];
@@ -759,6 +1006,7 @@ async function startServer() {
         if (!institution) {
           return res.status(404).json({ success: false, error: 'Invalid institution code or invite code.' });
         }
+        if (institution.status === 'suspended') return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
         targetInstitutionId = institution.id;
         assignedRole = 'Viewer'; // Least-privilege default for unapproved self-joins
       }
@@ -856,6 +1104,10 @@ async function startServer() {
         });
       }
 
+      if (inst.status === 'suspended') {
+        return res.status(403).json({ success: false, code: 'SCHOOL_SUSPENDED', error: SUSPENDED_MESSAGE });
+      }
+
       const dbUser = await dbService.getUserByUsername(cleanUsername, inst.id);
       if (!dbUser) {
         return res.status(401).json({
@@ -873,6 +1125,13 @@ async function startServer() {
         return res.status(403).json({
           success: false,
           error: 'This account has been deactivated. Contact your institution administrator.',
+        });
+      }
+
+      if (dbUser.must_change_password && dbUser.temp_password_expires_at && new Date(dbUser.temp_password_expires_at).getTime() < Date.now()) {
+        return res.status(401).json({
+          success: false,
+          error: 'The temporary password has expired. Ask your administrator or support for a new one.',
         });
       }
 
@@ -915,6 +1174,7 @@ async function startServer() {
         email: dbUser.email,
         lastLogin: now,
         status: dbUser.status,
+        mustChangePassword: !!dbUser.must_change_password,
       };
 
       res.json({
@@ -945,12 +1205,46 @@ async function startServer() {
       email: req.user.email,
       lastLogin: req.user.last_login_at,
       status: req.user.status,
+      mustChangePassword: !!req.user.must_change_password,
     };
     res.json({
       success: true,
       user: userClientData,
       institution: req.institution,
     });
+  });
+
+  // The signed-in user sets their own password (also the only route a forced-change session may use).
+  app.post('/api/auth/change-password', authLimiter, async (req: AuthenticatedRequest, res) => {
+    try {
+      if (!req.user || !req.sessionToken) return res.status(401).json({ success: false, error: 'Not authenticated' });
+      const current = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+      const next = typeof req.body?.newPassword === 'string' ? req.body.newPassword.trim() : '';
+      if (next.length < 8 || next.length > 20) {
+        return res.status(400).json({ success: false, error: 'Password must be between 8 and 20 characters.' });
+      }
+      const full = await dbService.getUserById(req.user.id);
+      if (!full || full.institution_id !== req.user.institution_id || !(await verifyPassword(current, full.password_hash))) {
+        return res.status(401).json({ success: false, error: 'Your current password is not correct.' });
+      }
+      if (current === next) {
+        return res.status(400).json({ success: false, error: 'The new password must be different from the current one.' });
+      }
+      const wasForced = !!full.must_change_password;
+      await dbService.changeOwnPassword(full.id, await hashPassword(next), req.sessionToken);
+      await recordAudit(req, {
+        actionType: 'operator_security',
+        actionTitle: wasForced ? 'Operator Set New Password After Reset' : 'Operator Changed Own Password',
+        module: 'Security',
+        description: `Operator '${full.username}' changed their password.`,
+        targetId: full.username,
+        targetLabel: full.full_name,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('[API] Change password error:', err);
+      res.status(500).json({ success: false, error: 'Could not change the password.' });
+    }
   });
 
   // Per-user UI preferences (theme + sidebar), persisted in the database
@@ -1025,6 +1319,7 @@ async function startServer() {
       email: u.email,
       lastLogin: u.last_login_at,
       status: u.status,
+      mustChangePassword: !!u.must_change_password,
     };
   }
 
@@ -1106,6 +1401,9 @@ async function startServer() {
       if (target.id === req.user!.id && req.body.status === 'deactivated') {
         return res.status(400).json({ success: false, error: 'You cannot deactivate your own account.' });
       }
+      if (target.platform_locked && req.body.status !== undefined && req.body.status !== target.status) {
+        return res.status(403).json({ success: false, error: 'This account was deactivated by platform support. Contact support to reactivate it.' });
+      }
 
       const updates: Partial<DbUser> = {};
       if (req.body.name !== undefined) updates.full_name = String(req.body.name).trim();
@@ -1132,6 +1430,9 @@ async function startServer() {
           return res.status(400).json({ success: false, error: 'Password must be between 8 and 20 characters.' });
         }
         updates.password_hash = await hashPassword(pTrimmed);
+        // A password set here replaces any pending platform reset (otherwise an expired temporary one would lock them out).
+        updates.must_change_password = false;
+        updates.temp_password_expires_at = null;
       }
 
       await dbService.updateUser(req.params.id, updates);
@@ -1197,12 +1498,16 @@ async function startServer() {
     try {
       const institutionId = req.institutionId || (req.headers['x-institution-id'] as string) || req.body.institutionId;
       const { fullName, assignedRole, permissions } = req.body;
+      const customCode = typeof req.body.inviteCode === 'string' ? req.body.inviteCode.trim() : '';
 
       if (!institutionId) {
         return res.status(400).json({ success: false, error: 'Institution ID is required.' });
       }
       if (!fullName || !fullName.trim()) {
         return res.status(400).json({ success: false, error: 'Staff member full name is required.' });
+      }
+      if (customCode && !/^[A-Za-z0-9-]{4,32}$/.test(customCode)) {
+        return res.status(400).json({ success: false, error: 'An invite code may use letters, digits and dashes only, 4 to 32 characters.' });
       }
 
       const result = await dbService.createInvite({
@@ -1211,6 +1516,7 @@ async function startServer() {
         assignedRole: assignedRole || 'Accountant',
         permissions: permissions || [],
         createdBy: req.user?.full_name || 'Admin',
+        inviteCode: customCode || undefined,
       });
 
       if (!result.success || !result.invite) {
@@ -1238,6 +1544,9 @@ async function startServer() {
         },
       });
     } catch (err: any) {
+      if (err?.code === '23505') {
+        return res.status(409).json({ success: false, error: 'That invite code is already in use. Choose another.' });
+      }
       res.status(500).json({ success: false, error: 'Failed to create invite code.' });
     }
   });
@@ -1264,8 +1573,7 @@ async function startServer() {
   // --- Health, Sync & State APIs (Tenant-Scoped) ---
 
   // Health check endpoint with live database ping & pool metrics
-  // Health: unauthenticated callers (load balancers, monitors) only get overall
-  // status; the engine, pool and tenant details need a signed-in session.
+  // Health: callers get overall status only. A signed-in school also gets its own revision.
   app.get('/api/health', async (req: AuthenticatedRequest, res) => {
     const pingResult = await dbService.ping();
     const isHealthy = pingResult.healthy;
@@ -1279,21 +1587,14 @@ async function startServer() {
       });
     }
 
+    // Signed-in schools get the same ok/degraded answer plus their own revision. Pool figures, raw database
+    // errors and server-wide counts are platform-owner information (see /api/platform/monitor/*).
     const revInfo = dbService.getRevisionInfo(req.institutionId as string);
     res.status(statusCode).json({
       status: isHealthy ? 'ok' : 'degraded',
-      engine: pingResult.engine,
-      database: {
-        healthy: pingResult.healthy,
-        latencyMs: pingResult.latencyMs,
-        strictPostgres: pingResult.strictPostgres,
-        pool: pingResult.pool,
-        error: pingResult.error,
-      },
+      database: { healthy: pingResult.healthy },
       revision: revInfo.revision,
       lastModified: revInfo.lastModified,
-      connectedClients: sseClients.length,
-      uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
   });
@@ -1350,6 +1651,15 @@ async function startServer() {
     managePermission: 'classes.manage',
     deletePermission: 'classes.delete',
     orderBy: 'sort_order ASC, name ASC',
+    uniqueField: 'name',
+    validate: async (institutionId, body, isUpdate, id) => {
+      if (!isUpdate || 'name' in body) {
+        const name = String(body.name ?? '').trim();
+        if (!name) return 'Class name is required.';
+        if (await dbService.valueTaken(institutionId, 'classes', 'name', name, id)) return 'A class with this name already exists.';
+      }
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/families',
@@ -1358,6 +1668,10 @@ async function startServer() {
     managePermission: 'families.manage',
     deletePermission: 'families.delete',
     orderBy: 'head_name ASC',
+    validate: async (_institutionId, body, isUpdate) => {
+      if ((!isUpdate || 'headName' in body) && !String(body.headName ?? '').trim()) return 'Family head name is required.';
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/transport/buses',
@@ -1366,6 +1680,15 @@ async function startServer() {
     managePermission: 'transport.manage',
     deletePermission: 'transport.delete',
     orderBy: 'sort_order ASC',
+    uniqueField: 'busNumber',
+    validate: async (institutionId, body, isUpdate, id) => {
+      if (!isUpdate || 'busNumber' in body) {
+        const num = String(body.busNumber ?? '').trim();
+        if (!num) return 'Bus number is required.';
+        if (await dbService.valueTaken(institutionId, 'buses', 'bus_number', num, id)) return 'Bus number already exists.';
+      }
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/transport/stops',
@@ -1374,6 +1697,16 @@ async function startServer() {
     managePermission: 'transport.manage',
     deletePermission: 'transport.delete',
     orderBy: 'sort_order ASC',
+    uniqueField: 'name',
+    validate: async (institutionId, body, isUpdate, id) => {
+      if (!isUpdate || 'name' in body) {
+        const name = String(body.name ?? '').trim();
+        if (!name) return 'Bus stop name is required.';
+        if (await dbService.valueTaken(institutionId, 'stops', 'name', name, id)) return 'Bus stop name already exists.';
+      }
+      if ('monthlyFare' in body && !(Number(body.monthlyFare) >= 0)) return 'Bus stop fare cannot be negative.';
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/transport/assignments',
@@ -1381,6 +1714,18 @@ async function startServer() {
     viewPermission: 'transport.view',
     managePermission: 'transport.manage',
     deletePermission: 'transport.delete',
+    // An assignment must point at a real student, bus and stop of this institution.
+    validate: async (institutionId, body, isUpdate) => {
+      const refs: { studentId?: string; busId?: string; stopId?: string } = {};
+      if (!isUpdate || 'studentId' in body) refs.studentId = String(body.studentId ?? '');
+      if (!isUpdate || 'busId' in body) refs.busId = String(body.busId ?? '');
+      if (!isUpdate || 'stopId' in body) refs.stopId = String(body.stopId ?? '');
+      const ok = await dbService.transportRefsExist(institutionId, refs);
+      if (!ok.student) return 'Transport assignment needs an existing student.';
+      if (!ok.bus) return 'Transport assignment needs an existing bus.';
+      if (!ok.stop) return 'Transport assignment needs an existing stop.';
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/fee-templates',
@@ -1388,6 +1733,16 @@ async function startServer() {
     viewPermission: 'settings.view',
     managePermission: 'settings.manage',
     orderBy: 'sort_order ASC',
+    validate: async (institutionId, body, isUpdate) => {
+      if ((!isUpdate || 'label' in body) && !String(body.label ?? '').trim()) return 'Fee particular label is required.';
+      const missing = await dbService.missingRefs(institutionId, {
+        classId: body.classId || undefined,
+        studentId: body.studentId || undefined,
+      });
+      if (missing.includes('class')) return 'Fee template refers to a class that does not exist.';
+      if (missing.includes('student')) return 'Fee template refers to a student that does not exist.';
+      return null;
+    },
   });
   registerSimpleEntityCrud({
     path: '/api/bank-accounts',
@@ -1438,12 +1793,20 @@ async function startServer() {
           field: duplicate.field,
         });
       }
-      const created = await dbService.createStudent(institutionId, body);
+      const missing = await dbService.missingRefs(institutionId, { classId: body.classId || undefined, familyId: body.familyId || undefined });
+      if (missing.includes('class')) return res.status(400).json({ success: false, error: 'The selected class does not exist.' });
+      if (missing.includes('family')) return res.status(400).json({ success: false, error: 'The selected family does not exist.' });
+      const createdId = await dbService.withTx(async (client) => {
+        const r = await dbService.createStudent(institutionId, body, client);
+        const entry = studentAuditEntry({ created: [{ name: String(body.name).trim(), regNo: String(body.regNo).trim() }], updated: [], deleted: [] });
+        if (entry) await recordAuditInTx(req, entry, client);
+        return r.id;
+      });
+      const created = await dbService.getStudentById(institutionId, createdId);
       dbService.incrementRevision(institutionId);
       res.json({ success: true, student: created });
     } catch (err: any) {
-      console.error('[API] Failed to create student:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to create student.' });
+      sendDbError(res, err, 'Failed to create student', 'Failed to create student.');
     }
   });
 
@@ -1465,15 +1828,120 @@ async function startServer() {
           });
         }
       }
-      const updated = await dbService.updateStudent(institutionId, req.params.id, body);
+      const missing = await dbService.missingRefs(institutionId, { classId: body.classId || undefined, familyId: body.familyId || undefined });
+      if (missing.includes('class')) return res.status(400).json({ success: false, error: 'The selected class does not exist.' });
+      if (missing.includes('family')) return res.status(400).json({ success: false, error: 'The selected family does not exist.' });
+      const updated = await dbService.withTx(async (client) => {
+        let fields: string[] = [];
+        let before: any = null;
+        const r = await dbService.updateStudent(institutionId, req.params.id, body, readExpectedVersion(req), client, (f, b) => {
+          fields = f;
+          before = b;
+        });
+        if (!r) return null;
+        if (before && fields.length) {
+          const entry = studentAuditEntry({
+            created: [],
+            updated: [{
+              name: body.name ?? before.name, regNo: body.regNo ?? before.regNo, fields,
+              statusFrom: fields.includes('status') ? before.status : undefined,
+              statusTo: fields.includes('status') ? body.status : undefined,
+            }],
+            deleted: [],
+          });
+          if (entry) await recordAuditInTx(req, entry, client);
+        }
+        return dbService.getStudentById(institutionId, req.params.id);
+      });
       if (!updated) return res.status(404).json({ success: false, error: 'Student not found.' });
       dbService.incrementRevision(institutionId);
       res.json({ success: true, student: updated });
     } catch (err: any) {
-      console.error('[API] Failed to update student:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to update student.' });
+      sendDbError(res, err, 'Failed to update student', 'Failed to update student.');
     }
   });
+
+  // All-or-nothing student batch (bulk CSV import, bulk delete): { upserts, deleteIds }.
+  app.post(
+    '/api/students/batch',
+    requireAuth('students.manage'),
+    (req: AuthenticatedRequest, res, next) => {
+      const ids = (req.body || {}).deleteIds;
+      if (Array.isArray(ids) && ids.length > 0) return requireAuth('students.delete')(req, res, next);
+      next();
+    },
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const institutionId = req.institutionId as string;
+        const body = req.body || {};
+        const upserts: any[] = Array.isArray(body.upserts) ? body.upserts.map((u: any) => ({ ...u })) : [];
+        const deleteIds: string[] = Array.isArray(body.deleteIds) ? body.deleteIds.map(String) : [];
+        if (upserts.length + deleteIds.length > 5000) {
+          return res.status(400).json({ success: false, error: 'Batch is too large (limit 5000 rows).' });
+        }
+        const seenNational = new Set<string>();
+        // Families created by this same batch (e.g. a CSV import of new families) don't exist in the DB yet.
+        const familyIdsInBatch = new Set<string>(
+          (Array.isArray(body.familyUpserts) ? body.familyUpserts : []).map((f: any) => (f && f.id ? String(f.id) : '')).filter(Boolean)
+        );
+        for (const u of upserts) {
+          if (!u || typeof u !== 'object') return res.status(400).json({ success: false, error: 'Every upsert must be an object.' });
+          const isUpdate = u.id ? !!(await dbService.getStudentById(institutionId, String(u.id))) : false;
+          if (!isUpdate) {
+            if (!u.name || !String(u.name).trim()) return res.status(400).json({ success: false, error: 'Student name is required.' });
+            if (!u.regNo || !String(u.regNo).trim()) {
+              return res.status(400).json({ success: false, error: `Registration number (Reg #) is required for ${String(u.name).trim()}.` });
+            }
+          }
+          const nat = typeof u.studentNationalId === 'string' ? u.studentNationalId.trim() : '';
+          if (nat) {
+            if (seenNational.has(nat)) {
+              return res.status(409).json({ success: false, error: `Student ID "${nat}" appears more than once in the batch.` });
+            }
+            seenNational.add(nat);
+            const dup = await dbService.findDuplicateStudent(institutionId, { studentNationalId: nat }, isUpdate ? String(u.id) : undefined);
+            if (dup) {
+              return res.status(409).json({ success: false, error: `Student ID "${nat}" already exists in system with '${dup.existingStudentName}'.`, field: dup.field });
+            }
+          }
+          const missing = await dbService.missingRefs(institutionId, {
+            classId: u.classId || undefined,
+            familyId: u.familyId && !familyIdsInBatch.has(String(u.familyId)) ? u.familyId : undefined,
+          });
+          if (missing.includes('class')) return res.status(400).json({ success: false, error: 'A selected class does not exist.' });
+          if (missing.includes('family')) return res.status(400).json({ success: false, error: 'A selected family does not exist.' });
+        }
+        const familyUpserts: any[] = Array.isArray(body.familyUpserts) ? body.familyUpserts.map((f: any) => ({ ...f })) : [];
+        for (const f of familyUpserts) {
+          if (!f || typeof f !== 'object' || !String(f.headName ?? '').trim()) {
+            return res.status(400).json({ success: false, error: 'Family head name is required.' });
+          }
+          const given = typeof f.familyNo === 'string' ? f.familyNo.trim() : '';
+          const isExisting = f.id ? !!(await dbService.getSimpleEntityById(FAMILY_ENTITY_CONFIG, institutionId, String(f.id))) : false;
+          if (!isExisting && (!given || given === 'FAM-PENDING')) f.familyNo = await dbService.allocateFamilyNumber(institutionId);
+          if (isExisting && given === 'FAM-PENDING') delete f.familyNo;
+        }
+        const history: any[] = Array.isArray(body.history) ? body.history : [];
+        if (history.some((h) => !h || typeof h !== 'object' || !h.studentId)) {
+          return res.status(400).json({ success: false, error: 'Every history entry needs a studentId.' });
+        }
+        const result = await dbService.batchStudents(institutionId, {
+          upserts,
+          deleteIds,
+          familyUpserts,
+          history: history.map((h) => ({ ...h, operatorName: req.user?.full_name, operatorRole: req.user?.role })),
+          audit: async (summary, client) => {
+            const entry = studentAuditEntry(summary);
+            if (entry) await recordAuditInTx(req, entry, client);
+          },
+        });
+        dbService.incrementRevision(institutionId);
+        res.json({ success: true, students: result.students, deletedIds: result.deletedIds, families: result.families });
+      } catch (err: any) {
+        sendDbError(res, err, 'Failed student batch', 'Batch failed; nothing was saved.');
+      }
+    }
+  );
 
   app.delete('/api/students/:id', requireAuth('students.delete'), async (req: AuthenticatedRequest, res) => {
     try {
@@ -1483,7 +1951,7 @@ async function startServer() {
       // deleteStudentIfNoVouchers (see its doc comment for why the
       // check and the delete can't safely be two separate round-trips).
       const studentToDelete = await dbService.getStudentById(institutionId, req.params.id);
-      const { deleted, blockedByVouchers } = await dbService.deleteStudentIfNoVouchers(institutionId, req.params.id);
+      const { deleted, blockedByVouchers } = await dbService.deleteStudentIfNoVouchers(institutionId, req.params.id, readExpectedVersion(req));
       if (!deleted) {
         if (blockedByVouchers) {
           return res.status(409).json({
@@ -1504,8 +1972,7 @@ async function startServer() {
       });
       res.json({ success: true });
     } catch (err: any) {
-      console.error('[API] Failed to delete student:', err);
-      res.status(500).json({ success: false, error: err?.message || 'Failed to delete student.' });
+      sendDbError(res, err, 'Failed to delete student', 'Failed to delete student.');
     }
   });
 
@@ -2156,140 +2623,27 @@ async function startServer() {
         }
       }
 
-      const yearStr = new Date().getFullYear().toString();
-      const collectionId =
-        typeof requestedCollectionId === 'string' && requestedCollectionId.trim()
-          ? requestedCollectionId.trim()
-          : `col-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-      const voucherIds = [...new Set(payments.map((p: any) => p.voucherId))] as string[];
-
-      let totalCollectionAmount = 0;
-      let createdTxns: any[] = [];
-      let updatedVouchersList: any[] = [];
-      let newCollection: any;
-
-      // Locks exactly the voucher rows referenced by this batch of payments
-      // (Postgres: SELECT ... FOR UPDATE). Concurrent payment collection on
-      // *different* vouchers proceeds without contention; concurrent
-      // attempts to pay the SAME voucher block until the first transaction
-      // commits, then see its fresh state — closing the lost-update race
-      // where two cashiers collecting payment near-simultaneously could
-      // previously have one payment silently vanish via a full-collection
-      // overwrite.
+      // The payment rules themselves live in server/collections-core.ts (shared with the bank-statement loader).
+      let received: Awaited<ReturnType<typeof receivePayments>>;
       try {
-        await dbService.runVoucherTransaction(institutionId, { voucherIds }, async (lockedVouchers, helpers) => {
-          const voucherUpserts: Record<string, any> = {};
-          const newTransactions: NonNullable<import('./server/db').VoucherTxWrites['newTransactions']> = [];
-          totalCollectionAmount = 0;
-          createdTxns = [];
-          updatedVouchersList = [];
-
-          for (let i = 0; i < payments.length; i++) {
-            const item = payments[i];
-            const base = voucherUpserts[item.voucherId] || lockedVouchers.get(item.voucherId);
-            if (!base) {
-              throw Object.assign(new Error(`Voucher ID ${item.voucherId} not found.`), { httpStatus: 404 });
-            }
-            const v = { ...base };
-            if (v.status === 'Reversed' || v.status === 'Carried') {
-              throw Object.assign(
-                new Error(`Voucher ${v.voucherNo} is in status '${v.status}' and cannot accept payments.`),
-                { httpStatus: 400 }
-              );
-            }
-            if (item.amount <= 0) {
-              throw Object.assign(new Error('Payment amount must be greater than zero.'), { httpStatus: 400 });
-            }
-
-            const txnNo = await helpers.mintDocumentNumber('TXN', yearStr);
-
-            // Update voucher line items if fine or particulars were revised at payment
-            if (item.updatedParticulars && Array.isArray(item.updatedParticulars) && item.updatedParticulars.length > 0) {
-              v.particulars = item.updatedParticulars;
-              v.grossTotal = item.updatedParticulars
-                .filter((p: any) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-                .reduce((s: number, p: any) => s + Number(p.amount), 0);
-              v.discountTotal = item.updatedParticulars
-                .filter((p: any) => p.kind === 'Discount')
-                .reduce((s: number, p: any) => s + Math.abs(Number(p.amount)), 0);
-              v.netDue = item.updatedParticulars.reduce((s: number, p: any) => s + Number(p.amount), 0);
-            } else if (item.fineAdded && Number(item.fineAdded) !== 0) {
-              const fineAdd = Number(item.fineAdded);
-              const cleanParts = (v.particulars || []).map((p: any) => ({ ...p }));
-              const fIdx = cleanParts.findIndex((p: any) => p.kind === 'Fine');
-              if (fIdx >= 0) {
-                cleanParts[fIdx] = { ...cleanParts[fIdx], amount: Number(cleanParts[fIdx].amount || 0) + fineAdd };
-              } else {
-                cleanParts.push({ kind: 'Fine', label: 'Fine', amount: fineAdd });
-              }
-              v.particulars = cleanParts;
-              v.grossTotal = cleanParts
-                .filter((p: any) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-                .reduce((s: number, p: any) => s + Number(p.amount), 0);
-              v.discountTotal = cleanParts
-                .filter((p: any) => p.kind === 'Discount')
-                .reduce((s: number, p: any) => s + Math.abs(Number(p.amount)), 0);
-              v.netDue = cleanParts.reduce((s: number, p: any) => s + Number(p.amount), 0);
-            }
-
-            const updatedPaid = (v.amountPaid || 0) + item.amount;
-            v.amountPaid = updatedPaid;
-            if (updatedPaid >= v.netDue && v.netDue > 0) {
-              v.status = 'Paid';
-            } else if (updatedPaid > 0) {
-              v.status = 'Partial';
-            } else if (v.netDue <= 0 && updatedPaid === 0) {
-              v.status = 'Paid';
-            } else {
-              v.status = 'Issued';
-            }
-
-            const txnId =
-              typeof item.id === 'string' && item.id.trim()
-                ? item.id.trim()
-                : typeof item.transactionId === 'string' && item.transactionId.trim()
-                ? item.transactionId.trim()
-                : `txn-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`;
-
-            const newTxn = {
-              id: txnId,
-              txnNo,
-              collectionId,
-              voucherId: v.id,
-              studentId: v.studentId,
-              month: v.month,
-              amount: item.amount,
-              fineAdded: item.fineAdded,
-              paymentMode: item.paymentMode || DEFAULT_PAYMENT_MODE,
-              referenceNo: item.referenceNo,
-              notes: item.notes || `Payment for ${v.voucherNo}`,
-              date: item.date || date,
-            };
-
-            totalCollectionAmount += item.amount;
-            createdTxns.push(newTxn);
-            updatedVouchersList.push(v);
-            voucherUpserts[v.id] = v;
-            newTransactions.push(newTxn);
-          }
-
-          const collectionNo = await helpers.mintDocumentNumber('COL', yearStr);
-          newCollection = {
-            id: collectionId,
-            collectionNo,
-            date,
-            totalAmount: totalCollectionAmount,
-            transactionCount: createdTxns.length,
-            notes: collectionNotes || `Payment collection receipt ${collectionNo}`,
-            isBulkImport: req.body.isBulkImport || false,
-          };
-
-          return { writes: { voucherUpserts, newTransactions, newCollections: [newCollection] }, result: null };
+        received = await receivePayments(institutionId, {
+          payments,
+          collectionNotes,
+          date,
+          collectionId: requestedCollectionId,
+          isBulkImport: req.body.isBulkImport || false,
         });
       } catch (txErr: any) {
         const status = txErr?.httpStatus || 500;
         return res.status(status).json({ success: false, error: txErr?.message || 'Collection processing failed' });
       }
+      const {
+        collection: newCollection,
+        transactions: createdTxns,
+        updatedVouchers: updatedVouchersList,
+        totalAmount: totalCollectionAmount,
+        voucherIds,
+      } = received;
 
       dbService.incrementRevision(institutionId);
       const revInfo = dbService.getRevisionInfo(institutionId);
@@ -2659,6 +3013,17 @@ async function startServer() {
           }
         }
 
+        // An admission voucher is only valid before any regular voucher: reject a
+        // NEW admission voucher when the student already has another live voucher.
+        for (const v of voucherUpserts) {
+          if (v.voucherType === 'Admission' && v.status !== 'Reversed' && !_locked.has(v.id)) {
+            const others = await helpers.countOtherActiveVouchers(String(v.studentId), v.id);
+            if (others > 0) {
+              throw new Error('This student already has a voucher. Admission vouchers can only be issued before the first regular voucher.');
+            }
+          }
+        }
+
         deletedVoucherLabels = deleteVoucherIds.map((id: string) => _locked.get(id)?.voucherNo || id);
         editedVoucherLabels = voucherUpserts.map((v: any) => v.voucherNo || v.id);
 
@@ -2697,6 +3062,11 @@ async function startServer() {
         // persisted — the client only sends pending placeholders. Mint
         // authoritative ones here, exactly like /api/collections/receive and
         // /api/vouchers/generate do.
+        for (const t of newTransactions) {
+          if (t?.voucherId && (await helpers.hasLaterActiveVoucher(t.voucherId))) {
+            throw new Error("Payment must be recorded against the student's latest voucher.");
+          }
+        }
         const remintedTransactions = [];
         for (const t of newTransactions) {
           const txnNo = await helpers.mintDocumentNumber('TXN', yearStr);
@@ -2769,6 +3139,13 @@ async function startServer() {
       res.json({ success: true, revision: revInfo.revision, vouchers: assignedVoucherNumbers });
     } catch (err: any) {
       console.error('[API] Failed to apply voucher batch update:', err);
+      if (err?.code === '23503') {
+        return res.status(409).json({
+          success: false,
+          code: 'IN_USE',
+          error: 'This change refers to a record that no longer exists (for example a deleted student). Reload the page and try again.',
+        });
+      }
       res.status(err?.httpStatus || 500).json({ success: false, error: err?.message || 'Batch update failed' });
     }
   });
@@ -2778,6 +3155,13 @@ async function startServer() {
     try {
       const institutionId = req.institutionId as string;
       const backup = await dbService.exportInstitutionBackup(institutionId);
+      // A backup is a copy of the whole school's data leaving the system.
+      await recordAudit(req, {
+        actionType: 'settings_change',
+        actionTitle: 'Database Backup Exported',
+        module: 'System',
+        description: 'Full database backup downloaded.',
+      });
       res.setHeader('Content-Type', 'application/json');
       res.setHeader(
         'Content-Disposition',
@@ -2823,6 +3207,15 @@ async function startServer() {
     }
   });
 
+  // Add-on: Bank Statement Collections Loader (everything lives in server/bank-statements/).
+  await registerBankStatementRoutes(app, { requireAuth, recordAudit, recordAuditInTx, broadcastEvent });
+
+  // Reports of failures only the browser can see (network down, JavaScript errors).
+  registerClientReporting(app, () => requireAuth());
+
+  // Errors thrown before any route answered (bad JSON, oversized body): answer in JSON and record them.
+  app.use('/api', monitorErrorHandler);
+
   // --- Vite / Frontend Serving Middleware ---
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -2862,6 +3255,8 @@ async function startServer() {
   };
   setTimeout(runRetention, 30_000).unref();
   setInterval(runRetention, 24 * 60 * 60 * 1000).unref();
+
+  startMonitoring();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Multi-Tenant School Management Server running at http://0.0.0.0:${PORT}`);

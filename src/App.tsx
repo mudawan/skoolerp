@@ -7,6 +7,7 @@ import { FamiliesView } from './components/FamiliesView';
 import { ClassesView } from './components/ClassesView';
 import { VouchersView } from './components/VouchersView';
 import { CollectionsView } from './components/CollectionsView';
+import { BankStatementsView } from './plugins/bank-statements/BankStatementsView';
 import { DefaultersView } from './components/DefaultersView';
 import { TransportView } from './components/TransportView';
 import { ReportsView } from './components/ReportsView';
@@ -76,6 +77,8 @@ function MainApp() {
         return hasPermission('fees.view');
       case 'collections':
         return hasPermission('fees.collect') || hasPermission('fees.view');
+      case 'bankStatements':
+        return hasPermission('fees.collect');
       case 'defaulters':
         return hasPermission('defaulters.view') || hasPermission('fees.view');
       case 'monthEnd':
@@ -135,6 +138,7 @@ function MainApp() {
     'classes',
     'vouchers',
     'collections',
+    'bankStatements',
     'defaulters',
     'monthEnd',
     'voucherLayout',
@@ -348,6 +352,7 @@ function MainApp() {
               {activeTab === 'classes' && <ClassesView />}
               {activeTab === 'vouchers' && <VouchersView />}
               {activeTab === 'collections' && <CollectionsView />}
+              {activeTab === 'bankStatements' && <BankStatementsView />}
               {activeTab === 'defaulters' && <DefaultersView />}
               {activeTab === 'monthEnd' && (
                 <SettingsView

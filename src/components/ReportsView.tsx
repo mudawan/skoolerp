@@ -680,7 +680,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           bankAccounts,
           students,
           classes,
-          themeColor: themeConfig?.activePreset?.primaryColor,
+          themeColor: THEME_COLOR_PRESETS[themeConfig?.color]?.primaryColor,
         },
         monthLabel
       );
@@ -713,7 +713,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           bankAccounts,
           students,
           classes,
-          themeColor: themeConfig?.activePreset?.primaryColor,
+          themeColor: THEME_COLOR_PRESETS[themeConfig?.color]?.primaryColor,
         },
         monthLabel
       );
@@ -894,7 +894,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             bankAccounts,
             students,
             classes,
-            themeColor: themeConfig?.activePreset?.primaryColor,
+            themeColor: THEME_COLOR_PRESETS[themeConfig?.color]?.primaryColor,
           },
           title,
           filename.replace(/\.csv$/i, '.pdf')
@@ -925,7 +925,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             bankAccounts,
             students,
             classes,
-            themeColor: themeConfig?.activePreset?.primaryColor,
+            themeColor: THEME_COLOR_PRESETS[themeConfig?.color]?.primaryColor,
           },
           title
         );

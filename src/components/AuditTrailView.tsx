@@ -371,6 +371,30 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
           label: 'Voucher Deletion',
           badgeClass: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
         };
+      case 'student_creation':
+        return {
+          icon: <Activity className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />,
+          label: 'Student Created',
+          badgeClass: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
+        };
+      case 'student_update':
+        return {
+          icon: <Activity className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />,
+          label: 'Student Update',
+          badgeClass: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
+        };
+      case 'student_bulk':
+        return {
+          icon: <Activity className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />,
+          label: 'Student Bulk Change',
+          badgeClass: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
+        };
+      case 'student_deletion':
+        return {
+          icon: <Activity className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />,
+          label: 'Student Deletion',
+          badgeClass: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
+        };
       case 'operator_security':
         return {
           icon: <Shield className="w-3.5 h-3.5 text-violet-600 dark:text-violet-400" />,
@@ -705,6 +729,10 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
               <option value="voucher_generation">Voucher Generation</option>
               <option value="voucher_edit">Voucher Edit</option>
               <option value="voucher_deletion">Voucher Deletion</option>
+              <option value="student_creation">Student Created</option>
+              <option value="student_update">Student Update</option>
+              <option value="student_bulk">Student Bulk Change</option>
+              <option value="student_deletion">Student Deletion</option>
               <option value="operator_security">Operator Security</option>
               <option value="system_cleanup">System Cleanup</option>
               <option value="system_restore">Database Restored From Backup</option>

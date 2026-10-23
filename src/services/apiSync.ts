@@ -1,23 +1,10 @@
-import { Institution, OperatorInvite, User } from '../types';
+import { Institution, OperatorInvite, ServerInvite, User } from '../types';
 
 export interface ApiHealthResponse {
   status: string;
-  engine: 'postgres';
-  database?: {
-    healthy: boolean;
-    latencyMs?: number;
-    strictPostgres: boolean;
-    pool?: {
-      totalCount: number;
-      idleCount: number;
-      waitingCount: number;
-    };
-    error?: string;
-  };
+  database?: { healthy: boolean };
   revision?: number;
   lastModified?: string;
-  connectedClients?: number;
-  uptime: number;
   timestamp: string;
 }
 
@@ -31,8 +18,8 @@ export interface ApiStateResponse {
 }
 
 export interface DbStatus {
+  activeInstitutionId?: string | null;
   isConnected: boolean;
-  isSyncing: boolean;
   engine: string;
   latencyMs?: number;
   pool?: {
@@ -42,7 +29,6 @@ export interface DbStatus {
   };
   revision: number;
   activePeers: number;
-  activeInstitutionId: string | null;
 }
 
 // Generate unique client ID for this browser tab to prevent echo updates
@@ -50,9 +36,6 @@ export const CLIENT_ID =
   'cli_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
 
 let activeInstitutionId: string | null = null;
-let syncTimeout: any = null;
-let pendingState: any = {};
-let isSyncing = false;
 let currentEngine: 'postgres' = 'postgres';
 let isConnected = false;
 let currentRevision = 1;
@@ -62,7 +45,6 @@ let dbPoolStats: any = undefined;
 
 let statusListeners: ((status: DbStatus) => void)[] = [];
 let remoteUpdateListeners: ((data: any) => void)[] = [];
-let syncFailureListeners: ((info: SyncFailureInfo) => void)[] = [];
 let eventSource: EventSource | null = null;
 
 let actionLockDepth = 0;
@@ -110,36 +92,9 @@ export function checkMutationAllowed(): { allowed: boolean; error?: string } {
   return { allowed: true };
 }
 
-export interface SyncFailureInfo {
-  collection: string;
-  failedIds: string[];
-}
-
-/**
- * Subscribe to background persistence failures from the debounced
- * simple-entity sync (queueDatabaseSync). Unlike the explicit, awaited
- * financial mutation paths (see reportFinancialSyncFailure in
- * AppContext.tsx), routine edits to students/classes/families/etc. are
- * queued and synced in the background with no caller left waiting for the
- * result — so without this, a rejected create/update/delete here was only
- * ever visible in the browser console. Returns an unsubscribe function.
- */
-export function subscribeSyncFailures(callback: (info: SyncFailureInfo) => void): () => void {
-  syncFailureListeners.push(callback);
-  return () => {
-    syncFailureListeners = syncFailureListeners.filter((l) => l !== callback);
-  };
-}
-
-function notifySyncFailure(collection: string, failedIds: string[]) {
-  if (failedIds.length === 0) return;
-  syncFailureListeners.forEach((l) => l({ collection, failedIds }));
-}
-
 function notifyStatus() {
   const s: DbStatus = {
     isConnected,
-    isSyncing,
     engine: currentEngine,
     latencyMs: dbLatencyMs,
     pool: dbPoolStats,
@@ -153,7 +108,6 @@ function notifyStatus() {
 export function setActiveInstitutionId(id: string | null) {
   if (activeInstitutionId !== id) {
     activeInstitutionId = id;
-    resetSyncSnapshots();
     notifyStatus();
   }
 }
@@ -162,57 +116,10 @@ export function getActiveInstitutionId(): string | null {
   return activeInstitutionId;
 }
 
-export function resetSyncSnapshots(): void {
-  lastSyncedSnapshots = {};
-  permanentlyFailedIds = {};
-  pendingState = {};
-  if (syncTimeout) {
-    clearTimeout(syncTimeout);
-    syncTimeout = null;
-  }
-  isSyncing = false;
-}
-
-export function initializeSyncSnapshots(data: any): void {
-  if (!data) return;
-  const populate = (collectionName: string, items: any[]) => {
-    if (!Array.isArray(items)) return;
-    const map = new Map<string, string>();
-    for (const rawItem of items) {
-      if (!rawItem?.id) continue;
-      const item = stripFields(collectionName, rawItem);
-      map.set(item.id, JSON.stringify(item));
-    }
-    lastSyncedSnapshots[collectionName] = map;
-  };
-
-  populate('classes', data.classes);
-  populate('families', data.families);
-  populate('students', data.students);
-  populate('buses', data.buses);
-  populate('stops', data.stops);
-  populate('transportAssignments', data.transportAssignments);
-  populate('templates', data.templates);
-  populate('bankAccounts', data.bankAccounts);
-
-  if (Array.isArray(data.studentAccountHistory)) {
-    const histMap = new Map<string, string>();
-    for (const h of data.studentAccountHistory) {
-      if (h?.id) histMap.set(h.id, '1');
-    }
-    lastSyncedSnapshots['studentAccountHistory'] = histMap;
-  }
-
-  if (data.institute && data.institute.name) {
-    lastSyncedSnapshots['institute'] = new Map([['_', JSON.stringify(data.institute)]]);
-  }
-}
-
 export function subscribeDbStatus(callback: (status: DbStatus) => void): () => void {
   statusListeners.push(callback);
   callback({
     isConnected,
-    isSyncing,
     engine: currentEngine,
     latencyMs: dbLatencyMs,
     pool: dbPoolStats,
@@ -246,11 +153,7 @@ export async function checkBackendHealth(): Promise<ApiHealthResponse | null> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data: ApiHealthResponse = await res.json();
     isConnected = data.database?.healthy ?? true;
-    currentEngine = data.engine;
-    dbLatencyMs = data.database?.latencyMs;
-    dbPoolStats = data.database?.pool;
     if (data.revision) currentRevision = data.revision;
-    if (typeof data.connectedClients === 'number') activePeers = data.connectedClients;
     notifyStatus();
     return data;
   } catch (err) {
@@ -273,12 +176,23 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
   if (!targetId) return null;
 
   const headers = { 'x-institution-id': targetId };
-  const safeJson = async (p: Promise<Response>, fallback: any) => {
+  // A request that fails for a technical reason (5xx, network, timeout) must NOT
+  // turn into an empty list: the app would show "no vouchers" / "no locked
+  // months" and carry on as if that were true. Such failures are collected and
+  // the whole load is reported as failed. A 401/403 only means this user may
+  // not see that data (e.g. no transport.view), so it keeps the empty fallback.
+  const failedParts: string[] = [];
+  const safeJson = async (p: Promise<Response>, fallback: any, label?: string) => {
     try {
       const res = await p;
-      if (!res.ok) return fallback;
+      if (res.status === 401 || res.status === 403) return fallback;
+      if (!res.ok) {
+        if (label) failedParts.push(label);
+        return fallback;
+      }
       return await res.json();
     } catch {
+      if (label) failedParts.push(label);
       return fallback;
     }
   };
@@ -301,29 +215,39 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
       meRes,
       usersRes,
     ] = await Promise.all([
-      safeJson(fetch('/api/classes', { headers }), { items: [] }),
-      safeJson(fetch('/api/families', { headers }), { items: [] }),
+      safeJson(fetch('/api/classes', { headers }), { items: [] }, 'classes'),
+      safeJson(fetch('/api/families', { headers }), { items: [] }, 'families'),
       // Students: unpaged dynamic fetch so components receive the complete roster
-      safeJson(fetch('/api/students', { headers }), { students: [] }),
-      safeJson(fetch('/api/transport/buses', { headers }), { items: [] }),
-      safeJson(fetch('/api/transport/stops', { headers }), { items: [] }),
-      safeJson(fetch('/api/transport/assignments', { headers }), { items: [] }),
-      safeJson(fetch('/api/fee-templates', { headers }), { items: [] }),
+      safeJson(fetch('/api/students', { headers }), { students: [] }, 'students'),
+      safeJson(fetch('/api/transport/buses', { headers }), { items: [] }, 'buses'),
+      safeJson(fetch('/api/transport/stops', { headers }), { items: [] }, 'stops'),
+      safeJson(fetch('/api/transport/assignments', { headers }), { items: [] }, 'transport assignments'),
+      safeJson(fetch('/api/fee-templates', { headers }), { items: [] }, 'fee templates'),
       // Working set only: everything from the oldest unlocked month on, each
       // student's latest voucher and every open voucher. Closed (locked)
       // history is fetched on demand — see apiFetchHistory.
-      safeJson(fetch('/api/vouchers?window=1', { headers }), { vouchers: [] }),
-      safeJson(fetch('/api/collections?window=1', { headers }), { collections: [] }),
-      safeJson(fetch('/api/transactions?window=1', { headers }), { transactions: [] }),
-      safeJson(fetch('/api/bank-accounts', { headers }), { items: [] }),
-      safeJson(fetch('/api/student-account-history', { headers }), { entries: [] }),
-      safeJson(fetch('/api/locked-months', { headers }), { months: [] }),
-      safeJson(fetch('/api/auth/me', { headers }), {}),
+      safeJson(fetch('/api/vouchers?window=1', { headers }), { vouchers: [] }, 'vouchers'),
+      safeJson(fetch('/api/collections?window=1', { headers }), { collections: [] }, 'collections'),
+      safeJson(fetch('/api/transactions?window=1', { headers }), { transactions: [] }, 'transactions'),
+      safeJson(fetch('/api/bank-accounts', { headers }), { items: [] }, 'bank accounts'),
+      safeJson(fetch('/api/student-account-history', { headers }), { entries: [] }, 'account history'),
+      safeJson(fetch('/api/locked-months', { headers }), { months: [] }, 'closed months'),
+      safeJson(fetch('/api/auth/me', { headers }), {}, 'institute details'),
       // Users list requires users.manage; a caller without it gets a 403,
       // which safeJson turns into {} — applyServerState only overwrites
       // `users` when the array is non-empty, so this degrades gracefully.
       safeJson(fetch('/api/users', { headers }), {}),
     ]);
+
+    if (failedParts.length > 0) {
+      console.warn('[Sync] State load incomplete:', failedParts);
+      return {
+        success: false,
+        engine: 'postgres',
+        data: null,
+        error: `Could not load ${failedParts.join(', ')}. Nothing was changed on screen; please retry.`,
+      };
+    }
 
     const institution = meRes?.institution;
     const studentList = studentsRes.students || [];
@@ -376,8 +300,6 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
         settings: instSettings,
       };
     }
-
-    initializeSyncSnapshots(data);
     isConnected = true;
     currentEngine = currentEngine || 'postgres';
     notifyStatus();
@@ -390,24 +312,11 @@ export async function fetchServerState(instId?: string): Promise<ApiStateRespons
   }
 }
 
-// --- Per-collection diff-and-sync (replaces the old generic /api/sync) ---
-//
-// AppContext's persistence effect still computes and passes the FULL current
-// value of every collection on every change (unchanged from before — see
-// the useEffect that calls queueDatabaseSync near the top of AppContext.tsx).
-// Rather than requiring changes to that effect or to the ~60 mutator
-// functions that feed it, queueDatabaseSync() below diffs each collection
-// against the last-synced snapshot and fires targeted REST calls only for
-// what actually changed (create/update/delete), against the real per-entity
-// endpoints — never a bulk "replace everything" call.
-//
-// Vouchers, collections, and transactions are deliberately NOT synced here:
-// they go through the dedicated transactional endpoints
-// (apiGenerateVouchers / apiReceiveCollection / apiCarryForwardBatch),
-// which is what actually keeps runVoucherTransaction's concurrency
-// guarantees intact. `users` and `auditLogs` are also excluded — user
-// management has its own endpoints, and audit logs are server-generated
-// only.
+// --- Confirmed batch endpoints ---
+// Every entity collection is written through apiCommitBatch (below): one all-or-nothing call
+// per change, and the screen follows only after the server confirms. There is no background
+// diff-and-sync any more. Vouchers, collections and transactions use their own transactional
+// endpoints (apiGenerateVouchers / apiReceiveCollection / apiCarryForwardBatch).
 const SIMPLE_ENTITY_ENDPOINTS: Record<string, string> = {
   classes: '/api/classes',
   families: '/api/families',
@@ -419,181 +328,12 @@ const SIMPLE_ENTITY_ENDPOINTS: Record<string, string> = {
   students: '/api/students',
 };
 
-// Fields to strip before diffing/sending `families` and `students`, since
-// they're server-derived/not real columns and would otherwise cause every
-// item to look "changed" every cycle (families.memberStudentIds is derived
-// from students.familyId; students carries denormalized display-only
-// fields on some responses).
-const STRIP_BEFORE_SYNC: Record<string, string[]> = {
-  families: ['memberStudentIds'],
-};
-
 // Family numbers are issued by the server. When a newly created family comes back with a
 // different number than the client's provisional one, this handler lets the app adopt it.
-let familyNumberAssignedHandler: ((familyId: string, familyNo: string) => void) | null = null;
-export function setFamilyNumberAssignedHandler(handler: ((familyId: string, familyNo: string) => void) | null) {
-  familyNumberAssignedHandler = handler;
-}
-
-let lastSyncedSnapshots: Record<string, Map<string, string>> = {};
 // Permanently-failed ids (e.g. a 409 duplicate) are parked here so we don't
 // retry something that will never succeed by retrying identically forever.
 // Cleared automatically once the item is edited (its serialized form
 // changes) or removed from the collection.
-let permanentlyFailedIds: Record<string, Map<string, string>> = {};
-
-function stripFields(collectionName: string, item: any): any {
-  const strip = STRIP_BEFORE_SYNC[collectionName];
-  if (!strip) return item;
-  const copy = { ...item };
-  for (const f of strip) delete copy[f];
-  return copy;
-}
-
-async function diffAndSyncSimpleCollection(
-  collectionName: string,
-  endpoint: string,
-  items: any[]
-): Promise<{ failedIds: string[] }> {
-  if (!activeInstitutionId) {
-    return { failedIds: [] };
-  }
-  const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
-  const nextMap = new Map<string, string>();
-  const failedMap = permanentlyFailedIds[collectionName] || new Map<string, string>();
-  const currentIds = new Set<string>();
-  const failedIds: string[] = [];
-
-  for (const rawItem of items) {
-    if (!rawItem?.id) continue;
-    const item = stripFields(collectionName, rawItem);
-    currentIds.add(item.id);
-    const serialized = JSON.stringify(item);
-
-    if (failedMap.get(item.id) === serialized) {
-      // Unchanged since it last permanently failed (e.g. still the same
-      // duplicate Student ID No.) — don't retry an operation that will fail
-      // identically forever.
-      nextMap.set(item.id, serialized);
-      continue;
-    }
-
-    if (prevMap.get(item.id) === serialized) {
-      nextMap.set(item.id, serialized);
-      continue;
-    }
-
-    const isNew = !prevMap.has(item.id);
-    try {
-      const res = await fetch(isNew ? endpoint : `${endpoint}/${item.id}`, {
-        method: isNew ? 'POST' : 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
-        },
-        body: JSON.stringify(item),
-      });
-      if (res.status >= 400 && res.status < 500) {
-        // Permanent failure (validation error, duplicate, not found, etc.)
-        // — record it and stop retrying until the item itself changes.
-        const body = await res.json().catch(() => ({}));
-        console.warn(`[Sync] ${collectionName}/${item.id} rejected (${res.status}):`, body?.error || res.statusText);
-        failedMap.set(item.id, serialized);
-        nextMap.set(item.id, serialized);
-        failedIds.push(item.id);
-        continue;
-      }
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      failedMap.delete(item.id);
-      let savedSerialized = serialized;
-      if (collectionName === 'families' && isNew) {
-        const body = await res.json().catch(() => null);
-        const assigned = body?.item?.familyNo;
-        if (typeof assigned === 'string' && assigned && assigned !== item.familyNo) {
-          // Track the server's version so adopting the number does not trigger another save.
-          savedSerialized = JSON.stringify({ ...item, familyNo: assigned });
-          familyNumberAssignedHandler?.(item.id, assigned);
-        }
-      }
-      nextMap.set(item.id, savedSerialized);
-    } catch (err) {
-      console.warn(`[Sync] Failed to persist ${collectionName}/${item.id}, will retry:`, err);
-      // Leave it out of nextMap so it's retried on the next sync cycle.
-      failedIds.push(item.id);
-    }
-  }
-
-  for (const [id, serialized] of prevMap.entries()) {
-    if (!currentIds.has(id)) {
-      try {
-        const res = await fetch(`${endpoint}/${id}`, {
-          method: 'DELETE',
-          headers: activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {},
-        });
-        if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
-        failedMap.delete(id);
-      } catch (err) {
-        console.warn(`[Sync] Failed to delete ${collectionName}/${id}, will retry:`, err);
-        nextMap.set(id, serialized); // keep tracking so we retry the delete next cycle
-        failedIds.push(id);
-      }
-    }
-  }
-
-  lastSyncedSnapshots[collectionName] = nextMap;
-  permanentlyFailedIds[collectionName] = failedMap;
-  return { failedIds };
-}
-
-/**
- * Immediately (not debounced) diffs-and-syncs a single simple-entity
- * collection against the server and reports which ids, if any, failed to
- * persist (create/update rejected, or delete failed/was forbidden).
- *
- * Used by flows — like the Data Cleanup tool — that must know whether a
- * mutation actually reached the database before telling the user it
- * succeeded, rather than relying on the debounced background sync in
- * queueDatabaseSync(), which never reports failures back to its caller.
- */
-export async function syncSimpleEntityCollectionNow(
-  collectionName: keyof typeof SIMPLE_ENTITY_ENDPOINTS,
-  items: any[]
-): Promise<{ failedIds: string[] }> {
-  const endpoint = SIMPLE_ENTITY_ENDPOINTS[collectionName];
-  if (!endpoint) return { failedIds: [] };
-  return diffAndSyncSimpleCollection(collectionName, endpoint, items);
-}
-
-async function diffAppendOnlyCollection(collectionName: string, endpoint: string, items: any[]) {
-  if (!activeInstitutionId) return;
-  const prevMap = lastSyncedSnapshots[collectionName] || new Map<string, string>();
-  const nextMap = new Map<string, string>(prevMap);
-
-  for (const item of items) {
-    if (!item?.id || prevMap.has(item.id)) continue;
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {}),
-        },
-        body: JSON.stringify(item),
-      });
-      if (res.ok) {
-        nextMap.set(item.id, '1');
-      } else {
-        console.warn(`[Sync] Failed to append ${collectionName}/${item.id}: HTTP ${res.status}`);
-      }
-    } catch (err) {
-      console.warn(`[Sync] Failed to append ${collectionName}/${item.id}:`, err);
-    }
-  }
-
-  lastSyncedSnapshots[collectionName] = nextMap;
-}
 
 export async function apiLockMonth(month: string, notes: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -625,49 +365,11 @@ export async function apiUnlockMonth(month: string, reason: string): Promise<{ s
   }
 }
 
-async function syncInstituteProfile(institute: any) {
-  if (!activeInstitutionId || !institute || !institute.name) return;
-  const serialized = JSON.stringify(institute);
-  const prevMap = lastSyncedSnapshots['institute'] || new Map<string, string>();
-  if (prevMap.get('_') === serialized) return;
-
-  try {
-    const res = await fetch('/api/institute', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-institution-id': activeInstitutionId,
-      },
-      body: JSON.stringify({
-        name: institute.name,
-        logoUrl: institute.logoUrl,
-        address: institute.address,
-        phone: institute.phone,
-        email: institute.email,
-        website: institute.website,
-        registrationNo: institute.regNo,
-        currency: institute.currency || 'USD',
-        settings: {
-          ...(institute.settings || {}),
-          sessionTimeoutMinutes: Number(institute.sessionTimeoutMinutes) || Number(institute.settings?.sessionTimeoutMinutes) || 10,
-        },
-      }),
-    });
-    if (res.ok) {
-      lastSyncedSnapshots['institute'] = new Map([['_', serialized]]);
-    } else {
-      console.warn(`[Sync] Failed to update institute profile: HTTP ${res.status}`);
-    }
-  } catch (err) {
-    console.warn('[Sync] Failed to update institute profile:', err);
-  }
-}
-
 /**
  * Directly updates institution settings in PostgreSQL without disk caching.
  */
-export async function apiUpdateInstituteSettings(settings: Record<string, any>): Promise<boolean> {
-  if (!activeInstitutionId) return false;
+export async function apiUpdateInstituteSettings(settings: Record<string, any>): Promise<{ success: boolean; error?: string }> {
+  if (!activeInstitutionId) return { success: false, error: 'No institution is selected.' };
   try {
     const res = await fetch('/api/institute', {
       method: 'PUT',
@@ -679,84 +381,11 @@ export async function apiUpdateInstituteSettings(settings: Record<string, any>):
         settings,
       }),
     });
-    return res.ok;
+    if (res.ok) return { success: true };
+    const body = await res.json().catch(() => ({}));
+    return { success: false, error: body?.error || 'The server did not accept the settings change.' };
   } catch {
-    return false;
-  }
-}
-
-/**
- * Directly synchronizes state with the PostgreSQL database for the active
- * institution without debounce delay. See the diff-and-sync functions above for how this maps
- * onto the real per-entity REST endpoints.
- */
-export function queueDatabaseSync(payload: any, instId?: string, delayMs = 0): void {
-  const targetId = instId || activeInstitutionId;
-  if (!targetId) return;
-
-  pendingState = { ...pendingState, ...payload };
-
-  if (syncTimeout) {
-    clearTimeout(syncTimeout);
-    syncTimeout = null;
-  }
-
-  const flushSync = async () => {
-    if (Object.keys(pendingState).length === 0) return;
-
-    // Do not attempt to diff or emit offline failures if snapshots haven't been loaded yet for this institution
-    if (!activeInstitutionId || Object.keys(lastSyncedSnapshots).length === 0) {
-      return;
-    }
-
-    if (!isConnected) {
-      pendingState = {};
-      isSyncing = false;
-      notifyStatus();
-      notifySyncFailure('database', ['offline_blocked']);
-      return;
-    }
-
-    const toSend = pendingState;
-    pendingState = {};
-    isSyncing = true;
-    notifyStatus();
-
-    try {
-      const jobs: Promise<unknown>[] = [];
-
-      for (const [collectionName, endpoint] of Object.entries(SIMPLE_ENTITY_ENDPOINTS)) {
-        if (Array.isArray(toSend[collectionName])) {
-          jobs.push(
-            diffAndSyncSimpleCollection(collectionName, endpoint, toSend[collectionName]).then(
-              ({ failedIds }) => notifySyncFailure(collectionName, failedIds)
-            )
-          );
-        }
-      }
-      if (Array.isArray(toSend.studentAccountHistory)) {
-        jobs.push(diffAppendOnlyCollection('studentAccountHistory', '/api/student-account-history', toSend.studentAccountHistory));
-      }
-      if (toSend.institute) {
-        jobs.push(syncInstituteProfile(toSend.institute));
-      }
-
-      await Promise.all(jobs);
-      isConnected = true;
-    } catch (err) {
-      console.warn('[Sync] Direct write to database encountered error:', err);
-      isConnected = false;
-    } finally {
-      isSyncing = false;
-      notifyStatus();
-    }
-  };
-
-  if (delayMs <= 0) {
-    // Direct immediate write to PostgreSQL
-    flushSync();
-  } else {
-    syncTimeout = setTimeout(flushSync, delayMs);
+    return { success: false, error: 'Could not reach the server. Nothing was changed.' };
   }
 }
 
@@ -794,7 +423,6 @@ export function initLiveRealtimeSync(instId?: string): () => void {
           if (msg.revision) currentRevision = msg.revision;
         } else if (msg.type === 'INSTITUTION_DELETED') {
           setActiveInstitutionId(null);
-          resetSyncSnapshots();
           try {
             sessionStorage.setItem('school_deleted_notice', 'This institution and all its data have been permanently deleted by an administrator.');
           } catch {}
@@ -812,9 +440,16 @@ export function initLiveRealtimeSync(instId?: string): () => void {
               return;
             }
             if (msg.revision) currentRevision = msg.revision;
-            const freshState = await fetchServerState(targetId);
+            let freshState = await fetchServerState(targetId);
+            if (!freshState?.success) {
+              // A failed partial load must never be applied; retry once shortly after.
+              await new Promise((r) => setTimeout(r, 3000));
+              freshState = await fetchServerState(targetId);
+            }
             if (freshState?.success && freshState.data) {
               remoteUpdateListeners.forEach((fn) => fn(freshState.data));
+            } else {
+              console.warn('[Sync] Live refresh skipped: could not load latest data.');
             }
           }
         }
@@ -962,6 +597,22 @@ export async function apiLogin(
   }
 }
 
+export async function apiChangePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network connection failed' };
+  }
+}
+
 export async function apiGetMe(): Promise<{
   success: boolean;
   user?: User;
@@ -1010,7 +661,6 @@ export async function apiSavePreferences(
 
 export async function apiLogout(): Promise<{ success: boolean }> {
   setActiveInstitutionId(null);
-  resetSyncSnapshots();
   try {
     const res = await fetch('/api/auth/logout', {
       method: 'POST',
@@ -1050,8 +700,9 @@ export async function apiCreateInvite(
     assignedRole: string;
     permissions: string[];
     createdBy?: string;
+    inviteCode?: string;
   }
-): Promise<{ success: boolean; invite?: OperatorInvite; error?: string }> {
+): Promise<{ success: boolean; invite?: ServerInvite; error?: string }> {
   try {
     const res = await fetch('/api/invites/create', {
       method: 'POST',
@@ -1116,7 +767,7 @@ export async function apiDeleteUser(id: string): Promise<{ success: boolean; err
 
 export async function apiListInvites(
   institutionId: string
-): Promise<{ success: boolean; invites?: OperatorInvite[]; error?: string }> {
+): Promise<{ success: boolean; invites?: ServerInvite[]; error?: string }> {
   try {
     const res = await fetch(`/api/invites/list?institutionId=${encodeURIComponent(institutionId)}`, {
       headers: { 'x-institution-id': institutionId },
@@ -1328,6 +979,9 @@ const auditQueryString = (query: AuditLogQuery): string => {
 const instHeaders = (): Record<string, string> =>
   activeInstitutionId ? { 'x-institution-id': activeInstitutionId } : {};
 
+/** Headers every school-scoped request needs (used by add-on modules that make their own requests). */
+export const getApiHeaders = (): Record<string, string> => ({ 'x-client-id': CLIENT_ID, ...instHeaders() });
+
 /** Late fine charged since each student's last payment, keyed by student id (server-derived). */
 export async function apiFetchFineSincePayment(): Promise<Record<string, number> | null> {
   try {
@@ -1468,3 +1122,78 @@ export async function apiFetchAllFinancialIds(): Promise<{
     return { success: false, voucherIds: [], collectionIds: [], transactionIds: [], error: err?.message || 'Failed to list records.' };
   }
 }
+
+
+// ---- Audit-gap notice -------------------------------------------------------
+// The server sets X-Audit-Warning when an action succeeded but its audit log
+// entry could not be written. Surface that instead of leaving it console-only.
+type AuditWarningListener = () => void;
+const auditWarningListeners = new Set<AuditWarningListener>();
+export function subscribeAuditWarnings(fn: AuditWarningListener): () => void {
+  auditWarningListeners.add(fn);
+  return () => { auditWarningListeners.delete(fn); };
+}
+if (typeof window !== 'undefined' && !(window as any).__auditFetchWrapped) {
+  (window as any).__auditFetchWrapped = true;
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args: Parameters<typeof fetch>) => {
+    const res = await nativeFetch(...args);
+    try {
+      if (res.headers.get('X-Audit-Warning')) auditWarningListeners.forEach((fn) => fn());
+    } catch {}
+    return res;
+  };
+}
+
+
+// ---- Confirmed writes (the server decides; the screen follows) -----------------
+// A change to an entity collection is sent as one all-or-nothing batch and the
+// caller shows it only after the server has confirmed it.
+
+export type CommitEntity =
+  | 'classes' | 'families' | 'students' | 'buses' | 'stops'
+  | 'transportAssignments' | 'templates' | 'bankAccounts';
+
+export interface CommitResult {
+  success: boolean;
+  /** Rows as saved by the server (students come back under `items` too). */
+  items?: any[];
+  /** Families created/updated as part of a student batch. */
+  families?: any[];
+  deletedIds?: string[];
+  error?: string;
+  /** STALE_VERSION and IN_USE mean local data is out of date or conflicts. */
+  code?: string;
+}
+
+export async function apiCommitBatch(
+  entity: CommitEntity,
+  body: { upserts?: any[]; deleteIds?: string[]; history?: any[]; familyUpserts?: any[] }
+): Promise<CommitResult> {
+  if (!activeInstitutionId) return { success: false, error: 'You are not signed in to an institution.' };
+  const endpoint = entity === 'students' ? '/api/students/batch' : `${SIMPLE_ENTITY_ENDPOINTS[entity]}/batch`;
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-institution-id': activeInstitutionId },
+      body: JSON.stringify(body),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      return {
+        success: false,
+        code: json.code,
+        error: json.error || `The server rejected the change (HTTP ${res.status}). Nothing was saved.`,
+      };
+    }
+    return {
+      success: true,
+      items: entity === 'students' ? json.students : json.items,
+      families: json.families,
+      deletedIds: json.deletedIds,
+    };
+  } catch {
+    return { success: false, error: 'Could not reach the server. Nothing was saved.' };
+  }
+}
+

@@ -30,7 +30,7 @@ import {
   User,
   UserRole,
   Institution,
-  OperatorInvite,
+  ServerInvite,
   VoucherCopyType,
   VoucherDeletionResolution,
   VoucherItem,
@@ -62,7 +62,6 @@ import {
 import { calculateStudentVoucherPreview, formatMonthName, getCurrentMonthString, getDaysInMonth, getEffectiveMultiple, getNextMonthString, getPreviousMonthString, roundUpToMultiple, recalculateVoucherChain, getChangedVouchers, getLockedMonthsTouched, formatLockedImpactMessage, VoucherPreviewCalculation, normalizeDateToISO, normalizeNationalId, formatCurrency, DEFAULT_CURRENCY, setActiveCurrency } from '../utils/feeMath';
 import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
 import {
-  queueDatabaseSync,
   fetchServerState,
   initLiveRealtimeSync,
   subscribeRemoteChanges,
@@ -88,17 +87,15 @@ import {
   apiFetchAllFinancialIds,
   apiLockMonth,
   apiUnlockMonth,
-  syncSimpleEntityCollectionNow,
-  subscribeSyncFailures,
-  initializeSyncSnapshots,
-  resetSyncSnapshots,
+  subscribeAuditWarnings,
+  apiCommitBatch,
   checkMutationAllowed,
   subscribeDbStatus,
   apiUpdateInstituteSettings,
   apiPostAuditEvent,
   setActionLockActive,
-  setFamilyNumberAssignedHandler,
 } from '../services/apiSync';
+import type { CommitEntity, CommitResult } from '../services/apiSync';
 
 // Marker for a family number that the server has not issued yet.
 const PENDING_FAMILY_NO = 'FAM-PENDING';
@@ -139,7 +136,7 @@ interface AppContextType {
   isAuthenticated: boolean;
   isSessionLoading: boolean;
   users: User[];
-  invites: OperatorInvite[];
+  invites: ServerInvite[];
   registerInstitution: (params: {
     schoolName: string;
     schoolCode?: string;
@@ -164,9 +161,10 @@ interface AppContextType {
     fullName: string;
     assignedRole: UserRole;
     permissions?: string[];
-  }) => Promise<{ success: boolean; invite?: OperatorInvite; error?: string }>;
+    inviteCode?: string;
+  }) => Promise<{ success: boolean; invite?: ServerInvite; error?: string }>;
   refreshInvites: () => Promise<void>;
-  login: (usernameOrEmail: string, password: string, institutionCode?: string) => Promise<{ success: boolean; error?: string; user?: User }>;
+  login: (usernameOrEmail: string, password: string, institutionCode?: string) => Promise<{ success: boolean; error?: string; user?: User; mustChangePassword?: boolean }>;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
   addUser: (userData: Omit<User, 'id'>) => Promise<{ success: boolean; error?: string; credentialsSummary?: { username: string; password?: string; institutionCode?: string; role: string } }>;
@@ -182,91 +180,98 @@ interface AppContextType {
 
   // Classes
   classes: SchoolClass[];
-  addClass: (name: string, monthlyFee: number, sortOrder: number) => { success: boolean; error?: string; newClass?: SchoolClass };
-  updateClass: (id: string, updates: Partial<SchoolClass>) => { success: boolean; error?: string };
-  deleteClass: (id: string) => { success: boolean; error?: string };
-  toggleClassActive: (id: string) => { success: boolean; error?: string };
-  reorderClasses: (reorderedClasses: SchoolClass[]) => { success: boolean; error?: string };
+  addClass: (name: string, monthlyFee: number, sortOrder: number) => Promise<{ success: boolean; error?: string; newClass?: SchoolClass }>;
+  updateClass: (id: string, updates: Partial<SchoolClass>) => Promise<{ success: boolean; error?: string }>;
+  deleteClass: (id: string) => Promise<{ success: boolean; error?: string }>;
+  toggleClassActive: (id: string) => Promise<{ success: boolean; error?: string }>;
+  reorderClasses: (reorderedClasses: SchoolClass[]) => Promise<{ success: boolean; error?: string }>;
 
   // Students
   students: Student[];
-  addStudent: (student: Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string }) => {
+  addStudent: (student: Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string }) => Promise<{
     success: boolean;
     student?: Student;
     error?: string;
-  };
-  updateStudent: (id: string, updates: Partial<Student>) => { success: boolean; error?: string };
-  deleteStudent: (id: string) => { success: boolean; error?: string };
-  bulkDeleteStudents: (ids: string[]) => { deletedCount: number; skippedIds: string[] };
+  }>;
+  bulkAddStudents: (
+    students: Array<Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string }>
+  ) => Promise<{ success: boolean; importedCount: number; error?: string }>;
+  updateStudent: (id: string, updates: Partial<Student>) => Promise<{ success: boolean; error?: string }>;
+  deleteStudent: (id: string) => Promise<{ success: boolean; error?: string }>;
+  bulkDeleteStudents: (ids: string[]) => Promise<{ deletedCount: number; skippedIds: string[]; error?: string }>;
 
   // Families
   families: Family[];
-  addFamily: (family: Omit<Family, 'id' | 'familyNo'>) => { success: boolean; family?: Family; error?: string };
-  updateFamily: (id: string, updates: Partial<Family>) => { success: boolean; error?: string };
-  deleteFamily: (id: string) => { success: boolean; error?: string };
-  addStudentToFamily: (familyId: string, studentId: string) => void;
-  removeStudentFromFamily: (familyId: string, studentId: string) => void;
+  addFamily: (family: Omit<Family, 'id' | 'familyNo'>) => Promise<{ success: boolean; family?: Family; error?: string }>;
+  updateFamily: (id: string, updates: Partial<Family>) => Promise<{ success: boolean; error?: string }>;
+  deleteFamily: (id: string) => Promise<{ success: boolean; error?: string }>;
+  deleteFamilies: (ids: string[]) => Promise<{ success: boolean; error?: string }>;
+  addStudentToFamily: (familyId: string, studentId: string) => Promise<{ success: boolean; error?: string }>;
+  removeStudentFromFamily: (familyId: string, studentId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Transport
   buses: TransportBus[];
   stops: TransportStop[];
   transportAssignments: TransportAssignment[];
-  addBus: (bus: Omit<TransportBus, 'id'>) => { success: boolean; error?: string };
-  updateBus: (id: string, updates: Partial<TransportBus>) => { success: boolean; error?: string };
-  deleteBus: (id: string) => { success: boolean; error?: string };
-  reorderBuses: (reorderedBuses: TransportBus[]) => { success: boolean; error?: string };
-  addStop: (stop: Omit<TransportStop, 'id'>) => { success: boolean; error?: string };
-  updateStop: (id: string, updates: Partial<TransportStop>) => { success: boolean; error?: string };
-  deleteStop: (id: string) => { success: boolean; error?: string };
-  reorderStops: (reorderedStops: TransportStop[]) => { success: boolean; error?: string };
+  addBus: (bus: Omit<TransportBus, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  updateBus: (id: string, updates: Partial<TransportBus>) => Promise<{ success: boolean; error?: string }>;
+  deleteBus: (id: string) => Promise<{ success: boolean; error?: string }>;
+  reorderBuses: (reorderedBuses: TransportBus[]) => Promise<{ success: boolean; error?: string }>;
+  addStop: (stop: Omit<TransportStop, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  updateStop: (id: string, updates: Partial<TransportStop>) => Promise<{ success: boolean; error?: string }>;
+  deleteStop: (id: string) => Promise<{ success: boolean; error?: string }>;
+  reorderStops: (reorderedStops: TransportStop[]) => Promise<{ success: boolean; error?: string }>;
   bulkSaveTransportStops: (
     stopsList: Array<Omit<TransportStop, 'id'> & { id?: string }>
-  ) => { success: boolean; count: number; addedCount: number; updatedCount: number };
+  ) => Promise<{ success: boolean; count: number; addedCount: number; updatedCount: number; error?: string }>;
   saveTransportAssignment: (
     assignment: Omit<TransportAssignment, 'id'> & { id?: string }
-  ) => { success: boolean; error?: string };
+  ) => Promise<{ success: boolean; error?: string }>;
   bulkSaveTransportAssignments: (
-    assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>
-  ) => { success: boolean; count: number };
-  deleteTransportAssignment: (id: string) => void;
+    assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>,
+    options?: { deleteIds?: string[]; history?: any[] }
+  ) => Promise<{ success: boolean; count: number; error?: string }>;
+  deleteTransportAssignment: (id: string) => Promise<{ success: boolean; error?: string }>;
+  deleteTransportAssignments: (ids: string[]) => Promise<{ success: boolean; error?: string }>;
   bulkUpdateTransportDaysForMonth: (
     targetMonth: string,
     daysCharged: number
-  ) => { success: boolean; updatedCount: number };
+  ) => Promise<{ success: boolean; updatedCount: number; error?: string }>;
 
   // Fee Particular Templates
   templates: FeeTemplate[];
-  saveGlobalTemplate: (template: Omit<FeeTemplate, 'id'>, month?: string) => void;
-  updateGlobalTemplatesList: (newTemplates: FeeTemplate[], month?: string) => void;
-  deleteGlobalTemplates: (month?: string) => void;
+  saveGlobalTemplate: (template: Omit<FeeTemplate, 'id'>, month?: string) => Promise<{ success: boolean; error?: string }>;
+  updateGlobalTemplatesList: (newTemplates: FeeTemplate[], month?: string) => Promise<{ success: boolean; error?: string }>;
+  deleteGlobalTemplates: (month?: string) => Promise<{ success: boolean; error?: string }>;
   saveClassTemplateOverrides: (
     classId: string,
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
-  ) => void;
-  deleteClassTemplates: (classId: string, month?: string) => void;
+  ) => Promise<{ success: boolean; error?: string }>;
+  deleteClassTemplates: (classId: string, month?: string) => Promise<{ success: boolean; error?: string }>;
   saveStudentTemplateOverride: (
     studentId: string,
     kind: ParticularKind,
     label: string,
     amount: number,
     month?: string
-  ) => void;
+  ) => Promise<{ success: boolean; error?: string }>;
   saveStudentTemplateOverrides: (
     studentId: string,
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
-  ) => void;
+  ) => Promise<{ success: boolean; error?: string }>;
   bulkSaveMultipleStudentTemplateOverrides: (
     entries: Array<{
       studentId: string;
       items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>;
     }>,
     month: string
-  ) => void;
-  deleteStudentTemplates: (studentId: string, month?: string) => void;
-  resetAllTemplates: () => void;
-  deleteTemplate: (id: string) => void;
+  ) => Promise<{ success: boolean; error?: string }>;
+  deleteStudentTemplates: (studentId: string, month?: string) => Promise<{ success: boolean; error?: string }>;
+  deleteStudentTemplateScopes: (scopes: Array<{ studentId: string; month?: string }>) => Promise<{ success: boolean; error?: string }>;
+  resetAllTemplates: () => Promise<{ success: boolean; error?: string }>;
+  deleteTemplate: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Fee Vouchers & Generation
   vouchers: FeeVoucher[];
@@ -283,7 +288,7 @@ interface AppContextType {
     selectedStudentIds?: string[],
     dueDate?: string,
     lateFeeRate?: number
-  ) => { success: boolean; generatedCount: number; error?: string };
+  ) => Promise<{ success: boolean; generatedCount: number; error?: string; warning?: string }>;
   generateAdmissionVoucher: (
     studentId: string,
     month: string,
@@ -293,7 +298,7 @@ interface AppContextType {
       notes?: string;
       items?: { kind: ParticularKind; label: string; amount: number }[];
     }
-  ) => { success: boolean; voucher?: FeeVoucher; error?: string };
+  ) => Promise<{ success: boolean; voucher?: FeeVoucher; error?: string }>;
   collectVoucherPayment: (
     voucherId: string,
     amount: number,
@@ -302,12 +307,12 @@ interface AppContextType {
     notes?: string,
     date?: string,
     updatedParticulars?: VoucherItem[]
-  ) => { success: boolean; transaction?: PaymentTransaction; error?: string };
+  ) => Promise<{ success: boolean; transaction?: PaymentTransaction; voucher?: FeeVoucher; error?: string }>;
   updateVoucherParticulars: (
     voucherId: string,
     updatedParticulars: VoucherItem[]
-  ) => { success: boolean; voucher?: FeeVoucher; error?: string };
-  reissueVoucher: (voucherId: string) => { success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string };
+  ) => Promise<{ success: boolean; voucher?: FeeVoucher; error?: string }>;
+  reissueVoucher: (voucherId: string) => Promise<{ success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string }>;
   bulkCsvCollection: (
     rows: {
       regNo?: string;
@@ -322,7 +327,7 @@ interface AppContextType {
     }[],
     month: string,
     date?: string
-  ) => { success: boolean; successCount: number; errors: string[] };
+  ) => Promise<{ success: boolean; successCount: number; errors: string[] }>;
   bulkCarryForwardDefaulters: (
     voucherIds: string[],
     targetMonth: string,
@@ -330,26 +335,28 @@ interface AppContextType {
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
   ) => Promise<{ success: boolean; successCount: number; errors: string[] }>;
-  undoCarryForwardVoucher: (voucherId: string) => { success: boolean; error?: string };
+  undoCarryForwardVoucher: (voucherId: string) => Promise<{ success: boolean; error?: string }>;
+  /** True while any voucher or collection write is waiting for the server. */
+  financialSaving: boolean;
   defaultLateFeeRate: number;
-  setDefaultLateFeeRate: (rate: number) => void;
+  setDefaultLateFeeRate: (rate: number) => Promise<{ success: boolean; error?: string }>;
   roundingMultiple: number;
-  setRoundingMultiple: (multiple: number) => void;
+  setRoundingMultiple: (multiple: number) => Promise<{ success: boolean; error?: string }>;
   roundingEnabled: boolean;
-  setRoundingEnabled: (enabled: boolean) => void;
+  setRoundingEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   transportRoundingMultiple: number;
-  setTransportRoundingMultiple: (multiple: number) => void;
+  setTransportRoundingMultiple: (multiple: number) => Promise<{ success: boolean; error?: string }>;
   defaultDueDateEnabled: boolean;
   defaultDueDay: number;
   setDefaultDueDateSettings: (settings: {
     enabled: boolean;
     day?: number;
-  }) => void;
+  }) => Promise<{ success: boolean; error?: string }>;
   getComputedDefaultDueDate: (month: string) => string;
   voucherCopyOrder: VoucherCopyType[];
-  setVoucherCopyOrder: (order: VoucherCopyType[]) => void;
+  setVoucherCopyOrder: (order: VoucherCopyType[]) => Promise<{ success: boolean; error?: string }>;
   voucherDefaultCopies: VoucherCopyType[];
-  setVoucherDefaultCopies: (copies: VoucherCopyType[]) => void;
+  setVoucherDefaultCopies: (copies: VoucherCopyType[]) => Promise<{ success: boolean; error?: string }>;
   getDownstreamVouchersInfo: (ids: string[]) => {
     hasDownstream: boolean;
     conflicts: DownstreamConflict[];
@@ -359,17 +366,17 @@ interface AppContextType {
     id: string,
     force?: boolean,
     mode?: VoucherDeletionResolution
-  ) => { success: boolean; error?: string; hasTxns?: boolean; deletedCount?: number; transactionCount?: number };
+  ) => Promise<{ success: boolean; error?: string; hasTxns?: boolean; deletedCount?: number; transactionCount?: number }>;
   bulkDeleteVouchers: (
     ids: string[],
     force?: boolean,
     mode?: VoucherDeletionResolution
-  ) => { success: boolean; deletedCount: number; error?: string; hasTxns?: boolean; transactionCount?: number };
+  ) => Promise<{ success: boolean; deletedCount: number; error?: string; hasTxns?: boolean; transactionCount?: number }>;
 
   // Collections & Transactions
   collections: FeeCollection[];
   transactions: PaymentTransaction[];
-  deleteCollection: (id: string) => void;
+  deleteCollection: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // UI Preferences & Themes
   isSidebarCollapsed: boolean;
@@ -380,20 +387,22 @@ interface AppContextType {
 
   // Settings & Policy
   priorMonthRule: PriorMonthVoucherRule;
-  setPriorMonthRule: (rule: PriorMonthVoucherRule) => void;
+  setPriorMonthRule: (rule: PriorMonthVoucherRule) => Promise<{ success: boolean; error?: string }>;
+  /** Saves several policy settings in one request; applied on screen only after the server accepts. */
+  savePolicySettings: (patch: Record<string, any>) => Promise<{ success: boolean; error?: string }>;
   skippedMonthRule: SkippedMonthVoucherRule;
-  setSkippedMonthRule: (rule: SkippedMonthVoucherRule) => void;
+  setSkippedMonthRule: (rule: SkippedMonthVoucherRule) => Promise<{ success: boolean; error?: string }>;
   voucherDeletionResolution: VoucherDeletionResolution;
-  setVoucherDeletionResolution: (policy: VoucherDeletionResolution) => void;
+  setVoucherDeletionResolution: (policy: VoucherDeletionResolution) => Promise<{ success: boolean; error?: string }>;
   institute: InstituteProfile;
-  updateInstitute: (updates: Partial<InstituteProfile>) => void;
+  updateInstitute: (updates: Partial<InstituteProfile>) => Promise<{ success: boolean; error?: string }>;
   sessionTimeoutMinutes: number;
-  setSessionTimeoutMinutes: (minutes: number) => void;
+  setSessionTimeoutMinutes: (minutes: number) => Promise<{ success: boolean; error?: string }>;
   bankAccounts: BankAccount[];
-  addBankAccount: (bank: Omit<BankAccount, 'id'>) => void;
-  updateBankAccount: (id: string, updates: Partial<BankAccount>) => void;
-  deleteBankAccount: (id: string) => void;
-  setDefaultBankAccount: (id: string) => void;
+  addBankAccount: (bank: Omit<BankAccount, 'id'>) => Promise<{ success: boolean; error?: string }>;
+  updateBankAccount: (id: string, updates: Partial<BankAccount>) => Promise<{ success: boolean; error?: string }>;
+  deleteBankAccount: (id: string) => Promise<{ success: boolean; error?: string }>;
+  setDefaultBankAccount: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Month Closure Check Helper & Lock Management
   getMonthClosureStatus: (month: string) => MonthClosureStatus;
@@ -408,6 +417,8 @@ interface AppContextType {
   lockMonth: (month: string, notes?: string) => Promise<{ success: boolean; error?: string }>;
   unlockMonth: (month: string, reason: string) => Promise<{ success: boolean; error?: string }>;
   isMonthLocked: (month: string) => boolean;
+  /** Reloads vouchers, collections and the rest from the server (read-only; used after server-side postings). */
+  refreshFromServer: () => Promise<void>;
 
   // System Utility & Granular Cleanup
   cleanupDatabaseTables: (options: DataCleanupOptions) => Promise<CleanupResult>;
@@ -421,22 +432,16 @@ interface AppContextType {
       Partial<Pick<AuditLogEntry, 'operatorId' | 'operatorUsername' | 'operatorName' | 'operatorRole' | 'timestamp'>>
   ) => void;
   auditRetentionMonths: number;
-  setAuditRetentionMonths: (months: number) => void;
+  setAuditRetentionMonths: (months: number) => Promise<{ success: boolean; error?: string }>;
 
   // Student Account History (Chronological Status & Transport Log)
   studentAccountHistory: StudentAccountHistoryEntry[];
-  addStudentAccountHistory: (
-    entry: Omit<StudentAccountHistoryEntry, 'id' | 'timestamp'> & {
-      id?: string;
-      timestamp?: string;
-    }
-  ) => void;
   getStudentAccountHistory: (studentId: string) => StudentAccountHistoryEntry[];
   updateStudentStatus: (
     studentId: string,
     newStatus: StudentStatus,
     reason?: string
-  ) => { success: boolean; error?: string };
+  ) => Promise<{ success: boolean; error?: string }>;
 
   // Global In-App Notifications / Toasts
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info', durationMs?: number) => void;
@@ -452,22 +457,6 @@ const AppContext = createContext<AppContextType | null>(null);
 
 const STORAGE_KEY = 'skooler_app_data_v1';
 
-// Friendly display names for the background sync-failure toast (see the
-// subscribeSyncFailures effect below), keyed by the same collection names
-// used in SIMPLE_ENTITY_ENDPOINTS in apiSync.ts.
-const SYNC_ENTITY_LABELS: Record<string, string> = {
-  students: 'Students',
-  classes: 'Classes & Sections',
-  families: 'Families & Guardians',
-  buses: 'Buses Fleet Directory',
-  stops: 'Bus Stops & Fare Rates',
-  transportAssignments: 'Student Transport Assignments',
-  templates: 'Fee Particular Templates',
-  bankAccounts: 'Bank Accounts',
-  lockedMonths: 'Month Lock/Unlock',
-  database: 'Database records',
-};
-
 /**
  * Reconciles and guarantees strict 1:1 bidirectional consistency between
  * Student.familyId and Family.memberStudentIds.
@@ -479,7 +468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // signed-in user or institution is cached in the browser.
   const [currentInstitution, setCurrentInstitution] = useState<Institution | null>(null);
 
-  const [invites, setInvites] = useState<OperatorInvite[]>([]);
+  const [invites, setInvites] = useState<ServerInvite[]>([]);
 
   // Database Connectivity State
   const [isDbConnected, setIsDbConnected] = useState<boolean>(true);
@@ -618,27 +607,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Policy Settings State (Server-Authoritative in PostgreSQL institutions.settings - no localStorage cache)
   const [priorMonthRule, setPriorMonthRuleState] = useState<PriorMonthVoucherRule>('strict');
 
-  const setPriorMonthRule = (rule: PriorMonthVoucherRule) => {
-    setPriorMonthRuleState(rule);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, priorMonthRule: rule } }));
-    apiUpdateInstituteSettings({ priorMonthRule: rule });
+  // Policy settings are confirm-first: one request, and the screen (and the
+  // values the rest of the app reads) change only after the server accepted it.
+  // On refusal nothing changes and the server's reason is returned.
+  const cleanPolicySettings = (p: Record<string, any>): Record<string, any> => {
+    const o: Record<string, any> = {};
+    const has = (k: string) => Object.prototype.hasOwnProperty.call(p, k) && p[k] !== undefined;
+    if (has('priorMonthRule')) o.priorMonthRule = p.priorMonthRule;
+    if (has('skippedMonthRule')) o.skippedMonthRule = p.skippedMonthRule;
+    if (has('voucherDeletionResolution')) o.voucherDeletionResolution = p.voucherDeletionResolution;
+    if (has('sessionTimeoutMinutes')) o.sessionTimeoutMinutes = Math.max(1, Math.min(180, Number(p.sessionTimeoutMinutes) || 10));
+    if (has('defaultLateFeeRate')) o.defaultLateFeeRate = Number(p.defaultLateFeeRate) || 0;
+    if (has('roundingMultiple')) o.roundingMultiple = p.roundingMultiple > 0 && Number.isInteger(p.roundingMultiple) ? p.roundingMultiple : 1;
+    if (has('roundingEnabled')) o.roundingEnabled = !!p.roundingEnabled;
+    if (has('transportRoundingMultiple')) o.transportRoundingMultiple = p.transportRoundingMultiple > 0 && Number.isInteger(p.transportRoundingMultiple) ? p.transportRoundingMultiple : 10;
+    if (has('defaultDueDateEnabled')) o.defaultDueDateEnabled = !!p.defaultDueDateEnabled;
+    if (has('defaultDueDay')) o.defaultDueDay = Math.min(Math.max(1, Number(p.defaultDueDay) || 15), 31);
+    if (has('voucherCopyOrder')) o.voucherCopyOrder = Array.isArray(p.voucherCopyOrder) && p.voucherCopyOrder.length > 0 ? p.voucherCopyOrder : ['bank', 'institute', 'student'];
+    if (has('voucherDefaultCopies')) o.voucherDefaultCopies = Array.isArray(p.voucherDefaultCopies) && p.voucherDefaultCopies.length > 0 ? p.voucherDefaultCopies : ['bank', 'institute', 'student'];
+    if (has('auditRetentionMonths')) o.auditRetentionMonths = Number.isFinite(Number(p.auditRetentionMonths)) && Number(p.auditRetentionMonths) >= 0 ? Math.min(120, Math.floor(Number(p.auditRetentionMonths))) : 6;
+    return o;
   };
+
+  const applyPolicySettings = (c: Record<string, any>) => {
+    if ('priorMonthRule' in c) setPriorMonthRuleState(c.priorMonthRule);
+    if ('skippedMonthRule' in c) setSkippedMonthRuleState(c.skippedMonthRule);
+    if ('voucherDeletionResolution' in c) setVoucherDeletionResolutionState(c.voucherDeletionResolution);
+    if ('sessionTimeoutMinutes' in c) {
+      const m = c.sessionTimeoutMinutes;
+      setSessionTimeoutMinutesState(m);
+      try {
+        localStorage.setItem('quickfees_session_timeout_minutes', String(m));
+        localStorage.setItem('quickfees_inactivity_duration', String(m));
+      } catch {}
+      setCurrentInstitution((prev) => {
+        if (!prev) return prev;
+        const cur = prev.settings ? (typeof prev.settings === 'string' ? JSON.parse(prev.settings) : prev.settings) : {};
+        return { ...prev, settings: { ...cur, sessionTimeoutMinutes: m } };
+      });
+    }
+    if ('defaultLateFeeRate' in c) setDefaultLateFeeRateState(c.defaultLateFeeRate);
+    if ('roundingMultiple' in c) setRoundingMultipleState(c.roundingMultiple);
+    if ('roundingEnabled' in c) setRoundingEnabledState(c.roundingEnabled);
+    if ('transportRoundingMultiple' in c) setTransportRoundingMultipleState(c.transportRoundingMultiple);
+    if ('defaultDueDateEnabled' in c) setDefaultDueDateEnabledState(c.defaultDueDateEnabled);
+    if ('defaultDueDay' in c) setDefaultDueDayState(c.defaultDueDay);
+    if ('voucherCopyOrder' in c) setVoucherCopyOrderState(c.voucherCopyOrder);
+    if ('voucherDefaultCopies' in c) setVoucherDefaultCopiesState(c.voucherDefaultCopies);
+    setInstitute((prev) => ({
+      ...prev,
+      ...('sessionTimeoutMinutes' in c ? { sessionTimeoutMinutes: c.sessionTimeoutMinutes } : {}),
+      settings: { ...prev.settings, ...c },
+    }));
+  };
+
+  const savePolicySettings = async (patch: Record<string, any>): Promise<{ success: boolean; error?: string }> => {
+    const perm = ensureMutationAllowed('Change settings');
+    if (!perm.allowed) return { success: false, error: perm.error };
+    const clean = cleanPolicySettings(patch);
+    if (Object.keys(clean).length === 0) return { success: true };
+    const res = await apiUpdateInstituteSettings(clean);
+    if (!res.success) return { success: false, error: res.error || 'The server did not accept the settings change.' };
+    applyPolicySettings(clean);
+    return { success: true };
+  };
+
+  const setPriorMonthRule = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ priorMonthRule: v });
 
   const [skippedMonthRule, setSkippedMonthRuleState] = useState<SkippedMonthVoucherRule>('warning');
 
-  const setSkippedMonthRule = (rule: SkippedMonthVoucherRule) => {
-    setSkippedMonthRuleState(rule);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, skippedMonthRule: rule } }));
-    apiUpdateInstituteSettings({ skippedMonthRule: rule });
-  };
+  const setSkippedMonthRule = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ skippedMonthRule: v });
 
   const [voucherDeletionResolution, setVoucherDeletionResolutionState] = useState<VoucherDeletionResolution>('cascade');
 
-  const setVoucherDeletionResolution = (resolution: VoucherDeletionResolution) => {
-    setVoucherDeletionResolutionState(resolution);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherDeletionResolution: resolution } }));
-    apiUpdateInstituteSettings({ voucherDeletionResolution: resolution });
-  };
+  const setVoucherDeletionResolution = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ voucherDeletionResolution: v });
 
   // Option B: Inactivity Auto-Logout Timeout (Default: 10 minutes, configurable in Settings & persisted in PostgreSQL & localStorage)
   const [sessionTimeoutMinutes, setSessionTimeoutMinutesState] = useState<number>(() => {
@@ -652,97 +694,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return 10;
   });
 
-  const setSessionTimeoutMinutes = (mins: number) => {
-    const sanitized = Math.max(1, Math.min(180, Number(mins) || 10));
-    setSessionTimeoutMinutesState(sanitized);
-    try {
-      localStorage.setItem('quickfees_session_timeout_minutes', String(sanitized));
-      localStorage.setItem('quickfees_inactivity_duration', String(sanitized));
-    } catch {}
-    setInstitute((prev) => ({
-      ...prev,
-      sessionTimeoutMinutes: sanitized,
-      settings: { ...prev.settings, sessionTimeoutMinutes: sanitized },
-    }));
-    setCurrentInstitution((prev) => {
-      if (!prev) return prev;
-      const s = prev.settings
-        ? typeof prev.settings === 'string'
-          ? JSON.parse(prev.settings)
-          : prev.settings
-        : {};
-      return {
-        ...prev,
-        settings: { ...s, sessionTimeoutMinutes: sanitized },
-      };
-    });
-    apiUpdateInstituteSettings({ sessionTimeoutMinutes: sanitized });
-  };
+  const setSessionTimeoutMinutes = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ sessionTimeoutMinutes: v });
 
   const [defaultLateFeeRate, setDefaultLateFeeRateState] = useState<number>(500);
 
-  const setDefaultLateFeeRate = (rate: number) => {
-    const cleanRate = Number(rate) || 0;
-    setDefaultLateFeeRateState(cleanRate);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, defaultLateFeeRate: cleanRate } }));
-    apiUpdateInstituteSettings({ defaultLateFeeRate: cleanRate });
-  };
+  const setDefaultLateFeeRate = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ defaultLateFeeRate: v });
 
   const [roundingMultiple, setRoundingMultipleState] = useState<number>(1);
 
-  const setRoundingMultiple = (multiple: number) => {
-    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 1;
-    setRoundingMultipleState(clean);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, roundingMultiple: clean } }));
-    apiUpdateInstituteSettings({ roundingMultiple: clean });
-  };
+  const setRoundingMultiple = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ roundingMultiple: v });
 
   const [roundingEnabled, setRoundingEnabledState] = useState<boolean>(true);
 
-  const setRoundingEnabled = (enabled: boolean) => {
-    setRoundingEnabledState(enabled);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, roundingEnabled: enabled } }));
-    apiUpdateInstituteSettings({ roundingEnabled: enabled });
-  };
+  const setRoundingEnabled = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ roundingEnabled: v });
 
   const [transportRoundingMultiple, setTransportRoundingMultipleState] = useState<number>(10);
 
-  const setTransportRoundingMultiple = (multiple: number) => {
-    const clean = multiple > 0 && Number.isInteger(multiple) ? multiple : 10;
-    setTransportRoundingMultipleState(clean);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, transportRoundingMultiple: clean } }));
-    apiUpdateInstituteSettings({ transportRoundingMultiple: clean });
-  };
+  const setTransportRoundingMultiple = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ transportRoundingMultiple: v });
 
   const [defaultDueDateEnabled, setDefaultDueDateEnabledState] = useState<boolean>(false);
 
   const [defaultDueDay, setDefaultDueDayState] = useState<number>(15);
 
-  const setDefaultDueDateSettings = useCallback(
-    (settings: {
-      enabled: boolean;
-      day?: number;
-    }) => {
-      setDefaultDueDateEnabledState(settings.enabled);
-      const cleanDay = settings.day !== undefined ? Math.min(Math.max(1, settings.day), 31) : 15;
-      if (settings.day !== undefined) {
-        setDefaultDueDayState(cleanDay);
-      }
-      setInstitute((prev) => ({
-        ...prev,
-        settings: {
-          ...prev.settings,
-          defaultDueDateEnabled: settings.enabled,
-          ...(settings.day !== undefined ? { defaultDueDay: cleanDay } : {}),
-        },
-      }));
-      apiUpdateInstituteSettings({
-        defaultDueDateEnabled: settings.enabled,
-        ...(settings.day !== undefined ? { defaultDueDay: cleanDay } : {}),
-      });
-    },
-    []
-  );
+  const setDefaultDueDateSettings = (settings: { enabled: boolean; day?: number }): Promise<{ success: boolean; error?: string }> =>
+    savePolicySettings({ defaultDueDateEnabled: settings.enabled, ...(settings.day !== undefined ? { defaultDueDay: settings.day } : {}) });
 
   const getComputedDefaultDueDate = useCallback(
     (month: string): string => {
@@ -758,21 +733,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Voucher Copy Order & Default Included Copies (Stored directly in PostgreSQL)
   const [voucherCopyOrder, setVoucherCopyOrderState] = useState<VoucherCopyType[]>(['bank', 'institute', 'student']);
 
-  const setVoucherCopyOrder = useCallback((order: VoucherCopyType[]) => {
-    const clean = Array.isArray(order) && order.length > 0 ? order : ['bank', 'institute', 'student'];
-    setVoucherCopyOrderState(clean);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherCopyOrder: clean } }));
-    apiUpdateInstituteSettings({ voucherCopyOrder: clean });
-  }, []);
+  const setVoucherCopyOrder = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ voucherCopyOrder: v });
 
   const [voucherDefaultCopies, setVoucherDefaultCopiesState] = useState<VoucherCopyType[]>(['bank', 'institute', 'student']);
 
-  const setVoucherDefaultCopies = useCallback((copies: VoucherCopyType[]) => {
-    const clean = Array.isArray(copies) && copies.length > 0 ? copies : ['bank', 'institute', 'student'];
-    setVoucherDefaultCopiesState(clean);
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, voucherDefaultCopies: clean } }));
-    apiUpdateInstituteSettings({ voucherDefaultCopies: clean });
-  }, []);
+  const setVoucherDefaultCopies = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ voucherDefaultCopies: v });
 
   // Core domain state
   const [classes, setClasses] = useState<SchoolClass[]>(() => []);
@@ -820,15 +785,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     familiesRef.current = families;
   }, [families]);
 
-  // Adopt the unique family number the server issues when a new family is saved.
-  useEffect(() => {
-    setFamilyNumberAssignedHandler((familyId, familyNo) => {
-      setFamilies((prev) => prev.map((f) => (f.id === familyId ? { ...f, familyNo } : f)));
-      familiesRef.current = familiesRef.current.map((f) => (f.id === familyId ? { ...f, familyNo } : f));
-    });
-    return () => setFamilyNumberAssignedHandler(null);
-  }, []);
-
   const [buses, setBuses] = useState<TransportBus[]>(() => []);
 
   const [stops, setStops] = useState<TransportStop[]>(() => []);
@@ -852,6 +808,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [vouchers]);
 
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => []);
+  const transactionsRef = useRef<PaymentTransaction[]>(transactions);
+  useEffect(() => {
+    transactionsRef.current = transactions;
+  }, [transactions]);
+  const collectionsRef = useRef<FeeCollection[]>(collections);
+  useEffect(() => {
+    collectionsRef.current = collections;
+  }, [collections]);
 
   // Working-set loading: the server sends the oldest-unlocked-month-onward set
   // (plus each student's latest voucher and every open voucher). Older, locked
@@ -884,11 +848,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 6;
   })();
 
-  const setAuditRetentionMonths = useCallback((months: number) => {
-    const clean = Number.isFinite(months) && months >= 0 ? Math.min(120, Math.floor(months)) : 6;
-    setInstitute((prev) => ({ ...prev, settings: { ...prev.settings, auditRetentionMonths: clean } }));
-    apiUpdateInstituteSettings({ auditRetentionMonths: clean });
-  }, []);
+  const setAuditRetentionMonths = (v: any): Promise<{ success: boolean; error?: string }> => savePolicySettings({ auditRetentionMonths: v });
 
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => []);
@@ -921,26 +881,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsSidebarCollapsed(false);
   }, []);
 
+  // Display preferences (theme, sidebar) are the one deliberate exception to confirm-first:
+  // they change the screen at once because they are personal and cosmetic, and flipping a
+  // colour back after a slow save would feel broken. A failed save is NOT silent, though:
+  // the operator is told (at most once every 30 seconds) that the choice will not be
+  // remembered after reload.
+  const lastPrefWarningRef = useRef(0);
+  const savePreferences = useCallback(
+    (patch: Parameters<typeof apiSavePreferences>[0]) => {
+      apiSavePreferences(patch)
+        .then((res) => {
+          if (res?.success) return;
+          const now = Date.now();
+          if (now - lastPrefWarningRef.current < 30000) return;
+          lastPrefWarningRef.current = now;
+          showToast('Your display preference could not be saved and will reset when you reload the page.', 'error', 7000);
+        })
+        .catch(() => {});
+    },
+    [showToast]
+  );
+
   useEffect(() => {
     if (!prefsReadyRef.current || savedSidebarRef.current === isSidebarCollapsed) return;
     savedSidebarRef.current = isSidebarCollapsed;
-    apiSavePreferences({ sidebarCollapsed: isSidebarCollapsed }).catch(() => {});
-  }, [isSidebarCollapsed]);
+    savePreferences({ sidebarCollapsed: isSidebarCollapsed });
+  }, [isSidebarCollapsed, savePreferences]);
 
   const updateThemeConfig = useCallback((updates: Partial<AppThemeConfig>) => {
     const next = { ...themeConfigRef.current, ...updates };
     themeConfigRef.current = next;
     setThemeConfig(next);
     applyThemeToDom(next);
-    apiSavePreferences({ themeConfig: next }).catch(() => {});
-  }, []);
+    savePreferences({ themeConfig: next });
+  }, [savePreferences]);
 
   const resetThemeConfig = useCallback(() => {
     themeConfigRef.current = DEFAULT_THEME_CONFIG;
     setThemeConfig(DEFAULT_THEME_CONFIG);
     applyThemeToDom(DEFAULT_THEME_CONFIG);
-    apiSavePreferences({ themeConfig: DEFAULT_THEME_CONFIG }).catch(() => {});
-  }, []);
+    savePreferences({ themeConfig: DEFAULT_THEME_CONFIG });
+  }, [savePreferences]);
 
   // Ensure DOM is updated on initial mount and theme changes
   useEffect(() => {
@@ -954,11 +935,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     currentUserRef.current = currentUser;
   }, [currentUser]);
 
-  // Audit entries are stored and served by the server only. Most mutations are
-  // audited by their own endpoint; the few browser-side operations that have
-  // no such endpoint are forwarded here (operator identity is taken from the
-  // session on the server). Everything else is intentionally a no-op so the
-  // same action is not recorded twice.
+  // Audit entries are stored and served by the server only, and the server
+  // writes them itself for every operation it performs (students, vouchers,
+  // collections, settings, restore, backup export ...). Doing it there means the
+  // entry is written together with the change and cannot be skipped by a client.
+  //
+  // Only three kinds are still forwarded from the browser, because the action
+  // they describe is made of several server calls (or a client-side calculation)
+  // and no single endpoint sees the whole operation:
+  //   - fine_modification : a fine waived or changed while recording a payment
+  //   - system_cleanup    : the multi-step data cleanup (one entry for the run)
+  //   - carry_forward     : reverting a carry-forward (the carry-forward itself
+  //                         is audited by the server)
+  // The server accepts only these (CLIENT_AUDIT_EVENTS in server.ts); anything
+  // else is dropped here so the same action is never recorded twice. Do not add
+  // a call to logAuditEvent for a new operation — audit it in its endpoint.
   const logAuditEvent = useCallback(
     (
       entry: Omit<
@@ -992,34 +983,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Student Account History (Chronological Status, Transport & Academic Event Log)
   const [studentAccountHistory, setStudentAccountHistory] = useState<StudentAccountHistoryEntry[]>(() => []);
 
-  const addStudentAccountHistory = useCallback(
-    (
-      entry: Omit<StudentAccountHistoryEntry, 'id' | 'timestamp'> & {
-        id?: string;
-        timestamp?: string;
-      }
-    ) => {
-      const activeUser = currentUserRef.current;
-      const newEntry: StudentAccountHistoryEntry = {
-        id: entry.id || `sah-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        studentId: entry.studentId,
-        timestamp: entry.timestamp || new Date().toISOString(),
-        date: entry.date || new Date().toISOString().split('T')[0],
-        category: entry.category,
-        actionTitle: entry.actionTitle,
-        description: entry.description,
-        previousValue: entry.previousValue,
-        newValue: entry.newValue,
-        operatorName: entry.operatorName || activeUser?.name || 'System Operator',
-        operatorRole: entry.operatorRole || activeUser?.role || 'Admin',
-        month: entry.month,
-        metadata: entry.metadata,
-      };
+  type HistoryInput = Omit<StudentAccountHistoryEntry, 'id' | 'timestamp' | 'date'> & {
+    id?: string;
+    timestamp?: string;
+    date?: string;
+  };
 
-      setStudentAccountHistory((prev) => [newEntry, ...prev]);
-    },
-    []
-  );
+  // Builds a complete history entry (id, time, operator) without storing it, so it can
+  // be sent to the server inside the same batch as the change it describes.
+  const buildHistoryEntry = useCallback((entry: HistoryInput): StudentAccountHistoryEntry => {
+    const activeUser = currentUserRef.current;
+    return {
+      id: entry.id || `sah-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      studentId: entry.studentId,
+      timestamp: entry.timestamp || new Date().toISOString(),
+      date: entry.date || new Date().toISOString().split('T')[0],
+      category: entry.category,
+      actionTitle: entry.actionTitle,
+      description: entry.description,
+      previousValue: entry.previousValue,
+      newValue: entry.newValue,
+      operatorName: entry.operatorName || activeUser?.name || 'System Operator',
+      operatorRole: entry.operatorRole || activeUser?.role || 'Admin',
+      month: entry.month,
+      metadata: entry.metadata,
+    };
+  }, []);
+
 
   const getStudentAccountHistory = useCallback(
     (studentId: string): StudentAccountHistoryEntry[] => {
@@ -1133,71 +1123,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [studentAccountHistory, students, classes, transportAssignments, stops, buses]
   );
 
-  const updateStudentStatus = useCallback(
-    (studentId: string, newStatus: StudentStatus, reason?: string) => {
-      const target = students.find((s) => s.id === studentId);
-      if (!target) return { success: false, error: 'Student not found.' };
-
-      if (target.status === newStatus) {
-        return { success: false, error: `Student is already in '${newStatus}' status.` };
-      }
-
-      const oldStatus = target.status;
-      const activeUser = currentUserRef.current;
-      const timestamp = new Date().toISOString();
-      const date = timestamp.split('T')[0];
-
-      // Update student status
-      setStudents((prev) =>
-        prev.map((s) => (s.id === studentId ? { ...s, status: newStatus } : s))
-      );
-
-      // Add to student account history
-      const reasonText = reason?.trim() ? `. Note/Reason: ${reason.trim()}` : '';
-      const historyEntry: StudentAccountHistoryEntry = {
-        id: `sah-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        studentId,
-        timestamp,
-        date,
-        category: 'status',
-        actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
-        description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
-        previousValue: oldStatus,
-        newValue: newStatus,
-        operatorName: activeUser?.name || 'System Operator',
-        operatorRole: activeUser?.role || 'Admin',
-        metadata: {
-          oldStatus,
-          newStatus,
-          reason: reason?.trim() || undefined,
-        },
-      };
-
-      setStudentAccountHistory((prev) => [historyEntry, ...prev]);
-
-      // Log in central audit trail
-      logAuditEvent({
-        timestamp,
-        actionType: 'operator_security',
-        actionTitle: `Student Status Changed: ${target.name}`,
-        description: `Enrollment status transitioned from ${oldStatus} to ${newStatus} for ${target.name} (${target.regNo})${reasonText}`,
-        module: 'Students',
-        targetId: target.regNo,
-        targetLabel: `${target.name} (${target.regNo})`,
-        previousValue: oldStatus,
-        newValue: newStatus,
-        metadata: {
-          studentId: target.id,
-          oldStatus,
-          newStatus,
-          reason: reason?.trim(),
-        },
-      });
-
-      return { success: true };
-    },
-    [students, logAuditEvent]
-  );
 
   const [lockedMonths, setLockedMonths] = useState<string[]>(() => []);
   const [lockedMonthDetails, setLockedMonthDetails] = useState<Record<string, LockedMonthInfo>>({});
@@ -1281,9 +1206,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
     }
-
-    initializeSyncSnapshots(d);
-
     setTimeout(() => {
       isRemoteUpdateRef.current = false;
     }, 150);
@@ -1370,7 +1292,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsDbConnected(true);
         applyServerState(res.data);
       } else {
-        setIsDbConnected(false);
+        // null means nobody is signed in yet (page just loaded, or just logged out):
+        // there is nothing to load, so that is neither an error nor an offline server.
+        if (res) setIsDbConnected(false);
+        if (res) showToast(res.error || 'Could not load data from the server. Please reload or try again.', 'error', 10000);
       }
     });
 
@@ -1385,48 +1310,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubRemote();
     };
   }, [applyServerState, currentInstitution?.id]);
-
-  // Sync to centralized tenant database
-  useEffect(() => {
-    if (!isHydratedRef.current || isRemoteUpdateRef.current || !isAuthenticated || !currentInstitution?.id) {
-      return;
-    }
-
-    // Persist to central database engine
-    queueDatabaseSync({
-      users,
-      classes,
-      students,
-      families,
-      buses,
-      stops,
-      transportAssignments,
-      templates,
-      vouchers,
-      collections,
-      transactions,
-      institute,
-      bankAccounts,
-      studentAccountHistory,
-    });
-  }, [
-    users,
-    classes,
-    students,
-    families,
-    buses,
-    stops,
-    transportAssignments,
-    templates,
-    vouchers,
-    collections,
-    transactions,
-    institute,
-    bankAccounts,
-    studentAccountHistory,
-    isAuthenticated,
-    currentInstitution?.id,
-  ]);
 
   // Multi-Tenant Institutional Workspaces & Operator Auth
   const registerInstitution = async (params: {
@@ -1465,15 +1348,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setInstitute({
         name: res.institution.name,
         code: res.institution.code,
+        logoUrl: '',
+        website: '',
         regNo: res.institution.registrationNo || '',
         address: res.institution.address || '',
         phone: res.institution.phone || '',
         email: res.institution.email || '',
         currency: res.institution.currency || DEFAULT_CURRENCY,
-        bankName: '',
-        bankAccountNo: '',
-        bankIban: '',
-        invoiceNotes: 'Thank you for your prompt fee settlement.',
       });
 
       // Clear previous in-memory state for fresh tenant
@@ -1493,28 +1374,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setInvites([]);
-
-      resetSyncSnapshots();
-      initializeSyncSnapshots({
-        classes: [],
-        students: [],
-        families: [],
-        buses: [],
-        stops: [],
-        transportAssignments: [],
-        templates: freshTemplates,
-        bankAccounts: [],
-      });
       isHydratedRef.current = true;
-
-      logAuditEvent({
-        actionType: 'system_cleanup',
-        actionTitle: 'New Institution Workspace Provisioned',
-        description: `Created workspace for '${res.institution.name}' (${res.institution.code}) under Administrator @${res.user.username}.`,
-        module: 'Administration',
-        targetId: res.institution.id,
-        targetLabel: res.institution.name,
-      });
 
       return { success: true };
     } catch (err: any) {
@@ -1551,7 +1411,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStudentAccountHistory([]);
       setLockedMonths([]);
       setInvites([]);
-      resetSyncSnapshots();
 
       setCurrentInstitution(res.institution);
       setCurrentUser(res.user);
@@ -1568,16 +1427,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const serverState = await fetchServerState(res.institution.id);
       if (serverState?.success && serverState.data) {
         applyServerState(serverState.data);
+      } else {
+        showToast(serverState?.error || 'Could not load data from the server. Please reload or try again.', 'error', 10000);
       }
-
-      logAuditEvent({
-        actionType: 'user_create',
-        actionTitle: 'Operator Joined Workspace',
-        description: `@${res.user.username} (${res.user.role}) connected to ${res.institution.name}.`,
-        module: 'Administration',
-        targetId: res.user.id,
-        targetLabel: res.user.name,
-      });
 
       return { success: true };
     } catch (err: any) {
@@ -1589,7 +1441,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     fullName: string;
     assignedRole: UserRole;
     permissions?: string[];
-  }): Promise<{ success: boolean; invite?: OperatorInvite; error?: string }> => {
+    inviteCode?: string;
+  }): Promise<{ success: boolean; invite?: ServerInvite; error?: string }> => {
     const targetInstId = currentInstitution?.id;
     if (!targetInstId) return { success: false, error: 'No active institution.' };
     try {
@@ -1598,22 +1451,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assignedRole: params.assignedRole,
         permissions: params.permissions || [],
         createdBy: currentUser.username,
+        inviteCode: params.inviteCode,
       });
 
       if (!res.success || !res.invite) {
         return { success: false, error: res.error || 'Failed to generate staff invite code.' };
       }
 
-      setInvites((prev) => [res.invite!, ...prev.filter((i) => i.inviteCode !== res.invite!.inviteCode)]);
-
-      logAuditEvent({
-        actionType: 'user_create',
-        actionTitle: 'Operator Invite Code Generated',
-        description: `Invite code ${res.invite.inviteCode} issued for ${params.fullName} (${params.assignedRole}).`,
-        module: 'Administration',
-        targetId: res.invite.inviteCode,
-        targetLabel: params.fullName,
-      });
+      setInvites((prev) => [res.invite!, ...prev.filter((i) => i.invite_code !== res.invite!.invite_code)]);
 
       return { success: true, invite: res.invite };
     } catch (err: any) {
@@ -1653,7 +1498,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     apiGetMe().then((me) => {
       if (!isMounted) return;
-      if (me.success && me.user) {
+      // A session that is still waiting for a reset password to be replaced is not an app session:
+      // it falls through to the sign-in screen, which handles that step.
+      if (me.success && me.user && !me.user.mustChangePassword) {
         setCurrentUser(me.user);
         setIsAuthenticated(true);
         loadUserPreferences().catch(() => {});
@@ -1710,6 +1557,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } catch {}
         }
       } else {
+        if (me.success && me.user?.mustChangePassword) apiLogout().catch(() => {});
         // Not authenticated on server: ensure clean unauthenticated state
         setIsAuthenticated(false);
         setCurrentUser(ANONYMOUS_USER);
@@ -1735,7 +1583,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           sessionStorage.removeItem(`${STORAGE_KEY}_browser_session_active`);
         } catch {}
         resetPreferencesState();
-        resetSyncSnapshots();
       }
       setIsSessionLoading(false);
     }).catch(() => {
@@ -1751,7 +1598,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     usernameOrEmail: string,
     password: string,
     institutionCode?: string
-  ): Promise<{ success: boolean; error?: string; user?: User }> => {
+  ): Promise<{ success: boolean; error?: string; user?: User; mustChangePassword?: boolean }> => {
     const trimmed = usernameOrEmail.trim().toLowerCase();
     if (!trimmed) {
       return { success: false, error: 'Please enter your username or registered email address.' };
@@ -1768,6 +1615,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Authoritative backend multi-tenant login
     try {
       const apiRes = await apiLogin(trimmed, password, cleanCode);
+      if (apiRes.success && apiRes.user && apiRes.user.mustChangePassword) {
+        // The server has opened a restricted session. Nothing is loaded until the new password is set.
+        return { success: false, mustChangePassword: true };
+      }
       if (apiRes.success && apiRes.user) {
         // Reset in-memory state before loading new tenant records
         setClasses([]);
@@ -1785,7 +1636,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setStudentAccountHistory([]);
         setLockedMonths([]);
         setInvites([]);
-        resetSyncSnapshots();
 
         setCurrentUser(apiRes.user);
         setIsAuthenticated(true);
@@ -1809,6 +1659,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const stateRes = await fetchServerState(apiRes.institution.id);
           if (stateRes?.success && stateRes.data) {
             applyServerState(stateRes.data);
+          } else {
+            showToast(stateRes?.error || 'Could not load data from the server. Please reload or try again.', 'error', 10000);
           }
         }
 
@@ -1861,7 +1713,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
 
     isHydratedRef.current = false;
-    resetSyncSnapshots();
     apiLogout().catch(() => {});
   };
 
@@ -1977,23 +1828,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const determinedRole = role || getEffectiveRole(permissions);
     const result = await updateUser(id, { permissions, role: determinedRole });
     if (result.success) {
-      logAuditEvent({
-        actionType: 'operator_security',
-        actionTitle: 'Operator Security & Privileges Updated',
-        description: `Updated authorization profile for @${userToUpdate.username} (${userToUpdate.name}). Role set to ${determinedRole} with ${permissions.length} active privileges.`,
-        module: 'Security',
-        targetId: userToUpdate.id,
-        targetLabel: `@${userToUpdate.username} (${userToUpdate.name})`,
-        previousValue: userToUpdate.role,
-        newValue: determinedRole,
-        metadata: {
-          operatorId: userToUpdate.id,
-          operatorUsername: userToUpdate.username,
-          previousRole: userToUpdate.role,
-          newRole: determinedRole,
-          privilegesCount: permissions.length,
-        },
-      });
+
     }
     return result;
   };
@@ -2075,79 +1910,108 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           `Institution "${instName}" and all associated academic, financial, and user records have been permanently deleted from the server.`
         );
       } catch {}
-
-      resetSyncSnapshots();
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Network error deleting institution.' };
     }
   };
 
-  // Class Management
-  const addClass = (name: string, monthlyFee: number, sortOrder: number) => {
+  const updateStudentStatus = async (studentId: string, newStatus: StudentStatus, reason?: string) => {
+    const perm = ensureMutationAllowed('Student status change');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
+    const target = (listsRef.current.students as Student[]).find((s) => s.id === studentId);
+    if (!target) return { success: false, error: 'Student not found.' };
+    if (target.status === newStatus) {
+      return { success: false, error: `Student is already in '${newStatus}' status.` };
+    }
+
+    const oldStatus = target.status;
+    const reasonText = reason?.trim() ? `. Note/Reason: ${reason.trim()}` : '';
+    const res = await commitEntity(
+      'students',
+      (cur: Student[]) => cur.map((s) => (s.id === studentId ? { ...s, status: newStatus } : s)),
+      {
+        history: [
+          {
+            studentId,
+            category: 'status',
+            actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
+            description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
+            previousValue: oldStatus,
+            newValue: newStatus,
+            metadata: { oldStatus, newStatus, reason: reason?.trim() || undefined },
+          },
+        ],
+      }
+    );
+    if (!res.success) return { success: false, error: res.error };
+
+
+    return { success: true };
+  };
+
+  // Class Management (every change is confirmed by the server before it is shown)
+  const addClass = async (name: string, monthlyFee: number, sortOrder: number) => {
     const perm = ensureMutationAllowed('Class creation');
     if (!perm.allowed) return { success: false, error: perm.error };
 
     if (!name.trim()) return { success: false, error: 'Class name is required.' };
-    if (classes.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
-      return { success: false, error: 'A class with this name already exists.' };
-    }
-    const newClass: SchoolClass = {
-      id: `cls-${Date.now()}`,
-      name: name.trim(),
-      monthlyFee,
-      sortOrder,
-      active: true,
-    };
-    // Insert at the requested position and resequence everyone, rather than
-    // a plain sort: if `sortOrder` matches an existing class's position,
-    // sort() alone leaves two classes sharing the same number instead of
-    // shifting the rest down to make room.
-    const existing = [...classes].sort((a, b) => a.sortOrder - b.sortOrder);
-    const clampedIndex = Math.min(Math.max(sortOrder - 1, 0), existing.length);
-    existing.splice(clampedIndex, 0, newClass);
-    setClasses(existing.map((c, idx) => ({ ...c, sortOrder: idx + 1 })));
-    return { success: true, newClass };
+    let created: SchoolClass | undefined;
+    const res = await commitEntity('classes', (cur: SchoolClass[]) => {
+      if (cur.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
+        return { error: 'A class with this name already exists.' };
+      }
+      const newClass: SchoolClass = {
+        id: generateUniqueId('cls'),
+        name: name.trim(),
+        monthlyFee,
+        sortOrder,
+        active: true,
+      };
+      created = newClass;
+      // Insert at the requested position and resequence everyone, rather than a plain
+      // sort: if the position is taken, sort() alone would leave two classes sharing it.
+      const existing = [...cur].sort((a, b) => a.sortOrder - b.sortOrder);
+      const clampedIndex = Math.min(Math.max(sortOrder - 1, 0), existing.length);
+      existing.splice(clampedIndex, 0, newClass);
+      return resequence(existing);
+    });
+    if (!res.success) return res;
+    const saved = (listsRef.current.classes as SchoolClass[]).find((c) => c.id === created?.id);
+    return { success: true, newClass: saved || created };
   };
 
-  const updateClass = (id: string, updates: Partial<SchoolClass>) => {
+  const updateClass = async (id: string, updates: Partial<SchoolClass>) => {
     const perm = ensureMutationAllowed('Class update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (updates.name) {
-      const exists = classes.some(
-        (c) => c.id !== id && c.name.toLowerCase() === updates.name?.trim().toLowerCase()
-      );
-      if (exists) return { success: false, error: 'A class with this name already exists.' };
-    }
+    return commitEntity('classes', (cur: SchoolClass[]) => {
+      if (updates.name) {
+        const exists = cur.some((c) => c.id !== id && c.name.toLowerCase() === updates.name?.trim().toLowerCase());
+        if (exists) return { error: 'A class with this name already exists.' };
+      }
+      const current = cur.find((c) => c.id === id);
+      if (!current) return { error: 'Class not found.' };
 
-    const current = classes.find((c) => c.id === id);
-    if (!current) return { success: false, error: 'Class not found.' };
+      const patchedFields: Partial<SchoolClass> = {
+        ...updates,
+        monthlyFee: updates.monthlyFee !== undefined ? updates.monthlyFee : current.monthlyFee,
+      };
 
-    const patchedFields: Partial<SchoolClass> = {
-      ...updates,
-      monthlyFee: updates.monthlyFee !== undefined ? updates.monthlyFee : current.monthlyFee,
-    };
-
-    // If the Sort Position # was manually changed, resequence the whole list
-    // around the new position -- the same way drag-and-drop (reorderClasses)
-    // already does. Without this, a manual number edit only patched this one
-    // record, leaving the on-screen order (which follows array position, not
-    // the sortOrder value) out of sync with the number just typed in, and
-    // could leave two classes sharing the same sortOrder.
-    if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
-      const others = classes.filter((c) => c.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
-      const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
-      others.splice(clampedIndex, 0, { ...current, ...patchedFields });
-      setClasses(others.map((c, idx) => ({ ...c, sortOrder: idx + 1 })));
-      return { success: true };
-    }
-
-    setClasses((prev) => prev.map((c) => (c.id === id ? { ...c, ...patchedFields } : c)));
-    return { success: true };
+      // A manually changed Sort Position # resequences the whole list around the new
+      // position, the same way drag-and-drop does.
+      if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
+        const others = cur.filter((c) => c.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
+        const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
+        others.splice(clampedIndex, 0, { ...current, ...patchedFields });
+        return resequence(others);
+      }
+      return cur.map((c) => (c.id === id ? { ...c, ...patchedFields } : c));
+    });
   };
 
-  const deleteClass = (id: string) => {
+  const deleteClass = async (id: string) => {
     const perm = ensureMutationAllowed('Class deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -2158,88 +2022,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete class. ${enrolledStudents.length} student record(s) still reference it (including inactive ones). Reassign them first.`,
       };
     }
-    setClasses((prev) => prev.filter((c) => c.id !== id));
-    return { success: true };
+    return commitEntity('classes', (cur: SchoolClass[]) => cur.filter((c) => c.id !== id), {
+      afterSuccess: () => dropLocalTemplates((t) => t.classId === id),
+    });
   };
 
-  const toggleClassActive = (id: string) => {
+  const toggleClassActive = async (id: string) => {
     const perm = ensureMutationAllowed('Class status update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    const cls = classes.find((c) => c.id === id);
+    const cls = (listsRef.current.classes as SchoolClass[]).find((c) => c.id === id);
     if (!cls) return { success: false, error: 'Class not found' };
-
     const newActiveState = !cls.active;
-    setClasses((prev) => prev.map((c) => (c.id === id ? { ...c, active: newActiveState } : c)));
 
-    // Deactivating sets enrolled active students to Inactive with AutoDeactivated
-    if (!newActiveState) {
-      setStudents((prev) =>
-        prev.map((s) => (s.classId === id && s.status === 'Active' ? { ...s, status: 'AutoDeactivated' } : s))
-      );
-    } else {
-      // Reactivating restores prior statuses
-      setStudents((prev) =>
-        prev.map((s) => (s.classId === id && s.status === 'AutoDeactivated' ? { ...s, status: 'Active' } : s))
-      );
+    const res = await commitEntity('classes', (cur: SchoolClass[]) =>
+      cur.map((c) => (c.id === id ? { ...c, active: newActiveState } : c))
+    );
+    if (!res.success) return res;
+
+    // Deactivating sets enrolled active students to AutoDeactivated; reactivating restores them.
+    const res2 = await commitEntity('students', (cur: Student[]) =>
+      cur.map((s) => {
+        if (s.classId !== id) return s;
+        if (!newActiveState && s.status === 'Active') return { ...s, status: 'AutoDeactivated' as const };
+        if (newActiveState && s.status === 'AutoDeactivated') return { ...s, status: 'Active' as const };
+        return s;
+      })
+    );
+    if (!res2.success) {
+      reloadSavedState();
+      return {
+        success: false,
+        error: `The class was ${newActiveState ? 'reactivated' : 'deactivated'}, but its students could not be updated: ${res2.error || 'save failed'}. The saved data has been reloaded; please check the class's students.`,
+      };
     }
-
     return { success: true };
   };
 
-  const reorderClasses = (reorderedClasses: SchoolClass[]) => {
+  const reorderClasses = async (reorderedClasses: SchoolClass[]) => {
     const perm = ensureMutationAllowed('Class reordering');
-    if (!perm.allowed) return;
-
-    const updated = reorderedClasses.map((cls, idx) => ({
-      ...cls,
-      sortOrder: idx + 1,
-    }));
-    setClasses(updated);
-    return { success: true };
+    if (!perm.allowed) return { success: false, error: perm.error };
+    return commitEntity('classes', (cur: SchoolClass[]) => {
+      const byId = new Map(cur.map((c) => [c.id, c]));
+      return resequence(reorderedClasses.map((c) => ({ ...(byId.get(c.id) || c), ...c })));
+    });
   };
 
   // Student Management
-  const addStudent = (studentData: Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string }) => {
-    const perm = ensureMutationAllowed('Student registration');
-    if (!perm.allowed) return { success: false, error: perm.error };
+  type NewStudentInput = Omit<Student, 'id' | 'studentNo' | 'regNo' | 'createdDate'> & { regNo?: string; studentNo?: string };
 
-    const year = new Date().getFullYear();
-
+  // Prepares one admission against a working copy of the lists (so a bulk import sees
+  // the families and students created by its earlier rows). Nothing is stored here: the
+  // caller sends the working copy to the server and shows it only once it is confirmed.
+  const prepareStudentAddition = (
+    studentData: NewStudentInput,
+    work: { students: Student[]; families: Family[]; history: HistoryInput[] }
+  ): { error?: string; student?: Student } => {
     const regNo = (studentData.regNo || '').trim();
-    if (!regNo) {
-      return {
-        success: false,
-        error: 'Student registration number (Reg #) is required.',
-      };
-    }
+    if (!regNo) return { error: 'Student registration number (Reg #) is required.' };
 
-    // Check if regNo already exists (read via ref so rows added earlier in a
-    // synchronous bulk-import loop are visible to later rows)
     const targetReg = regNo.toLowerCase();
-    const existing = studentsRef.current.find(
-      (s) => s.regNo.toLowerCase() === targetReg || s.studentNo.toLowerCase() === targetReg
+    const existing = work.students.find(
+      (st) => st.regNo.toLowerCase() === targetReg || st.studentNo.toLowerCase() === targetReg
     );
-    if (existing) {
-      return {
-        success: false,
-        error: `Registration No. '${regNo}' is already assigned.`,
-      };
-    }
+    if (existing) return { error: `Registration No. '${regNo}' is already assigned.` };
 
     studentSeqRef.current += 1;
     const studentNo = studentData.studentNo?.trim() || regNo;
 
-    // Auto family linking strictly by Father National ID (reads via refs so a family created
-    // for an earlier row of the same bulk import or an existing family whose students were
-    // deleted is matched and re-adopted instead of duplicated)
+    // Auto family linking strictly by Father National ID.
     let familyId = studentData.familyId;
     if (!familyId && studentData.fatherNationalId?.trim()) {
       const rawNationalId = studentData.fatherNationalId.trim();
       const normNationalId = normalizeNationalId(rawNationalId);
 
-      const existingFamily = familiesRef.current.find((f) => {
-        // Direct match on family's own stored fatherNationalId
+      const existingFamily = work.families.find((f) => {
         if (!f.fatherNationalId?.trim()) return false;
         const fNorm = normalizeNationalId(f.fatherNationalId);
         return (
@@ -2250,38 +2107,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (existingFamily) {
         familyId = existingFamily.id;
-        // Re-adopt existing family: fill headName/contactPhone if currently blank
+        // Re-adopt an existing family: fill headName/contactPhone if currently blank.
         const updatedHeadName = existingFamily.headName || studentData.fatherName;
         const updatedPhone = existingFamily.contactPhone || studentData.fatherPhone || '';
         if (updatedHeadName !== existingFamily.headName || updatedPhone !== existingFamily.contactPhone) {
-          const updatedFamily = {
-            ...existingFamily,
-            headName: updatedHeadName,
-            contactPhone: updatedPhone,
-          };
-          setFamilies((prev) =>
-            prev.map((f) => (f.id === existingFamily.id ? updatedFamily : f))
-          );
-          familiesRef.current = familiesRef.current.map((f) =>
-            f.id === existingFamily.id ? updatedFamily : f
+          work.families = work.families.map((f) =>
+            f.id === existingFamily.id ? { ...existingFamily, headName: updatedHeadName, contactPhone: updatedPhone } : f
           );
         }
       } else {
-        // Create auto family strictly with fatherNationalId
         const newFamId = generateUniqueId('fam');
-        // Provisional number; the server issues the real, unique one when the family is saved.
-        const newFamNo = PENDING_FAMILY_NO;
         const newFam: Family = {
           id: newFamId,
-          familyNo: newFamNo,
+          // Provisional number; the server issues the real, unique one when the family is saved.
+          familyNo: PENDING_FAMILY_NO,
           headName: studentData.fatherName,
           contactPhone: studentData.fatherPhone || '',
           fatherNationalId: rawNationalId,
           address: '',
           memberStudentIds: [],
         };
-        setFamilies((prev) => [...prev, newFam]);
-        familiesRef.current = [...familiesRef.current, newFam];
+        work.families = [...work.families, newFam];
         familyId = newFamId;
       }
     }
@@ -2299,40 +2145,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       familyId,
       createdDate: new Date().toISOString().split('T')[0],
     };
-
-    studentsRef.current = [...studentsRef.current, newStudent];
-    setStudents((prev) => [...prev, newStudent]);
-
-    // Update family linkage
-    if (familyId) {
-      familiesRef.current = familiesRef.current.map((f) => {
-        if (f.id === familyId) {
-          return {
-            ...f,
-            memberStudentIds: Array.from(new Set([...f.memberStudentIds, newStudent.id])),
-          };
-        }
-        return f;
-      });
-      setFamilies((prev) =>
-        prev.map((f) => {
-          if (f.id === familyId) {
-            return {
-              ...f,
-              memberStudentIds: Array.from(new Set([...f.memberStudentIds.filter((id) => id !== newStudent.id), newStudent.id])),
-            };
-          } else {
-            return {
-              ...f,
-              memberStudentIds: f.memberStudentIds.filter((id) => id !== newStudent.id),
-            };
-          }
-        })
-      );
-    }
+    work.students = [...work.students, newStudent];
 
     const studentClass = classes.find((c) => c.id === newStudent.classId);
-    addStudentAccountHistory({
+    work.history.push({
       studentId: newStudent.id,
       date: newStudent.admissionDate || newStudent.createdDate || new Date().toISOString().split('T')[0],
       category: 'enrollment',
@@ -2341,133 +2157,151 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       previousValue: 'None',
       newValue: newStudent.status,
     });
-
-    return { success: true, student: newStudent };
+    return { student: newStudent };
   };
 
-  const updateStudent = (id: string, updates: Partial<Student>) => {
+  // Admits one or many students (and any families they create) in one all-or-nothing save.
+  const commitStudentAdditions = async (inputs: NewStudentInput[]) => {
+    let out: Student[] = [];
+    let work: { students: Student[]; families: Family[]; history: HistoryInput[] } = { students: [], families: [], history: [] };
+    const res = await commitEntity(
+      'students',
+      (cur: Student[]) => {
+        work = { students: [...cur], families: [...(listsRef.current.families as Family[])], history: [] };
+        out = [];
+        for (const input of inputs) {
+          const prep = prepareStudentAddition(input, work);
+          if (prep.error) {
+            return { error: inputs.length > 1 ? `${prep.error} (${input.name || 'unnamed student'}). Nothing was saved.` : prep.error };
+          }
+          out.push(prep.student as Student);
+        }
+        return work.students;
+      },
+      { familyBuild: () => work.families, history: () => work.history }
+    );
+    return { res, out };
+  };
+
+  const addStudent = async (studentData: NewStudentInput) => {
+    const perm = ensureMutationAllowed('Student registration');
+    if (!perm.allowed) return { success: false, error: perm.error };
+    const { res, out } = await commitStudentAdditions([studentData]);
+    if (!res.success) return { success: false, error: res.error };
+    // Return the saved record (it carries the server's version).
+    const saved = (listsRef.current.students as Student[]).find((st) => st.id === out[0].id) || out[0];
+    return { success: true, student: saved };
+  };
+
+  const bulkAddStudents = async (inputs: NewStudentInput[]) => {
+    const perm = ensureMutationAllowed('Student registration');
+    if (!perm.allowed) return { success: false, importedCount: 0, error: perm.error };
+    if (inputs.length === 0) return { success: true, importedCount: 0 };
+    const { res, out } = await commitStudentAdditions(inputs);
+    if (!res.success) return { success: false, importedCount: 0, error: res.error };
+    return { success: true, importedCount: out.length };
+  };
+
+  const updateStudent = async (id: string, updates: Partial<Student>) => {
     const perm = ensureMutationAllowed('Student update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    const target = students.find((s) => s.id === id);
-    if (!target) return { success: false, error: 'Student not found.' };
+    let history: HistoryInput[] = [];
+    const res = await commitEntity(
+      'students',
+      (cur: Student[]) => {
+        history = [];
+        const target = cur.find((st) => st.id === id);
+        if (!target) return { error: 'Student not found.' };
 
-    const oldFamilyId = target.familyId;
-    const newFamilyId =
-      updates.familyId !== undefined ? (updates.familyId || undefined) : oldFamilyId;
+        const oldFamilyId = target.familyId;
+        const newFamilyId = updates.familyId !== undefined ? updates.familyId || undefined : oldFamilyId;
 
-    if (updates.familyId !== undefined && newFamilyId !== oldFamilyId) {
-      setFamilies((prev) =>
-        prev.map((f) => {
-          if (newFamilyId && f.id === newFamilyId) {
-            return {
-              ...f,
-              memberStudentIds: Array.from(new Set([...f.memberStudentIds.filter((mId) => mId !== id), id])),
-            };
-          } else {
-            return {
-              ...f,
-              memberStudentIds: f.memberStudentIds.filter((mId) => mId !== id),
-            };
-          }
-        })
-      );
+        if (updates.familyId !== undefined && newFamilyId !== oldFamilyId) {
+          const fams = listsRef.current.families as Family[];
+          const oldFam = fams.find((f) => f.id === oldFamilyId);
+          const newFam = fams.find((f) => f.id === newFamilyId);
+          history.push({
+            studentId: id,
+            category: 'family',
+            actionTitle: newFamilyId ? 'Family Linked' : 'Family Unlinked',
+            description: newFamilyId
+              ? `Linked to Family ${newFam?.familyNo || 'New Family'} (Head: ${newFam?.headName || 'Guardian'}).`
+              : `Unlinked from Family ${oldFam?.familyNo || 'Family'}.`,
+            previousValue: oldFam?.familyNo || 'None',
+            newValue: newFam?.familyNo || 'None',
+          });
+        }
 
-      const oldFam = families.find((f) => f.id === oldFamilyId);
-      const newFam = families.find((f) => f.id === newFamilyId);
-      addStudentAccountHistory({
-        studentId: id,
-        category: 'family',
-        actionTitle: newFamilyId ? 'Family Linked' : 'Family Unlinked',
-        description: newFamilyId
-          ? `Linked to Family ${newFam?.familyNo || 'New Family'} (Head: ${newFam?.headName || 'Guardian'}).`
-          : `Unlinked from Family ${oldFam?.familyNo || 'Family'}.`,
-        previousValue: oldFam?.familyNo || 'None',
-        newValue: newFam?.familyNo || 'None',
-      });
-    }
+        if (updates.status !== undefined && updates.status !== target.status) {
+          const oldStatus = target.status;
+          const newStatus = updates.status;
+          const timestamp = new Date().toISOString();
+          const reasonText = updates.notes ? `. Note: ${updates.notes}` : '';
+          history.push({
+            studentId: id,
+            timestamp,
+            date: timestamp.split('T')[0],
+            category: 'status',
+            actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
+            description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
+            previousValue: oldStatus,
+            newValue: newStatus,
+            metadata: { oldStatus, newStatus },
+          });
+        }
 
-    // Status Change
-    if (updates.status !== undefined && updates.status !== target.status) {
-      const oldStatus = target.status;
-      const newStatus = updates.status;
-      const timestamp = new Date().toISOString();
-      const reasonText = updates.notes ? `. Note: ${updates.notes}` : '';
+        if (updates.classId !== undefined && updates.classId !== target.classId) {
+          const oldClass = classes.find((c) => c.id === target.classId)?.name || 'Previous Class';
+          const newClass = classes.find((c) => c.id === updates.classId)?.name || 'New Class';
+          history.push({
+            studentId: id,
+            category: 'academic',
+            actionTitle: `Class Transferred: ${oldClass} → ${newClass}`,
+            description: `Student class transferred from ${oldClass} to ${newClass}.`,
+            previousValue: oldClass,
+            newValue: newClass,
+          });
+        }
 
-      addStudentAccountHistory({
-        studentId: id,
-        timestamp,
-        date: timestamp.split('T')[0],
-        category: 'status',
-        actionTitle: `Status Changed: ${oldStatus} → ${newStatus}`,
-        description: `Student enrollment status changed from ${oldStatus} to ${newStatus}${reasonText}.`,
-        previousValue: oldStatus,
-        newValue: newStatus,
-        metadata: { oldStatus, newStatus },
-      });
+        if (updates.monthlyDiscount !== undefined && updates.monthlyDiscount !== target.monthlyDiscount) {
+          history.push({
+            studentId: id,
+            category: 'discount',
+            actionTitle: `Monthly Discount Updated: ${formatCurrency(target.monthlyDiscount)} → ${formatCurrency(updates.monthlyDiscount)}`,
+            description: `Monthly fee concession adjusted from ${formatCurrency(target.monthlyDiscount)} to ${formatCurrency(updates.monthlyDiscount)}.`,
+            previousValue: formatCurrency(target.monthlyDiscount),
+            newValue: formatCurrency(updates.monthlyDiscount),
+          });
+        }
 
-      logAuditEvent({
-        timestamp,
-        actionType: 'operator_security',
-        actionTitle: `Student Status Changed: ${target.name}`,
-        description: `Status changed from ${oldStatus} to ${newStatus} for ${target.name} (${target.regNo})${reasonText}`,
-        module: 'Students',
-        targetId: target.regNo,
-        targetLabel: `${target.name} (${target.regNo})`,
-        previousValue: oldStatus,
-        newValue: newStatus,
-        metadata: { studentId: target.id, oldStatus, newStatus },
-      });
-    }
-
-    // Academic / Class Change
-    if (updates.classId !== undefined && updates.classId !== target.classId) {
-      const oldClass = classes.find((c) => c.id === target.classId)?.name || 'Previous Class';
-      const newClass = classes.find((c) => c.id === updates.classId)?.name || 'New Class';
-      addStudentAccountHistory({
-        studentId: id,
-        category: 'academic',
-        actionTitle: `Class Transferred: ${oldClass} → ${newClass}`,
-        description: `Student class transferred from ${oldClass} to ${newClass}.`,
-        previousValue: oldClass,
-        newValue: newClass,
-      });
-    }
-
-    // Monthly Discount Change
-    if (updates.monthlyDiscount !== undefined && updates.monthlyDiscount !== target.monthlyDiscount) {
-      addStudentAccountHistory({
-        studentId: id,
-        category: 'discount',
-        actionTitle: `Monthly Discount Updated: ${formatCurrency(target.monthlyDiscount)} → ${formatCurrency(updates.monthlyDiscount)}`,
-        description: `Monthly fee concession adjusted from ${formatCurrency(target.monthlyDiscount)} to ${formatCurrency(updates.monthlyDiscount)}.`,
-        previousValue: formatCurrency(target.monthlyDiscount),
-        newValue: formatCurrency(updates.monthlyDiscount),
-      });
-    }
-
-    const sanitizedUpdates = { ...updates };
-    if (sanitizedUpdates.dob !== undefined) {
-      sanitizedUpdates.dob = sanitizedUpdates.dob ? (normalizeDateToISO(sanitizedUpdates.dob) || sanitizedUpdates.dob) : '';
-    }
-    if (sanitizedUpdates.admissionDate !== undefined) {
-      sanitizedUpdates.admissionDate = sanitizedUpdates.admissionDate ? (normalizeDateToISO(sanitizedUpdates.admissionDate) || sanitizedUpdates.admissionDate) : '';
-    }
-
-    setStudents((prev) =>
-      prev.map((s) => {
-        if (s.id !== id) return s;
-        return {
-          ...s,
-          ...sanitizedUpdates,
-          familyId: newFamilyId,
-        };
-      })
+        const sanitizedUpdates = { ...updates };
+        if (sanitizedUpdates.dob !== undefined) {
+          sanitizedUpdates.dob = sanitizedUpdates.dob ? (normalizeDateToISO(sanitizedUpdates.dob) || sanitizedUpdates.dob) : '';
+        }
+        if (sanitizedUpdates.admissionDate !== undefined) {
+          sanitizedUpdates.admissionDate = sanitizedUpdates.admissionDate ? (normalizeDateToISO(sanitizedUpdates.admissionDate) || sanitizedUpdates.admissionDate) : '';
+        }
+        return cur.map((st) => (st.id === id ? { ...st, ...sanitizedUpdates, familyId: newFamilyId } : st));
+      },
+      { history: () => history }
     );
-    return { success: true };
+    return res.success ? { success: true } : { success: false, error: res.error };
   };
 
-  const deleteStudent = (id: string) => {
+  const deleteStudents = async (ids: string[]) => {
+    const idSet = new Set(ids);
+    const res = await commitEntity('students', (cur: Student[]) => cur.filter((st) => !idSet.has(st.id)), {
+      afterSuccess: () => {
+        // The server removed these students' assignments and fee templates with them.
+        dropLocalAssignments((a) => idSet.has(a.studentId));
+        dropLocalTemplates((t) => !!t.studentId && idSet.has(t.studentId));
+      },
+    });
+    return res;
+  };
+
+  const deleteStudent = async (id: string) => {
     const perm = ensureMutationAllowed('Student deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -2478,40 +2312,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete student. ${studentVouchers.length} fee voucher records exist for this student. Delete vouchers first.`,
       };
     }
-
-    setStudents((prev) => prev.filter((s) => s.id !== id));
-    studentsRef.current = studentsRef.current.filter((s) => s.id !== id);
-
-    setFamilies((prev) =>
-      prev.map((f) => ({ ...f, memberStudentIds: f.memberStudentIds.filter((mId) => mId !== id) }))
-    );
-    familiesRef.current = familiesRef.current.map((f) => ({
-      ...f,
-      memberStudentIds: f.memberStudentIds.filter((mId) => mId !== id),
-    }));
-
-    setTransportAssignments((prev) => prev.filter((a) => a.studentId !== id));
-    setTemplates((prev) => prev.filter((t) => t.studentId !== id));
-    return { success: true };
+    const res = await deleteStudents([id]);
+    return res.success ? { success: true } : { success: false, error: res.error };
   };
 
-  const bulkDeleteStudents = (ids: string[]) => {
+  const bulkDeleteStudents = async (ids: string[]) => {
     const perm = ensureMutationAllowed('Bulk student deletion');
-    if (!perm.allowed) return { deletedCount: 0, skippedIds: ids };
+    if (!perm.allowed) return { deletedCount: 0, skippedIds: ids, error: perm.error };
 
-    let deletedCount = 0;
-    const skippedIds: string[] = [];
+    const withVouchers = new Set(vouchers.map((v) => v.studentId));
+    const deletable = ids.filter((id) => !withVouchers.has(id));
+    const skippedIds = ids.filter((id) => withVouchers.has(id));
+    if (deletable.length === 0) return { deletedCount: 0, skippedIds };
 
-    ids.forEach((id) => {
-      const res = deleteStudent(id);
-      if (res.success) {
-        deletedCount++;
-      } else {
-        skippedIds.push(id);
-      }
-    });
-
-    return { deletedCount, skippedIds };
+    const res = await deleteStudents(deletable);
+    if (!res.success) return { deletedCount: 0, skippedIds: ids, error: res.error };
+    return { deletedCount: deletable.length, skippedIds };
   };
 
   // Family Management
@@ -2521,7 +2337,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const raw = (value || '').trim();
     if (!raw) return 'Father National ID is required.';
     const norm = normalizeNationalId(raw);
-    const clash = familiesRef.current.find((f) => {
+    const clash = (listsRef.current.families as Family[]).find((f) => {
       if (f.id === excludeFamilyId || !f.fatherNationalId?.trim()) return false;
       return (
         f.fatherNationalId.trim().toLowerCase() === raw.toLowerCase() ||
@@ -2531,156 +2347,139 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return clash ? `This Father National ID already belongs to family ${clash.familyNo} (${clash.headName}).` : '';
   };
 
-  const addFamily = (familyData: Omit<Family, 'id' | 'familyNo'>) => {
+  const addFamily = async (familyData: Omit<Family, 'id' | 'familyNo'>) => {
     const perm = ensureMutationAllowed('Family creation');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    const idCheck = validateFamilyNationalId(familyData.fatherNationalId);
-    if (idCheck) return { success: false, error: idCheck };
-
-    const newFamily: Family = {
-      ...familyData,
-      id: generateUniqueId('fam'),
-      // Provisional number; the server issues the real, unique one when the family is saved.
-      familyNo: PENDING_FAMILY_NO,
-      fatherNationalId: familyData.fatherNationalId?.trim() || '',
-    };
-    setFamilies((prev) => [...prev, newFamily]);
-    familiesRef.current = [...familiesRef.current, newFamily];
-    return { success: true, family: newFamily };
+    let created: Family | undefined;
+    const res = await commitEntity('families', (cur: Family[]) => {
+      const idCheck = validateFamilyNationalId(familyData.fatherNationalId);
+      if (idCheck) return { error: idCheck };
+      created = {
+        ...familyData,
+        id: generateUniqueId('fam'),
+        // Provisional number; the server issues the real, unique one when the family is saved.
+        familyNo: PENDING_FAMILY_NO,
+        fatherNationalId: familyData.fatherNationalId?.trim() || '',
+      };
+      return [...cur, created];
+    });
+    if (!res.success || !created) return { success: false, error: res.error };
+    const saved = (listsRef.current.families as Family[]).find((f) => f.id === created!.id) || created;
+    return { success: true, family: saved };
   };
 
-  const updateFamily = (id: string, updates: Partial<Family>) => {
+  const updateFamily = async (id: string, updates: Partial<Family>) => {
     const perm = ensureMutationAllowed('Family update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
     const sanitized = { ...updates };
-    if (sanitized.fatherNationalId !== undefined) {
-      sanitized.fatherNationalId = sanitized.fatherNationalId.trim();
-      const idCheck = validateFamilyNationalId(sanitized.fatherNationalId, id);
-      if (idCheck) return { success: false, error: idCheck };
-    }
-    setFamilies((prev) => prev.map((f) => (f.id === id ? { ...f, ...sanitized } : f)));
-    familiesRef.current = familiesRef.current.map((f) => (f.id === id ? { ...f, ...sanitized } : f));
-    return { success: true };
+    if (sanitized.fatherNationalId !== undefined) sanitized.fatherNationalId = sanitized.fatherNationalId.trim();
+    const res = await commitEntity('families', (cur: Family[]) => {
+      if (sanitized.fatherNationalId !== undefined) {
+        const idCheck = validateFamilyNationalId(sanitized.fatherNationalId, id);
+        if (idCheck) return { error: idCheck };
+      }
+      if (!cur.some((f) => f.id === id)) return { error: 'Family not found.' };
+      return cur.map((f) => (f.id === id ? { ...f, ...sanitized } : f));
+    });
+    return res.success ? { success: true } : { success: false, error: res.error };
   };
 
-  const deleteFamily = (id: string) => {
+  const deleteFamily = (id: string) => deleteFamilies([id]);
+
+  // One all-or-nothing call: either every family is removed or none is.
+  const deleteFamilies = async (ids: string[]) => {
     const perm = ensureMutationAllowed('Family deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
+    const idSet = new Set(ids);
 
-    setFamilies((prev) => prev.filter((f) => f.id !== id));
-    familiesRef.current = familiesRef.current.filter((f) => f.id !== id);
-
-    setStudents((prev) =>
-      prev.map((s) => (s.familyId === id ? { ...s, familyId: undefined } : s))
-    );
-    studentsRef.current = studentsRef.current.map((s) =>
-      s.familyId === id ? { ...s, familyId: undefined } : s
-    );
-    return { success: true };
+    const res = await commitEntity('families', (cur: Family[]) => cur.filter((f) => !idSet.has(f.id)), {
+      afterSuccess: () => {
+        // The server cleared the link on this family's students; mirror that locally.
+        const cleared = (listsRef.current.students as Student[]).map((st) =>
+          st.familyId && idSet.has(st.familyId) ? { ...st, familyId: undefined } : st
+        );
+        listsRef.current = { ...listsRef.current, students: cleared };
+        setStudents(cleared);
+        studentsRef.current = cleared;
+      },
+    });
+    return res.success ? { success: true } : { success: false, error: res.error };
   };
 
-  const addStudentToFamily = (familyId: string, studentId: string) => {
+  const addStudentToFamily = async (familyId: string, studentId: string) => {
     const perm = ensureMutationAllowed('Family student assignment');
-    if (!perm.allowed) return;
-
-    // 1. Update student's familyId
-    setStudents((prev) =>
-      prev.map((s) => (s.id === studentId ? { ...s, familyId } : s))
-    );
-    studentsRef.current = studentsRef.current.map((s) =>
-      s.id === studentId ? { ...s, familyId } : s
-    );
-    // 2. Add to target family and remove from any previous family
-    const updateFamilyMembers = (prevFamilies: Family[]) =>
-      prevFamilies.map((f) => {
-        if (f.id === familyId) {
-          return {
-            ...f,
-            memberStudentIds: Array.from(new Set([...f.memberStudentIds.filter((id) => id !== studentId), studentId])),
-          };
-        } else {
-          return {
-            ...f,
-            memberStudentIds: f.memberStudentIds.filter((id) => id !== studentId),
-          };
-        }
-      });
-    setFamilies(updateFamilyMembers);
-    familiesRef.current = updateFamilyMembers(familiesRef.current);
+    if (!perm.allowed) return { success: false, error: perm.error };
+    return updateStudent(studentId, { familyId });
   };
 
-  const removeStudentFromFamily = (familyId: string, studentId: string) => {
+  const removeStudentFromFamily = async (familyId: string, studentId: string) => {
     const perm = ensureMutationAllowed('Family student removal');
-    if (!perm.allowed) return;
-    // 1. Unset student's familyId if it matches this family
-    setStudents((prev) =>
-      prev.map((s) => (s.id === studentId && s.familyId === familyId ? { ...s, familyId: undefined } : s))
-    );
-    studentsRef.current = studentsRef.current.map((s) =>
-      s.id === studentId && s.familyId === familyId ? { ...s, familyId: undefined } : s
-    );
-    // 2. Remove student ID from this family
-    const updateFamilyRemoval = (prevFamilies: Family[]) =>
-      prevFamilies.map((f) =>
-        f.id === familyId
-          ? { ...f, memberStudentIds: f.memberStudentIds.filter((id) => id !== studentId) }
-          : f
-      );
-    setFamilies(updateFamilyRemoval);
-    familiesRef.current = updateFamilyRemoval(familiesRef.current);
+    if (!perm.allowed) return { success: false, error: perm.error };
+    const student = (listsRef.current.students as Student[]).find((st) => st.id === studentId);
+    if (!student || student.familyId !== familyId) return { success: true };
+    return updateStudent(studentId, { familyId: '' });
   };
 
   // Transport Management
-  const addBus = (bus: Omit<TransportBus, 'id'>) => {
+  const resequence = <T extends { sortOrder: number }>(list: T[]): T[] => list.map((x, idx) => ({ ...x, sortOrder: idx + 1 }));
+
+  const addBus = async (bus: Omit<TransportBus, 'id'>) => {
     const perm = ensureMutationAllowed('Bus addition');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (buses.some((b) => b.busNumber.toLowerCase() === bus.busNumber.toLowerCase())) {
-      return { success: false, error: 'Bus number already exists.' };
-    }
-    const newBus: TransportBus = { ...bus, id: `bus-${Date.now()}` };
-    // Insert at the requested position and resequence, same rationale as
-    // addClass: a plain sort() leaves a duplicate sortOrder when the
-    // requested position is already occupied instead of shifting others.
-    const existing = [...buses].sort((a, b) => a.sortOrder - b.sortOrder);
-    const clampedIndex = Math.min(Math.max(newBus.sortOrder - 1, 0), existing.length);
-    existing.splice(clampedIndex, 0, newBus);
-    setBuses(existing.map((b, idx) => ({ ...b, sortOrder: idx + 1 })));
-    return { success: true };
+    return commitEntity('buses', (cur: TransportBus[]) => {
+      if (cur.some((b) => b.busNumber.toLowerCase() === bus.busNumber.toLowerCase())) {
+        return { error: 'Bus number already exists.' };
+      }
+      const newBus: TransportBus = { ...bus, id: generateUniqueId('bus') };
+      // Insert at the requested position and resequence everyone, rather than a plain
+      // sort: if the position is taken, sort() alone would leave two buses sharing it.
+      const existing = [...cur].sort((a, b) => a.sortOrder - b.sortOrder);
+      const clampedIndex = Math.min(Math.max(newBus.sortOrder - 1, 0), existing.length);
+      existing.splice(clampedIndex, 0, newBus);
+      return resequence(existing);
+    });
   };
 
-  const updateBus = (id: string, updates: Partial<TransportBus>) => {
+  const updateBus = async (id: string, updates: Partial<TransportBus>) => {
     const perm = ensureMutationAllowed('Bus update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (updates.busNumber) {
-      const exists = buses.some(
-        (b) => b.id !== id && b.busNumber.toLowerCase() === updates.busNumber?.trim().toLowerCase()
-      );
-      if (exists) return { success: false, error: 'Bus number already exists.' };
-    }
-
-    const current = buses.find((b) => b.id === id);
-    if (!current) return { success: false, error: 'Bus not found.' };
-
-    // If the Sort Position # was manually changed, resequence the whole
-    // fleet list around the new position -- same rationale as updateClass
-    // above, and consistent with what drag-and-drop (reorderBuses) does.
-    if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
-      const others = buses.filter((b) => b.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
-      const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
-      others.splice(clampedIndex, 0, { ...current, ...updates });
-      setBuses(others.map((b, idx) => ({ ...b, sortOrder: idx + 1 })));
-      return { success: true };
-    }
-
-    setBuses((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
-    return { success: true };
+    return commitEntity('buses', (cur: TransportBus[]) => {
+      if (updates.busNumber) {
+        const exists = cur.some((b) => b.id !== id && b.busNumber.toLowerCase() === updates.busNumber?.trim().toLowerCase());
+        if (exists) return { error: 'Bus number already exists.' };
+      }
+      const current = cur.find((b) => b.id === id);
+      if (!current) return { error: 'Bus not found.' };
+      // A manually changed Sort Position resequences the whole fleet, like drag-and-drop.
+      if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
+        const others = cur.filter((b) => b.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
+        const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
+        others.splice(clampedIndex, 0, { ...current, ...updates });
+        return resequence(others);
+      }
+      return cur.map((b) => (b.id === id ? { ...b, ...updates } : b));
+    });
   };
 
-  const deleteBus = (id: string) => {
+  // Removes assignments from local state (the server already removed them) so the
+  // screen matches without waiting for a reload.
+  const dropLocalAssignments = (shouldDrop: (a: TransportAssignment) => boolean) => {
+    const kept = (listsRef.current.transportAssignments as TransportAssignment[]).filter((a) => !shouldDrop(a));
+    listsRef.current = { ...listsRef.current, transportAssignments: kept };
+    setTransportAssignments(kept);
+  };
+
+  const dropLocalTemplates = (shouldDrop: (t: FeeTemplate) => boolean) => {
+    const kept = (listsRef.current.templates as FeeTemplate[]).filter((t) => !shouldDrop(t));
+    listsRef.current = { ...listsRef.current, templates: kept };
+    setTemplates(kept);
+  };
+
+  const deleteBus = async (id: string) => {
     const perm = ensureMutationAllowed('Bus deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -2693,89 +2492,183 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete bus. ${activeAssignments.length} active student transport assignments refer to this bus.`,
       };
     }
-    setTransportAssignments((prev) => prev.filter((a) => a.busId !== id));
-    setBuses((prev) => prev.filter((b) => b.id !== id));
-    return { success: true };
+    return commitEntity('buses', (cur: TransportBus[]) => cur.filter((b) => b.id !== id), {
+      afterSuccess: () => dropLocalAssignments((a) => a.busId === id),
+    });
   };
 
-  const reorderBuses = (reorderedBuses: TransportBus[]) => {
+  const reorderBuses = async (reorderedBuses: TransportBus[]) => {
     const perm = ensureMutationAllowed('Bus reordering');
-    if (!perm.allowed) return;
-
-    const updated = reorderedBuses.map((bus, idx) => ({
-      ...bus,
-      sortOrder: idx + 1,
-    }));
-    setBuses(updated);
-    return { success: true };
+    if (!perm.allowed) return { success: false, error: perm.error };
+    return commitEntity('buses', (cur: TransportBus[]) => {
+      const byId = new Map(cur.map((b) => [b.id, b]));
+      return resequence(reorderedBuses.map((b) => ({ ...(byId.get(b.id) || b), ...b })));
+    });
   };
 
-  const addStop = (stop: Omit<TransportStop, 'id'>) => {
+  const reloadSavedState = () => {
+    fetchServerState()
+      .then((res) => {
+        if (res?.success && res.data) applyServerState(res.data);
+      })
+      .catch(() => {});
+  };
+
+  // ---- Confirmed writes ------------------------------------------------------
+  // The server is the only authority. A change to an entity collection is sent as one
+  // all-or-nothing batch; local state (and the success message the caller shows) follows
+  // only once the server has confirmed it. A rejected change leaves the screen untouched.
+  const listsRef = useRef<Record<CommitEntity, any[]>>({
+    classes: [], families: [], students: [], buses: [], stops: [], transportAssignments: [], templates: [], bankAccounts: [],
+  });
+  listsRef.current = { classes, families, students, buses, stops, transportAssignments, templates, bankAccounts };
+
+  const entitySetters: Record<CommitEntity, (next: any[]) => void> = {
+    classes: setClasses, families: setFamilies, students: setStudents, buses: setBuses, stops: setStops,
+    transportAssignments: setTransportAssignments, templates: setTemplates, bankAccounts: setBankAccounts,
+  };
+
+  const rebuildFamilyMembers = (fams: Family[], studs: Student[]): Family[] =>
+    fams.map((f) => ({ ...f, memberStudentIds: studs.filter((st) => st.familyId === f.id).map((st) => st.id) }));
+
+  const commitChain = useRef<Promise<unknown>>(Promise.resolve());
+
+  const diffForCommit = (cur: any[], next: any[]) => {
+    const curById = new Map<string, any>(cur.map((c) => [c.id, c]));
+    const strip = (o: any) => {
+      const { memberStudentIds: _m, ...rest } = o || {};
+      return JSON.stringify(rest);
+    };
+    const upserts: any[] = [];
+    for (const n of next) {
+      const c = curById.get(n.id);
+      if (!c) upserts.push(n);
+      else if (strip(c) !== strip(n)) upserts.push({ ...n, expectedVersion: c.version });
+    }
+    const nextIds = new Set(next.map((n) => n.id));
+    const deleteIds = cur.filter((c) => !nextIds.has(c.id)).map((c) => c.id);
+    return { upserts, deleteIds };
+  };
+
+  /**
+   * Saves the new state of one collection. `build` receives the latest confirmed list
+   * and returns the desired list (or { error }). Changed rows are sent as upserts, rows
+   * that are gone as deletes, plus optional account-history entries and, for students,
+   * the family rows to create or update in the same transaction. Calls are serialised so
+   * two quick actions never build on a stale list.
+   */
+  const commitEntity = (
+    entity: CommitEntity,
+    build: (current: any[]) => any[] | { error: string },
+    opts?: {
+      history?: HistoryInput[] | (() => HistoryInput[]);
+      familyBuild?: (families: Family[]) => Family[];
+      afterSuccess?: (merged: any[]) => void;
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    const run = async (): Promise<{ success: boolean; error?: string }> => {
+      const cur = listsRef.current[entity];
+      const built = build(cur);
+      if (!Array.isArray(built)) return { success: false, error: built.error };
+      const next = built;
+
+      const { upserts, deleteIds } = diffForCommit(cur, next);
+      let famNext: Family[] | null = null;
+      let familyUpserts: any[] = [];
+      if (entity === 'students' && opts?.familyBuild) {
+        famNext = opts.familyBuild(listsRef.current.families as Family[]);
+        familyUpserts = diffForCommit(listsRef.current.families, famNext).upserts;
+      }
+      const historyInput = typeof opts?.history === 'function' ? opts.history() : opts?.history || [];
+      const history: StudentAccountHistoryEntry[] = historyInput.map((h) => buildHistoryEntry(h));
+      if (upserts.length === 0 && deleteIds.length === 0 && familyUpserts.length === 0 && history.length === 0) {
+        return { success: true };
+      }
+
+      const result: CommitResult = await apiCommitBatch(entity, {
+        upserts,
+        deleteIds,
+        history,
+        ...(entity === 'students' ? { familyUpserts } : {}),
+      });
+      if (!result.success) {
+        if (result.code === 'STALE_VERSION' || result.code === 'IN_USE') reloadSavedState();
+        return { success: false, error: result.error };
+      }
+
+      const saved = new Map<string, any>((result.items || []).map((i) => [i.id, i]));
+      const merged = next.map((n) => (saved.has(n.id) ? { ...n, ...saved.get(n.id) } : n));
+      let mergedFamilies: Family[] | null = null;
+      if (famNext) {
+        const savedFam = new Map<string, any>((result.families || []).map((f) => [f.id, f]));
+        mergedFamilies = famNext.map((f) => (savedFam.has(f.id) ? { ...f, ...savedFam.get(f.id) } : f));
+      }
+
+      listsRef.current = { ...listsRef.current, [entity]: merged };
+      entitySetters[entity](merged);
+      if (entity === 'students') studentsRef.current = merged;
+      if (entity === 'families') familiesRef.current = merged;
+
+      if (mergedFamilies || entity === 'students' || entity === 'families') {
+        const studs = (entity === 'students' ? merged : listsRef.current.students) as Student[];
+        const fams = rebuildFamilyMembers((mergedFamilies || (entity === 'families' ? merged : listsRef.current.families)) as Family[], studs);
+        listsRef.current = { ...listsRef.current, families: fams };
+        setFamilies(fams);
+        familiesRef.current = fams;
+      }
+      if (history.length > 0) {
+        setStudentAccountHistory((prev) => [...history, ...prev]);
+      }
+      opts?.afterSuccess?.(merged);
+      return { success: true };
+    };
+    const p = commitChain.current.then(run, run);
+    commitChain.current = p.catch(() => undefined);
+    return p;
+  };
+
+  const addStop = async (stop: Omit<TransportStop, 'id'>) => {
     const perm = ensureMutationAllowed('Stop addition');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (stops.some((s) => s.name.toLowerCase() === stop.name.toLowerCase())) {
-      return { success: false, error: 'Bus stop name already exists.' };
-    }
-    const newStop: TransportStop = {
-      ...stop,
-      id: `stop-${Date.now()}`,
-      monthlyFare: stop.monthlyFare,
-    };
-    // Insert at the requested position and resequence, same rationale as
-    // addClass/addBus above.
-    const existing = [...stops].sort((a, b) => a.sortOrder - b.sortOrder);
-    const clampedIndex = Math.min(Math.max(newStop.sortOrder - 1, 0), existing.length);
-    existing.splice(clampedIndex, 0, newStop);
-    setStops(existing.map((s, idx) => ({ ...s, sortOrder: idx + 1 })));
-    return { success: true };
+    return commitEntity('stops', (cur: TransportStop[]) => {
+      if (cur.some((s) => s.name.toLowerCase() === stop.name.toLowerCase())) {
+        return { error: 'Bus stop name already exists.' };
+      }
+      const newStop: TransportStop = { ...stop, id: generateUniqueId('stop'), monthlyFare: stop.monthlyFare };
+      const existing = [...cur].sort((a, b) => a.sortOrder - b.sortOrder);
+      const clampedIndex = Math.min(Math.max(newStop.sortOrder - 1, 0), existing.length);
+      existing.splice(clampedIndex, 0, newStop);
+      return resequence(existing);
+    });
   };
 
-  const updateStop = (id: string, updates: Partial<TransportStop>) => {
+  const updateStop = async (id: string, updates: Partial<TransportStop>) => {
     const perm = ensureMutationAllowed('Stop update');
     if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (updates.name) {
-      const exists = stops.some(
-        (s) => s.id !== id && s.name.toLowerCase() === updates.name?.trim().toLowerCase()
-      );
-      if (exists) return { success: false, error: 'Bus stop name already exists.' };
-    }
-
-    const current = stops.find((s) => s.id === id);
-    if (!current) return { success: false, error: 'Bus stop not found.' };
-
-    const patchedFields: Partial<TransportStop> = {
-      ...updates,
-      monthlyFare: updates.monthlyFare !== undefined ? updates.monthlyFare : current.monthlyFare,
-    };
-
-    // If the Sort Position # was manually changed, resequence the whole
-    // stop list around the new position -- same rationale as updateClass /
-    // updateBus above, and consistent with what drag-and-drop (reorderStops)
-    // does.
-    if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
-      const others = stops.filter((s) => s.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
-      const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
-      others.splice(clampedIndex, 0, { ...current, ...patchedFields });
-      setStops(others.map((s, idx) => ({ ...s, sortOrder: idx + 1 })));
-      return { success: true };
-    }
-
-    setStops((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              ...patchedFields,
-            }
-          : s
-      )
-    );
-    return { success: true };
+    return commitEntity('stops', (cur: TransportStop[]) => {
+      if (updates.name) {
+        const exists = cur.some((s) => s.id !== id && s.name.toLowerCase() === updates.name?.trim().toLowerCase());
+        if (exists) return { error: 'Bus stop name already exists.' };
+      }
+      const current = cur.find((s) => s.id === id);
+      if (!current) return { error: 'Bus stop not found.' };
+      const patched: Partial<TransportStop> = {
+        ...updates,
+        monthlyFare: updates.monthlyFare !== undefined ? updates.monthlyFare : current.monthlyFare,
+      };
+      if (updates.sortOrder !== undefined && updates.sortOrder !== current.sortOrder) {
+        const others = cur.filter((s) => s.id !== id).sort((a, b) => a.sortOrder - b.sortOrder);
+        const clampedIndex = Math.min(Math.max(updates.sortOrder - 1, 0), others.length);
+        others.splice(clampedIndex, 0, { ...current, ...patched });
+        return resequence(others);
+      }
+      return cur.map((s) => (s.id === id ? { ...s, ...patched } : s));
+    });
   };
 
-  const deleteStop = (id: string) => {
+  const deleteStop = async (id: string) => {
     const perm = ensureMutationAllowed('Stop deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -2788,41 +2681,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: `Cannot delete bus stop. ${activeAssignments.length} active student transport assignments refer to this stop.`,
       };
     }
-    setTransportAssignments((prev) => prev.filter((a) => a.stopId !== id));
-    setStops((prev) => prev.filter((s) => s.id !== id));
-    return { success: true };
+    return commitEntity('stops', (cur: TransportStop[]) => cur.filter((s) => s.id !== id), {
+      afterSuccess: () => dropLocalAssignments((a) => a.stopId === id),
+    });
   };
 
-  const reorderStops = (reorderedStops: TransportStop[]) => {
+  const reorderStops = async (reorderedStops: TransportStop[]) => {
     const perm = ensureMutationAllowed('Stop reordering');
-    if (!perm.allowed) return;
-
-    const updated = reorderedStops.map((stop, idx) => ({
-      ...stop,
-      sortOrder: idx + 1,
-    }));
-    setStops(updated);
-    return { success: true };
+    if (!perm.allowed) return { success: false, error: perm.error };
+    return commitEntity('stops', (cur: TransportStop[]) => {
+      const byId = new Map(cur.map((s) => [s.id, s]));
+      return resequence(reorderedStops.map((s) => ({ ...(byId.get(s.id) || s), ...s })));
+    });
   };
 
-  const bulkSaveTransportStops = (
+  const bulkSaveTransportStops = async (
     stopsList: Array<Omit<TransportStop, 'id'> & { id?: string }>
   ) => {
     const perm = ensureMutationAllowed('Bulk stop save');
-    if (!perm.allowed) return { success: false, count: 0, addedCount: 0, updatedCount: 0 };
+    if (!perm.allowed) return { success: false, count: 0, addedCount: 0, updatedCount: 0, error: perm.error };
     let addedCount = 0;
     let updatedCount = 0;
-    setStops((prev) => {
-      let currentStops = [...prev];
+    const res = await commitEntity('stops', (cur: TransportStop[]) => {
+      addedCount = 0;
+      updatedCount = 0;
+      const currentStops = [...cur];
       for (const item of stopsList) {
         const cleanName = item.name.trim();
         const existingIdx = currentStops.findIndex(
-          (s) =>
-            (item.id && s.id === item.id) ||
-            s.name.toLowerCase() === cleanName.toLowerCase()
+          (s) => (item.id && s.id === item.id) || s.name.toLowerCase() === cleanName.toLowerCase()
         );
         const fare = item.monthlyFare || 0;
-
         if (existingIdx >= 0) {
           currentStops[existingIdx] = {
             ...currentStops[existingIdx],
@@ -2834,40 +2723,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
           updatedCount++;
         } else {
-          const nextSortOrder = item.sortOrder || currentStops.length + 1;
-          const newStop: TransportStop = {
+          currentStops.push({
             id: item.id || generateUniqueId('stop'),
             name: cleanName,
             area: (item.area || '').trim(),
             landmark: (item.landmark || '').trim(),
             monthlyFare: fare,
-            sortOrder: nextSortOrder,
-          };
-          currentStops.push(newStop);
+            sortOrder: item.sortOrder || currentStops.length + 1,
+          });
           addedCount++;
         }
       }
       currentStops.sort((a, b) => a.sortOrder - b.sortOrder);
-      return currentStops.map((s, idx) => ({ ...s, sortOrder: idx + 1 }));
+      return resequence(currentStops);
     });
+    if (!res.success) return { success: false, count: 0, addedCount: 0, updatedCount: 0, error: res.error };
     return { success: true, count: stopsList.length, addedCount, updatedCount };
   };
 
-  const saveTransportAssignment = (
+  const saveTransportAssignment = async (
     assignment: Omit<TransportAssignment, 'id'> & { id?: string }
   ) => {
     const perm = ensureMutationAllowed('Transport assignment save');
     if (!perm.allowed) return { success: false, error: perm.error };
+
+    if (!assignment.studentId || !students.some((s) => s.id === assignment.studentId)) {
+      return { success: false, error: 'Select a student.' };
+    }
+    if (!assignment.busId || !buses.some((b) => b.id === assignment.busId)) {
+      return { success: false, error: 'Select a bus.' };
+    }
+    if (!assignment.stopId || !stops.some((s) => s.id === assignment.stopId)) {
+      return { success: false, error: 'Select a stop.' };
+    }
 
     const stop = stops.find((s) => s.id === assignment.stopId);
     const bus = buses.find((b) => b.id === assignment.busId);
     const monthName = formatMonthName(assignment.month);
     const fare = stop?.monthlyFare ? Math.max(0, stop.monthlyFare - (assignment.discount || 0)) : 0;
 
+    let pendingHistory: HistoryInput | null = null;
     if (assignment.id) {
       const existing = transportAssignments.find((a) => a.id === assignment.id);
       const isDeactivated = assignment.active === false && existing?.active !== false;
-      addStudentAccountHistory({
+      pendingHistory = {
         studentId: assignment.studentId,
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
@@ -2878,21 +2777,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         previousValue: existing ? `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})` : undefined,
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
-      });
+      };
 
-      setTransportAssignments((prev) =>
-        prev.map((a) => (a.id === assignment.id ? { ...a, ...assignment } : a))
+      return commitEntity(
+        'transportAssignments',
+        (cur: TransportAssignment[]) => cur.map((a) => (a.id === assignment.id ? { ...a, ...assignment } : a)),
+        { history: pendingHistory ? [pendingHistory] : [] }
       );
-      return { success: true };
     }
 
+    let build: (cur: TransportAssignment[]) => TransportAssignment[] = (cur) => cur;
     // Check if assignment already exists for student + month
     const existing = transportAssignments.find(
       (a) => a.studentId === assignment.studentId && a.month === assignment.month
     );
 
     if (existing) {
-      addStudentAccountHistory({
+      pendingHistory = {
         studentId: assignment.studentId,
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
@@ -2901,12 +2802,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         previousValue: `${stops.find((s) => s.id === existing.stopId)?.name || 'Stop'} (${buses.find((b) => b.id === existing.busId)?.busNumber || 'Bus'})`,
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
-      });
-      setTransportAssignments((prev) =>
-        prev.map((a) => (a.id === existing.id ? { ...a, ...assignment } : a))
-      );
+      };
+      build = (cur) => cur.map((a) => (a.id === existing.id ? { ...a, ...assignment } : a));
     } else {
-      addStudentAccountHistory({
+      pendingHistory = {
         studentId: assignment.studentId,
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
@@ -2915,61 +2814,87 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         previousValue: 'No Transport',
         newValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         month: assignment.month,
-      });
+      };
       const newAsgn: TransportAssignment = {
         ...assignment,
-        id: `asgn-${Date.now()}`,
+        id: generateUniqueId('asgn'),
         createdAt: new Date().toISOString(),
       };
-      setTransportAssignments((prev) => [...prev, newAsgn]);
+      build = (cur) => [...cur, newAsgn];
     }
-    return { success: true };
+    return commitEntity('transportAssignments', build, { history: pendingHistory ? [pendingHistory] : [] });
   };
 
-  const bulkSaveTransportAssignments = (
-    assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>
+  const bulkSaveTransportAssignments = async (
+    assignments: Array<Omit<TransportAssignment, 'id'> & { id?: string }>,
+    options?: { deleteIds?: string[]; history?: HistoryInput[] }
   ) => {
     const perm = ensureMutationAllowed('Bulk transport assignments save');
-    if (!perm.allowed) return { success: false, count: 0 };
+    if (!perm.allowed) return { success: false, count: 0, error: perm.error };
 
-    setTransportAssignments((prev) => {
-      let updated = [...prev];
-      for (const asgn of assignments) {
-        if (asgn.id) {
-          const idx = updated.findIndex((a) => a.id === asgn.id);
-          if (idx >= 0) {
-            updated[idx] = { ...updated[idx], ...asgn };
-            continue;
+    // Never store an assignment without a real student, bus and stop. Callers are
+    // expected to pass only qualifying rows; if any slips through, reject the whole
+    // batch loudly rather than saving a partial set.
+    const bad = assignments.filter(
+      (a) =>
+        !a.studentId ||
+        !students.some((s) => s.id === a.studentId) ||
+        !buses.some((b) => b.id === a.busId) ||
+        !stops.some((sp) => sp.id === a.stopId)
+    );
+    if (bad.length > 0) {
+      return {
+        success: false,
+        count: 0,
+        error: `${bad.length} assignment${bad.length === 1 ? '' : 's'} had a missing student, bus or stop. Nothing was saved.`,
+      };
+    }
+
+    const res = await commitEntity(
+      'transportAssignments',
+      (cur: TransportAssignment[]) => {
+        const removed = new Set(options?.deleteIds || []);
+        const updated = cur.filter((a) => !removed.has(a.id));
+        for (const asgn of assignments) {
+          if (asgn.id) {
+            const idx = updated.findIndex((a) => a.id === asgn.id);
+            if (idx >= 0) {
+              updated[idx] = { ...updated[idx], ...asgn };
+              continue;
+            }
+          }
+          const existingIdx = updated.findIndex((a) => a.studentId === asgn.studentId && a.month === asgn.month);
+          if (existingIdx >= 0) {
+            updated[existingIdx] = { ...updated[existingIdx], ...asgn };
+          } else {
+            updated.push({
+              ...asgn,
+              id: generateUniqueId('asgn'),
+              createdAt: asgn.createdAt || new Date().toISOString(),
+            } as TransportAssignment);
           }
         }
-        const existingIdx = updated.findIndex(
-          (a) => a.studentId === asgn.studentId && a.month === asgn.month
-        );
-        if (existingIdx >= 0) {
-          updated[existingIdx] = { ...updated[existingIdx], ...asgn };
-        } else {
-          updated.push({
-            ...asgn,
-            id: generateUniqueId('asgn'),
-            createdAt: asgn.createdAt || new Date().toISOString(),
-          });
-        }
-      }
-      return updated;
-    });
+        return updated;
+      },
+      { history: options?.history }
+    );
+    if (!res.success) return { success: false, count: 0, error: res.error };
     return { success: true, count: assignments.length };
   };
 
-  const deleteTransportAssignment = (id: string) => {
+  const deleteTransportAssignments = async (ids: string[]) => {
     const perm = ensureMutationAllowed('Transport assignment deletion');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    const targetAsgn = transportAssignments.find((a) => a.id === id);
-    if (targetAsgn) {
+    const idSet = new Set(ids);
+    const targets = transportAssignments.filter((a) => idSet.has(a.id));
+    if (targets.length === 0) return { success: true };
+
+    const history: HistoryInput[] = targets.map((targetAsgn) => {
       const stop = stops.find((s) => s.id === targetAsgn.stopId);
       const bus = buses.find((b) => b.id === targetAsgn.busId);
       const monthName = formatMonthName(targetAsgn.month);
-      addStudentAccountHistory({
+      return {
         studentId: targetAsgn.studentId,
         date: new Date().toISOString().split('T')[0],
         category: 'transport',
@@ -2978,12 +2903,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         previousValue: `${stop?.name || 'Stop'} (${bus?.busNumber || 'Bus'})`,
         newValue: 'Removed / None',
         month: targetAsgn.month,
-      });
-    }
-    setTransportAssignments((prev) => prev.filter((a) => a.id !== id));
+      };
+    });
+    return commitEntity('transportAssignments', (cur: TransportAssignment[]) => cur.filter((a) => !idSet.has(a.id)), { history });
   };
 
-  const bulkUpdateTransportDaysForMonth = (targetMonth: string, daysCharged: number) => {
+  const deleteTransportAssignment = (id: string) => deleteTransportAssignments([id]);
+
+  const bulkUpdateTransportDaysForMonth = async (targetMonth: string, daysCharged: number) => {
     const perm = ensureMutationAllowed('Bulk update transport days');
     if (!perm.allowed) return { success: false, updatedCount: 0 };
 
@@ -2992,22 +2919,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const maxDays = new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0).getDate();
     const clampedDays = Math.min(Math.max(daysCharged, 0), maxDays);
 
-    const matchedCount = transportAssignments.filter((a) => a.month === targetMonth).length;
-    setTransportAssignments((prev) =>
-      prev.map((a) => (a.month === targetMonth ? { ...a, daysCharged: clampedDays } : a))
-    );
-
+    let matchedCount = 0;
+    const saved = await commitEntity('transportAssignments', (cur: TransportAssignment[]) => {
+      matchedCount = cur.filter((a) => a.month === targetMonth).length;
+      return cur.map((a) => (a.month === targetMonth ? { ...a, daysCharged: clampedDays } : a));
+    });
+    if (!saved.success) return { success: false, updatedCount: 0, error: saved.error };
     return { success: true, updatedCount: matchedCount };
   };
 
   // Fee Particular Templates
-  const saveGlobalTemplate = (template: Omit<FeeTemplate, 'id'>, month?: string) => {
+  const saveGlobalTemplate = async (template: Omit<FeeTemplate, 'id'>, month?: string) => {
     const perm = ensureMutationAllowed('Save global fee template');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       const existing = prev.find(
         (t) =>
           !t.studentId &&
@@ -3030,13 +2958,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const updateGlobalTemplatesList = (newTemplates: FeeTemplate[], month?: string) => {
+  const updateGlobalTemplatesList = async (newTemplates: FeeTemplate[], month?: string) => {
     const perm = ensureMutationAllowed('Update global fee templates');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       // Keep per-student and per-class overrides, and global templates belonging to the other scope
       const preserved = prev.filter((t) => {
         if (t.studentId || t.classId) return true;
@@ -3058,12 +2986,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const deleteGlobalTemplates = (month?: string) => {
+  const deleteGlobalTemplates = async (month?: string) => {
     const perm = ensureMutationAllowed('Delete global fee templates');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       if (isAll) {
         // Reset all-months global templates to defaults, keeping specific-month global & overrides
         const preserved = prev.filter((t) => (t.studentId || t.classId) || (t.month && t.month !== 'all'));
@@ -3075,7 +3003,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const saveStudentTemplateOverride = (
+  const saveStudentTemplateOverride = async (
     studentId: string,
     kind: ParticularKind,
     label: string,
@@ -3083,11 +3011,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month?: string
   ) => {
     const perm = ensureMutationAllowed('Save student fee template override');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       const existing = prev.find(
         (t) =>
           t.studentId === studentId &&
@@ -3115,17 +3043,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const saveClassTemplateOverrides = (
+  const saveClassTemplateOverrides = async (
     classId: string,
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
     const perm = ensureMutationAllowed('Save class fee template overrides');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       // Find existing overrides for this class in this scope to reuse IDs and avoid churn
       const existingScopeMap = new Map<string, FeeTemplate>();
       prev.forEach((t) => {
@@ -3166,11 +3094,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const deleteClassTemplates = (classId: string, month?: string) => {
+  const deleteClassTemplates = async (classId: string, month?: string) => {
     const perm = ensureMutationAllowed('Delete class fee templates');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setTemplates((prev) =>
+    return commitEntity('templates', (prev: FeeTemplate[]) =>
       prev.filter((t) => {
         if (t.studentId || t.classId !== classId) return true;
         if (!month || month === 'both') return false; // remove all overrides for this class
@@ -3181,17 +3109,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const saveStudentTemplateOverrides = (
+  const saveStudentTemplateOverrides = async (
     studentId: string,
     month: string,
     items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>
   ) => {
     const perm = ensureMutationAllowed('Save student fee template overrides');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       // Find existing overrides for this student in this scope to reuse IDs and avoid churn
       const existingScopeMap = new Map<string, FeeTemplate>();
       prev.forEach((t) => {
@@ -3232,7 +3160,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const bulkSaveMultipleStudentTemplateOverrides = (
+  const bulkSaveMultipleStudentTemplateOverrides = async (
     entries: Array<{
       studentId: string;
       items: Array<{ kind: ParticularKind; label: string; defaultAmount: number; sortOrder: number }>;
@@ -3240,11 +3168,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     month: string
   ) => {
     const perm = ensureMutationAllowed('Bulk save student fee template overrides');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const isAll = !month || month === 'all';
     const targetMonth = isAll ? 'all' : month;
-    setTemplates((prev) => {
+    return commitEntity('templates', (prev: FeeTemplate[]) => {
       const studentIdsSet = new Set(entries.map((e) => e.studentId));
       const filtered = prev.filter((t) => {
         if (!t.studentId || !studentIdsSet.has(t.studentId)) return true;
@@ -3272,11 +3200,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const deleteStudentTemplates = (studentId: string, month?: string) => {
+  const deleteStudentTemplates = async (studentId: string, month?: string) => {
     const perm = ensureMutationAllowed('Delete student fee templates');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setTemplates((prev) =>
+    return commitEntity('templates', (prev: FeeTemplate[]) =>
       prev.filter((t) => {
         if (t.studentId !== studentId) return true;
         if (!month || month === 'both') return false;
@@ -3287,20 +3215,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  // Full reset: global defaults back to system defaults and EVERY override removed
-  // (month-specific global templates, class overrides and student overrides, all months).
-  const resetAllTemplates = () => {
-    const perm = ensureMutationAllowed('Reset fee templates');
-    if (!perm.allowed) return;
+  // Deletes several student override scopes in one all-or-nothing save.
+  const deleteStudentTemplateScopes = async (scopes: Array<{ studentId: string; month?: string }>) => {
+    const perm = ensureMutationAllowed('Delete student fee templates');
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setTemplates(createDefaultGlobalTemplates(currentInstitution?.id || ''));
+    return commitEntity('templates', (prev: FeeTemplate[]) =>
+      prev.filter((t) => {
+        if (!t.studentId) return true;
+        return !scopes.some(({ studentId, month }) => {
+          if (t.studentId !== studentId) return false;
+          if (!month || month === 'both') return true;
+          const tplIsAll = !t.month || t.month === 'all';
+          if (month === 'all') return tplIsAll;
+          return t.month === month;
+        });
+      })
+    );
   };
 
-  const deleteTemplate = (id: string) => {
-    const perm = ensureMutationAllowed('Delete fee template');
-    if (!perm.allowed) return;
+  // Full reset: global defaults back to system defaults and EVERY override removed
+  // (month-specific global templates, class overrides and student overrides, all months).
+  const resetAllTemplates = async () => {
+    const perm = ensureMutationAllowed('Reset fee templates');
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
+    return commitEntity('templates', () => createDefaultGlobalTemplates(currentInstitution?.id || ''));
+  };
+
+  const deleteTemplate = async (id: string) => {
+    const perm = ensureMutationAllowed('Delete fee template');
+    if (!perm.allowed) return { success: false, error: perm.error };
+
+    return commitEntity('templates', (prev: FeeTemplate[]) => prev.filter((t) => t.id !== id));
   };
 
   // Month Closure Check Helper
@@ -3333,6 +3280,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       carriedCount,
       reversedCount,
     };
+  };
+
+  const refreshFromServer = async (): Promise<void> => {
+    const res = await fetchServerState();
+    if (res?.success && res.data) applyServerState(res.data);
   };
 
   const isMonthLocked = (month: string): boolean => {
@@ -3394,6 +3346,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     classId?: string,
     selectedStudentIds?: string[]
   ) => {
+    const vouchers = vouchersRef.current;
     // Check Month Closure Gate constraint:
     // Generating for a new month is BLOCKED if the previous month still has uncarried unpaid vouchers!
     const prevMonthStr = getPreviousMonthString(month);
@@ -3442,13 +3395,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     studentId: string,
     month: string,
     options: { dueDate?: string; lateFeeRate?: number; notes?: string; items?: { kind: ParticularKind; label: string; amount: number }[] } = {}
-  ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
+  ): Promise<{ success: boolean; voucher?: FeeVoucher; error?: string }> =>
+    runFinancialWrite('Admission voucher creation', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Admission voucher generation');
     if (!perm.allowed) return { success: false, error: perm.error };
 
     const student = students.find((s) => s.id === studentId);
     if (!student) return { success: false, error: 'Student not found.' };
     if (student.status !== 'Active') return { success: false, error: 'Student is not active.' };
+
+    // An admission voucher is only issuable before any regular voucher.
+    const otherVoucher = vouchers.find((v) => v.studentId === studentId && v.status !== 'Reversed');
+    if (otherVoucher) {
+      return { success: false, error: 'This student already has a voucher. Admission vouchers can only be issued before the first regular voucher.' };
+    }
 
     // Block if an admission or monthly voucher already exists for this month
     const existing = vouchers.find(
@@ -3495,16 +3456,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const generationMult = roundingEnabled ? roundingMultiple : 1;
       const netDue = roundUpToMultiple(grossTotal, generationMult);
 
-      const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
-      setVouchers((prev) => [...prev, returnedVoucher]);
-      apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] })
-        .then((res) => {
-          if (res?.success) applyServerVoucherNumbers(res.vouchers);
-        })
-        .catch((err) => {
-          reportFinancialSyncFailure('Admission voucher creation', err);
-        });
-      return { success: true, voucher: returnedVoucher };
+      const built = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
+      return saveAdmissionVoucher(built);
     }
 
     // Resolve admission-charge templates (Flex1, Flex2, Flex3, Flex4 only)
@@ -3553,16 +3506,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const generationMult = roundingEnabled ? roundingMultiple : 1;
     const netDue = roundUpToMultiple(grossTotal, generationMult);
 
-    const returnedVoucher = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
-    setVouchers((prev) => [...prev, returnedVoucher]);
-    apiVoucherBatchUpdate({ voucherUpserts: [returnedVoucher] })
-      .then((res) => {
-        if (res?.success) applyServerVoucherNumbers(res.vouchers);
-      })
-      .catch((err) => {
-        reportFinancialSyncFailure('Admission voucher creation', err);
-      });
-    return { success: true, voucher: returnedVoucher };
+    const built = buildAdmissionVoucher(student, month, particulars, grossTotal, netDue, generationMult, options);
+    return saveAdmissionVoucher(built);
+  });
+
+  // Saves a built admission voucher; the screen shows it only once the server has stored it,
+  // under the voucher number the server minted.
+  const saveAdmissionVoucher = async (
+    built: FeeVoucher
+  ): Promise<{ success: boolean; voucher?: FeeVoucher; error?: string; fromServer?: boolean }> => {
+    const res = await apiVoucherBatchUpdate({ voucherUpserts: [built] });
+    if (!res.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: res.error || 'The server did not accept the admission voucher. Nothing was created.',
+      };
+    }
+    const serverNo = (res.vouchers || []).find((v) => v?.id === built.id)?.voucherNo;
+    const saved = serverNo ? { ...built, voucherNo: serverNo } : built;
+    const next = [...vouchersRef.current, saved];
+    vouchersRef.current = next;
+    setVouchers(next);
+    return { success: true, voucher: saved };
   };
 
   // Replace pending placeholder voucher numbers with the numbers the server
@@ -3625,7 +3591,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectedStudentIds?: string[],
     dueDate?: string,
     lateFeeRate?: number
-  ) => {
+  ): Promise<{ success: boolean; generatedCount: number; error?: string; warning?: string }> =>
+    runFinancialWrite('Voucher generation', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Voucher generation');
     if (!perm.allowed) return { success: false, generatedCount: 0, error: perm.error };
 
@@ -3774,54 +3742,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (v) => !newIdSet.has(v.id) && !priorVouchersToCarry.has(v.id)
     );
 
-    setVouchers((prev) => buildAfterGeneration(prev));
-
+    let warning: string | undefined;
     if (newVouchers.length > 0) {
-      // Phase 3: Transactional server-side API call
       const carriedPriorList = Array.from(priorVouchersToCarry.entries()).map(([id, targetMonth]) => ({
         id,
         targetMonth,
       }));
-      apiGenerateVouchers(finalNewVouchers, carriedPriorList)
-        .then((res) => {
-          if (res?.success) {
-            applyServerVoucherNumbers(res.vouchers);
-            if (downstreamUpserts.length > 0) {
-              apiVoucherBatchUpdate({ voucherUpserts: downstreamUpserts }).then((r2) => {
-                if (!r2.success) reportFinancialSyncFailure('Voucher recalculation', new Error(r2.error || 'Failed to save recalculated vouchers'));
-              }).catch((err) => reportFinancialSyncFailure('Voucher recalculation', err));
-            }
-          }
-          else if (res && !res.success) {
-            reportFinancialSyncFailure('Voucher generation', new Error(res.error || 'Server rejected voucher generation'));
-          }
-        })
-        .catch((err) => {
-          reportFinancialSyncFailure('Voucher generation', err);
-        });
+      const generated = await apiGenerateVouchers(finalNewVouchers, carriedPriorList);
+      if (!generated?.success) {
+        return {
+          success: false,
+          generatedCount: 0,
+          fromServer: true,
+          error: generated?.error || 'The server did not accept the voucher generation. No vouchers were created.',
+        };
+      }
+
+      // Confirmed: show the new vouchers under the numbers the server issued.
+      const numberById = new Map<string, string>();
+      (generated.vouchers || []).forEach((sv: any) => {
+        if (sv?.id && sv?.voucherNo) numberById.set(sv.id, sv.voucherNo);
+      });
+      const afterList = buildAfterGeneration(vouchersRef.current).map((v) => {
+        const no = numberById.get(v.id);
+        return no && no !== v.voucherNo ? { ...v, voucherNo: no } : v;
+      });
+      vouchersRef.current = afterList;
+      setVouchers(afterList);
+
+      if (downstreamUpserts.length > 0) {
+        const r2 = await apiVoucherBatchUpdate({ voucherUpserts: downstreamUpserts });
+        if (!r2.success) {
+          // The vouchers exist, but the balance recalculation of later months was not saved.
+          // Show what the server really holds and tell the operator.
+          warning = `Vouchers were generated, but recalculating later months failed (${r2.error || 'server refused'}). The screen was reloaded from the server; please review the affected students.`;
+          fetchServerState()
+            .then((r) => {
+              if (r?.success && r.data) applyServerState(r.data);
+            })
+            .catch(() => {});
+        }
+      }
 
       const classObj = classId ? classes.find((c) => c.id === classId) : undefined;
-      logAuditEvent({
-        actionType: 'voucher_generation',
-        actionTitle: 'Monthly Fee Vouchers Generated',
-        description: `Generated ${newVouchers.length} fee vouchers for billing month ${month} (Scope: ${scope}${classObj ? ` • ${classObj.name}` : ''}).`,
-        module: 'Vouchers',
-        targetId: `GEN-${month}`,
-        targetLabel: `${newVouchers.length} Vouchers • ${month}`,
-        month,
-        metadata: {
-          generatedCount: newVouchers.length,
-          month,
-          scope,
-          classId,
-          dueDate,
-          lateFeeRate,
-        },
-      });
+
     }
 
-    return { success: true, generatedCount: newVouchers.length };
-  };
+    return { success: true, generatedCount: newVouchers.length, warning };
+    });
 
   // Replace (re-issue) a voucher in place: rebuild its particulars from the
   // current fee templates / transport / discounts, keep its id, number, dates and
@@ -3830,7 +3798,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Refused up front if any locked month would change.
   const reissueVoucher = (
     voucherId: string
-  ): { success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string } => {
+  ): Promise<{ success: boolean; voucher?: FeeVoucher; changedCount?: number; error?: string }> =>
+    runFinancialWrite('Voucher reissue', async () => {
+    const vouchers = vouchersRef.current;
+    const transactions = transactionsRef.current;
     const perm = ensureMutationAllowed('Voucher reissue');
     if (!perm.allowed) return { success: false, error: perm.error };
     if (!hasPermission('fees.generate')) {
@@ -3908,46 +3879,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true, voucher, changedCount: 0 };
     }
 
-    setVouchers((prev) => {
+    const reissued = await apiVoucherBatchUpdate({ voucherUpserts: changed });
+    if (!reissued.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: reissued.error || 'The server did not accept the reissued voucher. Nothing was changed.',
+      };
+    }
+    {
       const byId = new Map(changed.map((v) => [v.id, v]));
-      return prev.map((v) => byId.get(v.id) || v);
-    });
-
-    apiVoucherBatchUpdate({ voucherUpserts: changed })
-      .then((res) => {
-        if (!res.success) reportFinancialSyncFailure('Voucher reissue', new Error(res.error || 'Failed to save reissued voucher'));
-      })
-      .catch((err) => reportFinancialSyncFailure('Voucher reissue', err));
+      const next = vouchersRef.current.map((v) => byId.get(v.id) || v);
+      vouchersRef.current = next;
+      setVouchers(next);
+    }
 
     const final = afterList.find((v) => v.id === voucherId) || rebuilt;
-    logAuditEvent({
-      actionType: 'voucher_edit',
-      actionTitle: 'Voucher Reissued',
-      description: `Voucher ${voucher.voucherNo} for ${student.name} (${voucher.month}) was rebuilt from current fee settings: Net Due ${formatCurrency(voucher.netDue)} → ${formatCurrency(final.netDue)}${changed.length > 1 ? `; ${changed.length - 1} later voucher(s) recalculated` : ''}.`,
-      module: 'Vouchers',
-      targetId: voucher.voucherNo,
-      targetLabel: `${student.name} (${student.regNo})`,
-      month: voucher.month,
-      amount: final.netDue,
-      previousValue: voucher.netDue,
-      newValue: final.netDue,
-      metadata: {
-        voucherId: voucher.id,
-        studentId: voucher.studentId,
-        oldNetDue: voucher.netDue,
-        newNetDue: final.netDue,
-        recalculatedVouchers: changed.length - 1,
-      },
-    });
+
 
     return { success: true, voucher: final, changedCount: changed.length };
-  };
+    });
 
   // Update Voucher Particulars & Recalculate Totals
   const updateVoucherParticulars = (
     voucherId: string,
     updatedParticulars: VoucherItem[]
-  ): { success: boolean; voucher?: FeeVoucher; error?: string } => {
+  ): Promise<{ success: boolean; voucher?: FeeVoucher; error?: string }> =>
+    runFinancialWrite('Voucher edit', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Voucher modification');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -4006,15 +3965,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: newStatus,
     };
 
-    setVouchers((prev) => prev.map((v) => (v.id === voucherId ? updatedVoucher : v)));
-
-    apiVoucherBatchUpdate({ voucherUpserts: [updatedVoucher] }).then((res) => {
-      if (!res.success) {
-        reportFinancialSyncFailure('Voucher edit', new Error(res.error || 'Failed to update voucher particulars'));
-      }
-    }).catch((err) => {
-      reportFinancialSyncFailure('Voucher edit', err);
-    });
+    const edited = await apiVoucherBatchUpdate({ voucherUpserts: [updatedVoucher] });
+    if (!edited.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: edited.error || 'The server did not accept the voucher changes. Nothing was changed.',
+      };
+    }
+    {
+      const next = vouchersRef.current.map((v) => (v.id === voucherId ? updatedVoucher : v));
+      vouchersRef.current = next;
+      setVouchers(next);
+    }
 
     // Audit Logging: Fine modifications and voucher line item adjustments
     const student = students.find((s) => s.id === voucher.studentId);
@@ -4045,26 +4008,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
       });
     } else {
-      logAuditEvent({
-        actionType: 'voucher_edit',
-        actionTitle: 'Voucher Particulars Updated',
-        description: `Fee particulars revised for voucher ${voucher.voucherNo} (${cleanParticulars.length} items, Net Due: ${formatCurrency(netDue)}) for ${student?.name || 'Unknown'}.`,
-        module: 'Vouchers',
-        targetId: voucher.voucherNo,
-        targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
-        month: voucher.month,
-        amount: netDue,
-        metadata: {
-          voucherId: voucher.id,
-          voucherNo: voucher.voucherNo,
-          studentId: voucher.studentId,
-          itemsCount: cleanParticulars.length,
-          netDue,
-        },
-      });
+
     }
 
     return { success: true, voucher: updatedVoucher };
+    });
+
+  // Adopts what the server stored for a confirmed collection: the collection and
+  // transactions (with the numbers the server minted) and the recalculated vouchers.
+  const adoptConfirmedCollection = (
+    res: { collection?: any; transactions?: any[]; updatedVouchers?: any[] },
+    localCollection: FeeCollection,
+    localTxns: PaymentTransaction[]
+  ) => {
+    const serverCol = res.collection ? { ...localCollection, ...res.collection } : localCollection;
+    const serverTxns = new Map<string, any>((res.transactions || []).map((t: any) => [t.id, t]));
+    const txns = localTxns.map((t) => (serverTxns.has(t.id) ? { ...t, ...serverTxns.get(t.id) } : t));
+    const vById = new Map<string, FeeVoucher>((res.updatedVouchers || []).map((v: any) => [v.id, v]));
+
+    const nextCollections = [serverCol as FeeCollection, ...collectionsRef.current.filter((c) => c.id !== serverCol.id)];
+    const nextTxns = [...txns, ...transactionsRef.current.filter((t) => !txns.some((n) => n.id === t.id))];
+    const nextVouchers = vouchersRef.current.map((v) => (vById.has(v.id) ? { ...v, ...vById.get(v.id)! } : v));
+    collectionsRef.current = nextCollections;
+    transactionsRef.current = nextTxns;
+    vouchersRef.current = nextVouchers;
+    setCollections(nextCollections);
+    setTransactions(nextTxns);
+    setVouchers(nextVouchers);
+    return { collection: serverCol as FeeCollection, transactions: txns };
   };
 
   // Collect Payment (with optional line items sync)
@@ -4076,7 +4047,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notes?: string,
     date: string = new Date().toISOString().split('T')[0],
     updatedParticulars?: VoucherItem[]
-  ) => {
+  ): Promise<{ success: boolean; transaction?: PaymentTransaction; voucher?: FeeVoucher; error?: string }> =>
+    runFinancialWrite('Fee payment collection', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Payment collection');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -4097,6 +4070,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
     if (amount <= 0) return { success: false, error: 'Payment amount must be greater than zero.' };
+    if (vouchers.some((v) => v.studentId === voucher.studentId && v.status !== 'Reversed' && v.month > voucher.month)) {
+      return { success: false, error: `Voucher ${voucher.voucherNo} is not the student's latest voucher. Record the payment against the latest voucher.` };
+    }
 
     let cleanParticulars = voucher.particulars;
     let grossTotal = voucher.grossTotal;
@@ -4118,14 +4094,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
     }
 
-    const collectionNo = pendingDocumentNumber();
-    const txnNo = pendingDocumentNumber();
+    const pendingCollectionNo = pendingDocumentNumber();
+    const pendingTxnNo = pendingDocumentNumber();
 
     const collectionId = `col-${Date.now()}`;
 
     const newCollection: FeeCollection = {
       id: collectionId,
-      collectionNo,
+      collectionNo: pendingCollectionNo,
       date,
       totalAmount: amount,
       transactionCount: 1,
@@ -4139,7 +4115,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const newTxn: PaymentTransaction = {
       id: `txn-${Date.now()}`,
-      txnNo,
+      txnNo: pendingTxnNo,
       collectionId,
       voucherId,
       studentId: voucher.studentId,
@@ -4165,26 +4141,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       newStatus = 'Issued';
     }
 
-    setCollections((prev) => [newCollection, ...prev]);
-    setTransactions((prev) => [newTxn, ...prev]);
-    setVouchers((prev) =>
-      prev.map((v) =>
-        v.id === voucherId
-          ? {
-              ...v,
-              particulars: cleanParticulars,
-              grossTotal,
-              discountTotal,
-              netDue,
-              amountPaid: updatedPaid,
-              status: newStatus,
-            }
-          : v
-      )
-    );
-
-    // Phase 3: Transactional server-side API call
-    apiReceiveCollection({
+    const confirmed = await apiReceiveCollection({
       collectionId,
       payments: [
         {
@@ -4202,30 +4159,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ],
       collectionNotes: notes || `Payment for Voucher ${voucher.voucherNo}`,
       date,
-    }).then((res) => {
-      if (res && res.success) {
-        if (res.collection?.collectionNo || res.transactions?.[0]?.txnNo) {
-          setCollections((prev) =>
-            prev.map((c) =>
-              c.id === collectionId
-                ? { ...c, collectionNo: res.collection.collectionNo || c.collectionNo }
-                : c
-            )
-          );
-          setTransactions((prev) =>
-            prev.map((t) =>
-              t.id === newTxn.id
-                ? { ...t, txnNo: res.transactions?.[0]?.txnNo || t.txnNo }
-                : t
-            )
-          );
-        }
-      } else if (res && !res.success) {
-        reportFinancialSyncFailure('Fee payment collection', new Error(res.error || 'Server rejected payment collection'));
-      }
-    }).catch((err) => {
-      reportFinancialSyncFailure('Fee payment collection', err);
     });
+    if (!confirmed.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: confirmed.error || 'The server did not accept the payment. Nothing was recorded.',
+      };
+    }
+    // Confirmed: the screen now shows what the server stored, under the server's numbers.
+    const adopted = adoptConfirmedCollection(confirmed, newCollection, [newTxn]);
+    const savedTxn = adopted.transactions[0];
+    const collectionNo = adopted.collection.collectionNo;
+    const txnNo = savedTxn.txnNo;
 
     // Audit Logging: Fine adjustment at payment collection and collection receipt event
     const student = students.find((s) => s.id === voucher.studentId);
@@ -4252,29 +4198,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    logAuditEvent({
-      actionType: 'collection_payment',
-      actionTitle: 'Fee Payment Received',
-      description: `Collected fee payment of ${formatCurrency(amount)} via ${paymentMode} for student ${student?.name || 'Unknown'} (Voucher ${voucher.voucherNo}, Txn #${txnNo}).`,
-      module: 'Collections',
-      targetId: txnNo,
-      targetLabel: student ? `${student.name} (${student.regNo})` : voucher.voucherNo,
-      month: voucher.month,
-      amount,
-      metadata: {
-        collectionId,
-        collectionNo,
-        txnNo,
-        voucherNo: voucher.voucherNo,
-        studentId: voucher.studentId,
-        paymentMode,
-        referenceNo,
-        amountPaid: amount,
-      },
-    });
 
-    return { success: true, transaction: newTxn };
-  };
+
+    return { success: true, transaction: savedTxn, voucher: vouchersRef.current.find((v) => v.id === voucherId) };
+    });
 
   // Bulk CSV Collection
   const bulkCsvCollection = (
@@ -4291,9 +4218,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }[],
     month: string,
     defaultDate: string = new Date().toISOString().split('T')[0]
-  ) => {
+  ): Promise<{ success: boolean; successCount: number; errors: string[] }> =>
+    runFinancialWrite('Bulk CSV payment collection', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Bulk CSV payment collection');
-    if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error] };
+    if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error || 'Blocked'] };
 
     let successCount = 0;
     const errors: string[] = [];
@@ -4302,7 +4231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let batchTotal = 0;
 
     const collectionId = `col-bulk-${Date.now()}`;
-    const collectionNo = pendingDocumentNumber();
+    const pendingCollectionNo = pendingDocumentNumber();
 
     const updatedVouchersMap = new Map<
       string,
@@ -4348,6 +4277,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       if (targetVoucherRaw && targetVoucherRaw.status !== 'Reversed' && targetVoucherRaw.status !== 'Carried') {
+        const tv = targetVoucherRaw;
+        const later = vouchers
+          .filter((v) => v.studentId === tv.studentId && v.status !== 'Reversed' && v.month > tv.month)
+          .sort((a, b) => b.month.localeCompare(a.month))[0];
+        if (later) {
+          errors.push(`Row ${idx + 1}: Voucher ${tv.voucherNo} is not the latest voucher for this student. Pay against ${later.voucherNo} (${later.month}).`);
+          return;
+        }
         voucher = targetVoucherRaw;
       }
 
@@ -4450,13 +4387,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         netDue: effectiveNetDue,
       });
 
-      const txnNo = pendingDocumentNumber();
+      const pendingTxnNo = pendingDocumentNumber();
 
       const rowDate = row.date && /^\d{4}-\d{2}-\d{2}$/.test(row.date) ? row.date : defaultDate;
       const studentRegText = matchedStudent?.regNo ? ` [Reg #${matchedStudent.regNo}]` : '';
       newTxns.push({
         id: `txn-bulk-${Date.now()}-${idx}`,
-        txnNo,
+        txnNo: pendingTxnNo,
         collectionId,
         voucherId: voucher.id,
         studentId: voucher.studentId,
@@ -4473,13 +4410,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       successCount++;
     });
 
+    // All-or-nothing: any row error means nothing is recorded.
+    if (errors.length > 0) return { success: false, successCount: 0, errors };
+
     if (successCount > 0) {
       const primaryCollectionDate =
         newTxns[0]?.date || defaultDate || new Date().toISOString().split('T')[0];
 
       const newCollection: FeeCollection = {
         id: collectionId,
-        collectionNo,
+        collectionNo: pendingCollectionNo,
         date: primaryCollectionDate,
         totalAmount: batchTotal,
         transactionCount: successCount,
@@ -4487,31 +4427,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isBulkImport: true,
       };
 
-      setCollections((prev) => [newCollection, ...prev]);
-      setTransactions((prev) => [...newTxns, ...prev]);
-      setVouchers((prev) =>
-        prev.map((v) => {
-          const upd = updatedVouchersMap.get(v.id);
-          if (!upd) return v;
-          return {
-            ...v,
-            amountPaid: upd.paid,
-            status: upd.status,
-            ...(upd.particulars ? { particulars: upd.particulars } : {}),
-            ...(upd.grossTotal !== undefined ? { grossTotal: upd.grossTotal } : {}),
-            ...(upd.discountTotal !== undefined ? { discountTotal: upd.discountTotal } : {}),
-            ...(upd.netDue !== undefined ? { netDue: upd.netDue } : {}),
-          };
-        })
-      );
-
-      // Transactional server-side API call for bulk collection. This is the
-      // ONLY network write for this batch — it atomically recomputes each
-      // voucher's amountPaid/status server-side and inserts the matching
-      // transactions/collection row. A second apiVoucherBatchUpdate call
-      // used to fire here as well, duplicating every transaction/collection
-      // row and double-incrementing amountPaid; do not reintroduce it.
-      apiReceiveCollection({
+      // The whole file is saved by the server in one transaction, or not at all.
+      // Nothing changes on screen until the server confirms.
+      const confirmed = await apiReceiveCollection({
         collectionId,
         payments: newTxns.map((t) => {
           const upd = updatedVouchersMap.get(t.voucherId);
@@ -4531,52 +4449,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         collectionNotes: `Bulk CSV Payment Collection (${successCount} rows)`,
         date: primaryCollectionDate,
         isBulkImport: true,
-      }).then((res) => {
-        if (res && res.success) {
-          if (res.collection?.collectionNo) {
-            setCollections((prev) =>
-              prev.map((c) =>
-                c.id === collectionId
-                  ? { ...c, collectionNo: res.collection.collectionNo || c.collectionNo }
-                  : c
-              )
-            );
-          }
-          if (Array.isArray(res.transactions) && res.transactions.length > 0) {
-            const serverTxnMap = new Map(res.transactions.map((st: any) => [st.id, st.txnNo]));
-            setTransactions((prev) =>
-              prev.map((t) => {
-                const sTxnNo = serverTxnMap.get(t.id);
-                return sTxnNo ? { ...t, txnNo: sTxnNo } : t;
-              })
-            );
-          }
-        } else if (res && !res.success) {
-          reportFinancialSyncFailure(`Bulk CSV payment collection (${successCount} rows)`, new Error(res.error || 'Server rejected bulk import'));
-        }
-      }).catch((err) => {
-        reportFinancialSyncFailure(`Bulk CSV payment collection (${successCount} rows)`, err);
       });
+      if (!confirmed.success) {
+        return {
+          success: false,
+          fromServer: true,
+          successCount: 0,
+          errors: [confirmed.error || 'The server did not accept the import. Nothing was recorded.'],
+        };
+      }
+      const adopted = adoptConfirmedCollection(confirmed, newCollection, newTxns);
+      const collectionNo = adopted.collection.collectionNo;
+      newTxns.splice(0, newTxns.length, ...adopted.transactions);
 
       // Audit Logging: Bulk CSV Collection
-      logAuditEvent({
-        actionType: 'bulk_collection',
-        actionTitle: 'Bulk CSV Fee Collection Batch Imported',
-        description: `Imported bulk fee payments for ${successCount} vouchers totaling ${formatCurrency(batchTotal)} for billing month ${month}.`,
-        module: 'Collections',
-        targetId: collectionNo,
-        targetLabel: `${successCount} payments • ${formatCurrency(batchTotal)}`,
-        month,
-        amount: batchTotal,
-        metadata: {
-          collectionId,
-          collectionNo,
-          successCount,
-          totalAmount: batchTotal,
-          month,
-          importedTxnNos: newTxns.map((t) => t.txnNo),
-        },
-      });
+
 
       // Audit Logging: Record fine additions if any were in CSV
       const fineTxns = newTxns.filter((t) => t.fineAdded && t.fineAdded > 0);
@@ -4601,7 +4488,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return { success: successCount > 0, successCount, errors };
-  };
+    });
 
   // Bulk carry-forward. The whole batch is executed atomically by the server
   // (one PostgreSQL transaction, vouchers locked FOR UPDATE, any new Admission
@@ -4609,13 +4496,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // applyCarryForward() rules. The client only sends the operator's choices and
   // the school policy, then adopts the vouchers the server returns -- it never
   // recomputes or writes the ledger itself.
-  const bulkCarryForwardDefaulters = async (
+  const bulkCarryForwardDefaulters = (
     voucherIds: string[],
     targetMonth: string,
     addLateFine: boolean,
     customFineAmount?: number,
     perVoucherFines?: Record<string, number>
-  ): Promise<{ success: boolean; successCount: number; errors: string[] }> => {
+  ): Promise<{ success: boolean; successCount: number; errors: string[] }> =>
+    runFinancialWrite('Bulk carry forward', async () => {
+    const vouchers = vouchersRef.current;
     const perm = ensureMutationAllowed('Bulk carry forward defaulters');
     if (!perm.allowed) return { success: false, successCount: 0, errors: [perm.error || 'Blocked'] };
     if (!voucherIds || voucherIds.length === 0) return { success: true, successCount: 0, errors: [] };
@@ -4698,11 +4587,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         errors: [err?.message || 'Carry-forward failed'],
       };
     }
-  };
+  });
 
   const undoCarryForwardVoucher = (
     voucherId: string
-  ): { success: boolean; error?: string } => {
+  ): Promise<{ success: boolean; error?: string }> =>
+    runFinancialWrite('Carry-forward undo', async () => {
     const perm = ensureMutationAllowed('Undo carry forward');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -4757,14 +4647,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     updatedList = recalculateVouchersSequence(updatedList, [voucher.studentId], voucher.month);
 
+    const saved = await apiVoucherBatchUpdate({
+      voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
+    });
+    if (!saved.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: saved.error || 'The server did not accept the change. The carry-forward was not undone.',
+      };
+    }
     vouchersRef.current = updatedList;
     setVouchers(updatedList);
-
-    apiVoucherBatchUpdate({
-      voucherUpserts: updatedList.filter((v) => v.studentId === voucher.studentId),
-    }).catch((err) => {
-      reportFinancialSyncFailure('Carry-forward undo', err);
-    });
 
     const student = students.find((s) => s.id === voucher.studentId);
     logAuditEvent({
@@ -4786,7 +4680,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     return { success: true };
-  };
+    });
 
   // Thin wrapper: the chain math lives in feeMath.recalculateVoucherChain so the
   // server's atomic carry-forward uses exactly the same rules.
@@ -4798,6 +4692,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     recalculateVoucherChain(allVouchers, affectedStudentIds, { roundingEnabled, roundingMultiple }, fromMonth);
 
   const getDownstreamVouchersInfo = (ids: string[]) => {
+    const vouchers = vouchersRef.current;
+    const transactions = transactionsRef.current;
     const selected = vouchers.filter((v) => ids.includes(v.id));
     const conflicts: DownstreamConflict[] = [];
     let totalDownstreamCount = 0;
@@ -4843,7 +4739,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     id: string,
     force: boolean = false,
     mode?: VoucherDeletionResolution
-  ) => {
+  ) =>
+    runFinancialWrite('Voucher deletion', async () => {
+    const vouchers = vouchersRef.current;
+    const transactions = transactionsRef.current;
     const perm = ensureMutationAllowed('Voucher deletion');
     if (!perm.allowed) return { success: false, error: perm.error };
 
@@ -4935,81 +4834,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
 
-      setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
-
-      setCollections((prev) =>
-        prev
-          .map((c) => {
-            if (colIds.includes(c.id)) {
-              return {
-                ...c,
-                totalAmount: collectionTotals.get(c.id) || 0,
-                transactionCount: collectionCounts.get(c.id) || 0,
-              };
-            }
-            return c;
-          })
-          .filter((c) => c.transactionCount > 0)
-      );
     }
 
-    let recalculatedRemaining: FeeVoucher[] = [];
-    let baselineForUpsert: FeeVoucher[] = [];
-    setVouchers((prev) => {
-      let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
-      baselineForUpsert = remaining;
-      if (effectiveMode === 'auto-heal') {
-        remaining = recalculateVouchersSequence(remaining, affectedStudentIds, healFromMonths);
-      }
-      recalculatedRemaining = remaining;
-      return remaining;
-    });
+    let remainingList = vouchers.filter((v) => !idsToDelete.includes(v.id));
+    const baselineForUpsert = remainingList;
+    if (effectiveMode === 'auto-heal') {
+      remainingList = recalculateVouchersSequence(remainingList, affectedStudentIds, healFromMonths);
+    }
 
-    // Persist: the client already computed the final result above (deletion
-    // cascade, transaction/collection recompute, auto-heal recalculation —
-    // all logic that depends on rounding/policy settings that only ever
-    // live client-side). This just ships that computed result to be
-    // persisted atomically; see apiVoucherBatchUpdate's server-side comment.
-    apiVoucherBatchUpdate({
+    const saved = await apiVoucherBatchUpdate({
       voucherUpserts:
-        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, recalculatedRemaining) : [],
+        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, remainingList) : [],
       deleteVoucherIds: idsToDelete,
       deleteTransactionIds: voucherTxnIds,
       collectionUpdates: collectionUpdatesForApi,
-      deleteCollectionIds: deleteCollectionIdsForApi,
-    }).catch((err) => {
-      reportFinancialSyncFailure('Voucher deletion', err);
+      deleteCollectionIds: deleteCollectionIdsForApi,});
+    if (!saved.success) {
+      return { success: false, deletedCount: 0, fromServer: true, error: saved.error || 'The server did not accept the deletion. Nothing was deleted.' };
+    }
+
+    // Confirmed: now the screen changes.
+    setTransactions((prev) => {
+      const next = prev.filter((t) => !idsToDelete.includes(t.voucherId));
+      transactionsRef.current = next;
+      return next;
     });
+    setCollections((prev) => {
+      const next = prev
+        .filter((c) => !deleteCollectionIdsForApi.includes(c.id))
+        .map((c) => {
+          const u = collectionUpdatesForApi.find((x) => x.id === c.id);
+          return u ? { ...c, totalAmount: u.totalAmount, transactionCount: u.transactionCount } : c;
+        });
+      collectionsRef.current = next;
+      return next;
+    });
+    vouchersRef.current = remainingList;
+    setVouchers(remainingList);
 
     const student = students.find((s) => s.id === target.studentId);
-    logAuditEvent({
-      actionType: 'voucher_deletion',
-      actionTitle: 'Fee Voucher Deleted',
-      description: `Permanently deleted voucher ${target.voucherNo} for ${student?.name || 'Unknown'} (Billing Month: ${target.month}, Net Due: ${formatCurrency(target.netDue)}). Resolution mode: ${effectiveMode}.`,
-      module: 'Vouchers',
-      targetId: target.voucherNo,
-      targetLabel: student ? `${student.name} (${student.regNo})` : target.voucherNo,
-      month: target.month,
-      amount: target.netDue,
-      metadata: {
-        voucherId: target.id,
-        voucherNo: target.voucherNo,
-        studentId: target.studentId,
-        month: target.month,
-        netDue: target.netDue,
-        resolutionMode: effectiveMode,
-        cascadeCount: idsToDelete.length,
-      },
-    });
+
 
     return { success: true, deletedCount: idsToDelete.length };
-  };
-
+  });
   const bulkDeleteVouchers = (
     ids: string[],
     force: boolean = false,
     mode?: VoucherDeletionResolution
-  ) => {
+  ) =>
+    runFinancialWrite('Bulk voucher deletion', async () => {
+    const vouchers = vouchersRef.current;
+    const transactions = transactionsRef.current;
     const perm = ensureMutationAllowed('Bulk voucher deletion');
     if (!perm.allowed) return { success: false, deletedCount: 0, error: perm.error };
 
@@ -5106,68 +4981,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
 
-      setTransactions((prev) => prev.filter((t) => !idsToDelete.includes(t.voucherId)));
-
-      setCollections((prev) =>
-        prev
-          .map((c) => {
-            if (colIds.includes(c.id)) {
-              return {
-                ...c,
-                totalAmount: collectionTotals.get(c.id) || 0,
-                transactionCount: collectionCounts.get(c.id) || 0,
-              };
-            }
-            return c;
-          })
-          .filter((c) => c.transactionCount > 0)
-      );
     }
 
-    let recalculatedRemaining: FeeVoucher[] = [];
-    let baselineForUpsert: FeeVoucher[] = [];
-    setVouchers((prev) => {
-      let remaining = prev.filter((v) => !idsToDelete.includes(v.id));
-      baselineForUpsert = remaining;
-      if (effectiveMode === 'auto-heal') {
-        remaining = recalculateVouchersSequence(remaining, affectedStudentIds, healFromMonths);
-      }
-      recalculatedRemaining = remaining;
-      return remaining;
-    });
+    let remainingList = vouchers.filter((v) => !idsToDelete.includes(v.id));
+    const baselineForUpsert = remainingList;
+    if (effectiveMode === 'auto-heal') {
+      remainingList = recalculateVouchersSequence(remainingList, affectedStudentIds, healFromMonths);
+    }
 
-    apiVoucherBatchUpdate({
+    const saved = await apiVoucherBatchUpdate({
       voucherUpserts:
-        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, recalculatedRemaining) : [],
+        effectiveMode === 'auto-heal' ? getChangedVouchers(baselineForUpsert, remainingList) : [],
       deleteVoucherIds: idsToDelete,
       deleteTransactionIds: voucherTxnIds,
       collectionUpdates: collectionUpdatesForApi,
-      deleteCollectionIds: deleteCollectionIdsForApi,
-    }).catch((err) => {
-      reportFinancialSyncFailure('Bulk voucher deletion', err);
-    });
+      deleteCollectionIds: deleteCollectionIdsForApi,});
+    if (!saved.success) {
+      return { success: false, deletedCount: 0, fromServer: true, error: saved.error || 'The server did not accept the deletion. Nothing was deleted.' };
+    }
 
-    logAuditEvent({
-      actionType: 'voucher_deletion',
-      actionTitle: 'Bulk Fee Vouchers Deleted',
-      description: `Bulk deleted ${idsToDelete.length} fee vouchers (Requested: ${ids.length}, Mode: ${effectiveMode}).`,
-      module: 'Vouchers',
-      targetId: `BULK-DEL-${Date.now()}`,
-      targetLabel: `${idsToDelete.length} vouchers removed`,
-      metadata: {
-        deletedIds: idsToDelete,
-        requestedIdsCount: ids.length,
-        resolutionMode: effectiveMode,
-      },
+    // Confirmed: now the screen changes.
+    setTransactions((prev) => {
+      const next = prev.filter((t) => !idsToDelete.includes(t.voucherId));
+      transactionsRef.current = next;
+      return next;
     });
+    setCollections((prev) => {
+      const next = prev
+        .filter((c) => !deleteCollectionIdsForApi.includes(c.id))
+        .map((c) => {
+          const u = collectionUpdatesForApi.find((x) => x.id === c.id);
+          return u ? { ...c, totalAmount: u.totalAmount, transactionCount: u.transactionCount } : c;
+        });
+      collectionsRef.current = next;
+      return next;
+    });
+    vouchersRef.current = remainingList;
+    setVouchers(remainingList);
+
+
 
     return { success: true, deletedCount: idsToDelete.length };
-  };
-
+  });
   // Collections Ledger Delete
-  const deleteCollection = (id: string) => {
+  const deleteCollection = (id: string): Promise<{ success: boolean; error?: string }> =>
+    runFinancialWrite('Collection deletion', async () => {
+    const vouchers = vouchersRef.current;
+    const transactions = transactionsRef.current;
+    const collections = collectionsRef.current;
     const perm = ensureMutationAllowed('Collection deletion');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     const colToDelete = collections.find((c) => c.id === id);
     const colTxns = transactions.filter(
@@ -5178,20 +5041,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .map((t) => vouchers.find((v) => v.id === t.voucherId))
         .find((v) => v && isMonthLocked(v.month));
       if (lockedV) {
-        showToast(`Fee books for ${formatMonthName(lockedV.month)} are locked. Collections cannot be reversed until an Admin unlocks the month.`, 'error');
-        return;
+        return { success: false, error: `Fee books for ${formatMonthName(lockedV.month)} are locked. Collections cannot be reversed until an Admin unlocks the month.` };
       }
     }
     if (colTxns.length === 0) {
-      setCollections((prev) => prev.filter((c) => c.id !== id));
-      apiVoucherBatchUpdate({ deleteCollectionIds: [id] }).then((res) => {
-        if (!res.success) {
-          reportFinancialSyncFailure('Collection deletion', new Error(res.error || 'Failed to delete collection'));
-        }
-      }).catch((err) => {
-        reportFinancialSyncFailure('Collection deletion', err);
-      });
-      return;
+      const emptyRes = await apiVoucherBatchUpdate({ deleteCollectionIds: [id] });
+      if (!emptyRes.success) {
+        return { success: false, fromServer: true, error: emptyRes.error || 'The server did not accept the deletion. Nothing was deleted.' };
+      }
+      const nextCols = collectionsRef.current.filter((c) => c.id !== id);
+      collectionsRef.current = nextCols;
+      setCollections(nextCols);
+      return { success: true };
     }
 
     // Group deductions, fine reversals, and affected students per voucher
@@ -5295,25 +5156,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const dry = reverseCollectionOn(vouchers);
       const lockedHit = getLockedMonthsTouched(vouchers, dry, lockedMonths);
       if (lockedHit.length > 0) {
-        showToast(formatLockedImpactMessage(lockedHit, 'collection reversal'), 'error', 9000);
-        return;
+        return { success: false, error: formatLockedImpactMessage(lockedHit, 'collection reversal') };
       }
     }
 
-    setCollections((prev) => prev.filter((c) => c.id !== id));
-    setTransactions((prev) =>
-      prev.filter(
-        (t) => t.collectionId !== id && (!colToDelete || t.collectionId !== colToDelete.collectionNo)
-      )
-    );
-
-    let recalculatedVouchers: FeeVoucher[] = [];
-    let preReversalVouchers: FeeVoucher[] = [];
-    setVouchers((prev) => {
-      preReversalVouchers = prev;
-      recalculatedVouchers = reverseCollectionOn(prev);
-      return recalculatedVouchers;
-    });
+    const preReversalVouchers = vouchers;
+    const recalculatedVouchers = reverseCollectionOn(vouchers);
 
     // Persist: delete the collection + its transactions, and upsert every
     // voucher belonging to an affected student (recalculateVouchersSequence
@@ -5321,39 +5169,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // deducted voucher, via the prevBalance cascade — sending the student's
     // full chain is simplest and safe given per-student voucher counts are
     // naturally small).
-    apiVoucherBatchUpdate({
+    const reversed = await apiVoucherBatchUpdate({
       voucherUpserts: getChangedVouchers(preReversalVouchers, recalculatedVouchers),
       deleteTransactionIds: colTxns.map((t) => t.id),
       deleteCollectionIds: [id],
-    }).then((res) => {
-      if (!res.success) {
-        reportFinancialSyncFailure('Collection deletion', new Error(res.error || 'Failed to persist collection deletion'));
-      }
-    }).catch((err) => {
-      reportFinancialSyncFailure('Collection deletion', err);
     });
+    if (!reversed.success) {
+      return {
+        success: false,
+        fromServer: true,
+        error: reversed.error || 'The server did not accept the reversal. Nothing was changed.',
+      };
+    }
+
+    // Confirmed: now the screen changes.
+    const nextCols = collectionsRef.current.filter((c) => c.id !== id);
+    const nextTxns = transactionsRef.current.filter(
+      (t) => t.collectionId !== id && (!colToDelete || t.collectionId !== colToDelete.collectionNo)
+    );
+    collectionsRef.current = nextCols;
+    transactionsRef.current = nextTxns;
+    vouchersRef.current = recalculatedVouchers;
+    setCollections(nextCols);
+    setTransactions(nextTxns);
+    setVouchers(recalculatedVouchers);
 
     // Audit Logging: Collection deletion and reversals
     const totalReverted = colToDelete?.totalAmount || colTxns.reduce((s, t) => s + t.amount, 0);
     const totalFinesReverted = Array.from(fineReversals.values()).reduce((a, b) => a + b, 0);
 
-    logAuditEvent({
-      actionType: 'collection_reversal',
-      actionTitle: 'Fee Collection Record Deleted & Reversed',
-      description: `Reversed collection ${colToDelete?.collectionNo || id} totaling ${formatCurrency(totalReverted)} (${colTxns.length} transactions deducted from student vouchers).`,
-      module: 'Collections',
-      targetId: colToDelete?.collectionNo || id,
-      targetLabel: `${colTxns.length} txns • ${formatCurrency(totalReverted)}`,
-      amount: totalReverted,
-      metadata: {
-        collectionId: id,
-        collectionNo: colToDelete?.collectionNo,
-        reversedAmount: totalReverted,
-        transactionCount: colTxns.length,
-        affectedVoucherIds: Array.from(deductions.keys()),
-        finesReverted: totalFinesReverted,
-      },
-    });
+
 
     if (totalFinesReverted > 0) {
       logAuditEvent({
@@ -5371,26 +5216,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
       });
     }
-  };
+    return { success: true };
+    });
 
   // Settings
   const updateInstitute = async (updates: Partial<InstituteProfile>) => {
     const perm = ensureMutationAllowed('Update institute profile');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
     let timeout: number | undefined = undefined;
     if (updates.sessionTimeoutMinutes !== undefined) {
       timeout = Math.max(1, Math.min(180, Number(updates.sessionTimeoutMinutes) || 10));
     } else if (updates.settings?.sessionTimeoutMinutes !== undefined) {
       timeout = Math.max(1, Math.min(180, Number(updates.settings.sessionTimeoutMinutes) || 10));
-    }
-
-    if (timeout !== undefined) {
-      setSessionTimeoutMinutesState(timeout);
-      try {
-        localStorage.setItem('quickfees_session_timeout_minutes', String(timeout));
-        localStorage.setItem('quickfees_inactivity_duration', String(timeout));
-      } catch {}
     }
 
     const currentTimeout = timeout !== undefined ? timeout : (institute.sessionTimeoutMinutes ?? sessionTimeoutMinutes ?? 10);
@@ -5407,12 +5245,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       settings: mergedSettings,
     };
 
-    setInstitute(newInst);
-
-    // Explicitly persist to PostgreSQL via PUT /api/institute
+    // Confirm-first: the screen changes only after the server accepts the update.
     const targetInstId = currentInstitution?.id || 'default';
     try {
-      await fetch('/api/institute', {
+      const res = await fetch('/api/institute', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -5430,312 +5266,166 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           settings: mergedSettings,
         }),
       });
+      if (!res.ok) {
+        let msg = `The server rejected the institute update (HTTP ${res.status}).`;
+        try {
+          const body = await res.json();
+          if (body?.error) msg = body.error;
+        } catch {}
+        return { success: false, error: msg };
+      }
     } catch (err) {
       console.warn('[Institute] Failed to persist institute updates:', err);
+      return { success: false, error: 'Could not reach the server. The institute profile was not changed.' };
     }
+
+    setInstitute(newInst);
+    if (timeout !== undefined) {
+      setSessionTimeoutMinutesState(timeout);
+      try {
+        localStorage.setItem('quickfees_session_timeout_minutes', String(timeout));
+        localStorage.setItem('quickfees_inactivity_duration', String(timeout));
+      } catch {}
+    }
+
+    return { success: true };
   };
 
-  const addBankAccount = (bank: Omit<BankAccount, 'id'>) => {
+  const addBankAccount = async (bank: Omit<BankAccount, 'id'>) => {
     const perm = ensureMutationAllowed('Add bank account');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    const newBank: BankAccount = { ...bank, id: `bank-${Date.now()}` };
-    if (newBank.isDefault) {
-      setBankAccounts((prev) => prev.map((b) => ({ ...b, isDefault: false })).concat(newBank));
-    } else {
-      setBankAccounts((prev) => [...prev, newBank]);
-    }
+    const newBank: BankAccount = { ...bank, id: generateUniqueId('bank') };
+    return commitEntity('bankAccounts', (cur: BankAccount[]) =>
+      newBank.isDefault ? cur.map((b) => ({ ...b, isDefault: false })).concat(newBank) : [...cur, newBank]
+    );
   };
 
-  const updateBankAccount = (id: string, updates: Partial<BankAccount>) => {
+  const updateBankAccount = async (id: string, updates: Partial<BankAccount>) => {
     const perm = ensureMutationAllowed('Update bank account');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    if (updates.isDefault) {
-      setBankAccounts((prev) =>
-        prev.map((b) => (b.id === id ? { ...b, ...updates, isDefault: true } : { ...b, isDefault: false }))
-      );
-    } else {
-      setBankAccounts((prev) => prev.map((b) => (b.id === id ? { ...b, ...updates } : b)));
-    }
+    return commitEntity('bankAccounts', (cur: BankAccount[]) => {
+      if (!cur.some((b) => b.id === id)) return { error: 'Bank account not found.' };
+      return updates.isDefault
+        ? cur.map((b) => (b.id === id ? { ...b, ...updates, isDefault: true } : { ...b, isDefault: false }))
+        : cur.map((b) => (b.id === id ? { ...b, ...updates } : b));
+    });
   };
 
-  const deleteBankAccount = (id: string) => {
+  const deleteBankAccount = async (id: string) => {
     const perm = ensureMutationAllowed('Delete bank account');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setBankAccounts((prev) => prev.filter((b) => b.id !== id));
+    return commitEntity('bankAccounts', (cur: BankAccount[]) => cur.filter((b) => b.id !== id));
   };
 
-  const setDefaultBankAccount = (id: string) => {
+  const setDefaultBankAccount = async (id: string) => {
     const perm = ensureMutationAllowed('Set default bank account');
-    if (!perm.allowed) return;
+    if (!perm.allowed) return { success: false, error: perm.error };
 
-    setBankAccounts((prev) => prev.map((b) => ({ ...b, isDefault: b.id === id })));
+    return commitEntity('bankAccounts', (cur: BankAccount[]) => cur.map((b) => ({ ...b, isDefault: b.id === id })));
   };
 
-  // Selection-based database cleanup with cascading integrity awareness
-  const cleanupDatabaseTables = async (options: DataCleanupOptions): Promise<CleanupResult> => {
+  // Selection-based database cleanup. Confirm-first like every other write: nothing on the
+  // screen is emptied until the server has deleted it. The steps run in the order the
+  // database's foreign keys require (vouchers, then assignments and templates, then students,
+  // then everything else) and stop at the first refusal. Each step is all-or-nothing, but the
+  // steps are separate transactions, so after any outcome the screen is reloaded from the
+  // server and the message says exactly what was completed and what was not.
+  const cleanupDatabaseTables = (options: DataCleanupOptions): Promise<CleanupResult> =>
+    runFinancialWrite('Data cleanup', async () => {
     const perm = ensureMutationAllowed('Database cleanup');
     if (!perm.allowed) return { success: false, recordsClearedCount: 0, clearedTables: [], error: perm.error };
 
+    const L = listsRef.current;
+    const fullTransportWipe = Boolean(options.transport);
     const clearedTables: string[] = [];
     let recordsClearedCount = 0;
-    // Collects human-readable descriptions of anything that failed to
-    // actually persist server-side, so we never report a destructive
-    // operation as "successful" when it silently didn't happen.
-    const persistenceFailures: string[] = [];
 
-    // Track the final ("after cleanup") value of every table that a
-    // simple-entity server endpoint exists for, alongside the existing
-    // setState calls, so we can await real persistence for each one below
-    // instead of just wiping local/localStorage state and hoping a later
-    // background sync happens to catch up.
-    let studentsAfter = students;
-    let studentsTouched = false;
-    let classesAfter = classes;
-    let classesTouched = false;
-    let familiesAfter = families;
-    let familiesTouched = false;
-    let templatesAfter = templates;
-    let templatesTouched = false;
-    let transportAssignmentsAfter = transportAssignments;
-    let transportAssignmentsTouched = false;
-    let stopsAfter = stops;
-    let stopsTouched = false;
-    let busesAfter = buses;
-    let busesTouched = false;
-    let bankAccountsAfter = bankAccounts;
-    let bankAccountsTouched = false;
-    let secondaryUsersToDelete: User[] = [];
+    type Step = { label: string; count: number; run: () => Promise<{ success: boolean; error?: string }> };
+    const steps: Step[] = [];
+    const clear = (entity: CommitEntity, build: (cur: any[]) => any[]) => () => commitEntity(entity, build);
 
-    // 1. Students
-    if (options.students) {
-      recordsClearedCount += students.length;
-      setStudents([]);
-      setStudentAccountHistory([]);
-      // Remove student members from families
-      setFamilies((prev) => prev.map((f) => ({ ...f, memberStudentIds: [] })));
-      // Clear transport assignments for students
-      setTransportAssignments([]);
-      // Clear student fee template overrides
-      setTemplates((prev) => prev.filter((t) => !t.studentId));
-      clearedTables.push(`Students & Profiles (${students.length} records)`);
-
-      studentsAfter = [];
-      studentsTouched = true;
-      transportAssignmentsAfter = [];
-      transportAssignmentsTouched = true;
-      templatesAfter = templatesAfter.filter((t) => !t.studentId);
-      templatesTouched = true;
-    }
-
-    // 2. Fee Vouchers
-    if (options.vouchers) {
-      recordsClearedCount += vouchers.length;
-      setVouchers([]);
-      clearedTables.push(`Fee Vouchers (${vouchers.length} records)`);
-    }
-
-    // 3. Fee Collections & Payment Transactions
-    if (options.collections) {
-      const collCount = collections.length + transactions.length;
-      recordsClearedCount += collCount;
-      setCollections([]);
-      setTransactions([]);
-      clearedTables.push(`Collections & Transactions (${collCount} records)`);
-    }
-
-    // 4. Classes
-    if (options.classes) {
-      recordsClearedCount += classes.length;
-      setClasses([]);
-      // Clear class fee template overrides
-      setTemplates((prev) => prev.filter((t) => !t.classId));
-      clearedTables.push(`Classes & Sections (${classes.length} records)`);
-
-      classesAfter = [];
-      classesTouched = true;
-      templatesAfter = templatesAfter.filter((t) => !t.classId);
-      templatesTouched = true;
-    }
-
-    // 5. Families
-    if (options.families) {
-      recordsClearedCount += families.length;
-      setFamilies([]);
-      // Remove familyId links from students if students were not already wiped
-      if (!options.students) {
-        setStudents((prev) => prev.map((s) => ({ ...s, familyId: undefined })));
-        studentsAfter = studentsAfter.map((s) => ({ ...s, familyId: undefined }));
-        studentsTouched = true;
-      }
-      clearedTables.push(`Families & Guardians (${families.length} records)`);
-
-      familiesAfter = [];
-      familiesTouched = true;
-    }
-
-    // 6. Fee Templates & Overrides
-    if (options.templates) {
-      const overrideCount = templates.filter((t) => !!t.studentId || !!t.classId).length;
-      recordsClearedCount += (overrideCount || templates.length);
-      setTemplates(INITIAL_GLOBAL_TEMPLATES);
-      clearedTables.push(`Fee Particular Templates (Reset to standard 9-item baseline)`);
-
-      templatesAfter = INITIAL_GLOBAL_TEMPLATES;
-      templatesTouched = true;
-    }
-
-    // 7. Granular Transport Cleanup & Complete Transport Wipe
-    const isFullTransportWipe = Boolean(options.transport);
-
-    // 7a. Student Transport Assignments (only count if students table not already wiping assignments)
-    if ((options.transportAssignments || isFullTransportWipe) && !options.students) {
-      recordsClearedCount += transportAssignments.length;
-      setTransportAssignments([]);
-      if (!isFullTransportWipe) {
-        clearedTables.push(`Student Transport Assignments (${transportAssignments.length} records)`);
-      }
-
-      transportAssignmentsAfter = [];
-      transportAssignmentsTouched = true;
-    }
-
-    // 7b. Bus Stops & Monthly Fare Rates
-    if (options.transportStops || isFullTransportWipe) {
-      recordsClearedCount += stops.length;
-      setStops([]);
-      if (!isFullTransportWipe) {
-        clearedTables.push(`Bus Stops & Fare Rates (${stops.length} stops)`);
-      }
-
-      stopsAfter = [];
-      stopsTouched = true;
-    }
-
-    // 7c. Buses Fleet Directory
-    if (options.transportBuses || isFullTransportWipe) {
-      recordsClearedCount += buses.length;
-      setBuses([]);
-      if (!isFullTransportWipe) {
-        clearedTables.push(`Buses Fleet Directory (${buses.length} buses)`);
-      }
-
-      busesAfter = [];
-      busesTouched = true;
-    }
-
-    if (isFullTransportWipe) {
-      const transCount = buses.length + stops.length + (!options.students ? transportAssignments.length : 0);
-      clearedTables.push(`Complete Transport System (${transCount} buses, stops & assignments)`);
-    }
-
-    // 8. Bank Accounts
-    if (options.bankAccounts) {
-      recordsClearedCount += bankAccounts.length;
-      setBankAccounts([]);
-      clearedTables.push(`Bank Accounts (${bankAccounts.length} accounts)`);
-
-      bankAccountsAfter = [];
-      bankAccountsTouched = true;
-    }
-
-    // 9. Secondary Users (keep currently logged-in user safe)
-    if (options.users) {
-      const secondaryUsers = users.filter((u) => u.id !== currentUser.id);
-      recordsClearedCount += secondaryUsers.length;
-      const preserved = users.filter((u) => u.id === currentUser.id);
-      setUsers(preserved);
-      clearedTables.push(`Secondary Users (${secondaryUsers.length} users removed, current session preserved)`);
-
-      secondaryUsersToDelete = secondaryUsers;
-    }
-
-    // --- Await real server-side persistence for every table touched above ---
-    // Local/localStorage state is cleared optimistically for a responsive
-    // UI, but "success" is not reported to the caller until every affected
-    // table has been confirmed persisted (or deleted) on the server. Any
-    // failure here means the corresponding local change will be reverted
-    // by the reconciliation step further down, rather than silently
-    // reappearing, unexplained, on the next refresh.
-    const syncJobs: Promise<unknown>[] = [];
-
-    const trackSync = (label: string, touched: boolean, collectionName: string, nextValue: any[]) => {
-      if (!touched) return;
-      syncJobs.push(
-        syncSimpleEntityCollectionNow(collectionName, nextValue).then(({ failedIds }) => {
-          if (failedIds.length > 0) {
-            persistenceFailures.push(`${label} (${failedIds.length} record(s) could not be persisted)`);
-          }
-        })
-      );
-    };
-
-    trackSync('Students & Profiles', studentsTouched, 'students', studentsAfter);
-    trackSync('Classes & Sections', classesTouched, 'classes', classesAfter);
-    trackSync('Families & Guardians', familiesTouched, 'families', familiesAfter);
-    trackSync('Fee Particular Templates', templatesTouched, 'templates', templatesAfter);
-    trackSync('Student Transport Assignments', transportAssignmentsTouched, 'transportAssignments', transportAssignmentsAfter);
-    trackSync('Bus Stops & Fare Rates', stopsTouched, 'stops', stopsAfter);
-    trackSync('Buses Fleet Directory', busesTouched, 'buses', busesAfter);
-    trackSync('Bank Accounts', bankAccountsTouched, 'bankAccounts', bankAccountsAfter);
-
-    if (secondaryUsersToDelete.length > 0) {
-      syncJobs.push(
-        (async () => {
-          const results = await Promise.all(secondaryUsersToDelete.map((u) => apiDeleteUser(u.id)));
-          const failedCount = results.filter((r) => !r.success).length;
-          if (failedCount > 0) {
-            persistenceFailures.push(`Secondary Users (${failedCount} could not be deleted)`);
-          }
-        })()
-      );
-    }
-
-    // Vouchers/collections/transactions are deliberately excluded from the
-    // generic diff-and-sync mechanism (see apiSync.ts) so that routine
-    // payment collection can never accidentally bypass the transactional
-    // write path. That means a wipe here needs an explicit, awaited
-    // persistence call too, or the data would only disappear locally and
-    // reappear on the next refresh.
+    // 1. Fee vouchers and collections (the server lists every record, including closed history).
     if (options.vouchers || options.collections) {
-      // The browser only holds the working set, so list every record on the
-      // server before purging — otherwise closed history would survive.
-      const allIds = await apiFetchAllFinancialIds();
-      if (!allIds.success) {
-        persistenceFailures.push(`Fee Vouchers / Collections & Transactions (${allIds.error || 'could not list all records'})`);
-      }
-      const uniq = (a: string[], b: string[]) => Array.from(new Set([...a, ...b]));
-      syncJobs.push(
-        apiVoucherBatchUpdate({
-          deleteVoucherIds: options.vouchers ? uniq(vouchers.map((v) => v.id), allIds.voucherIds) : [],
-          deleteTransactionIds: options.collections ? uniq(transactions.map((t) => t.id), allIds.transactionIds) : [],
-          deleteCollectionIds: options.collections ? uniq(collections.map((c) => c.id), allIds.collectionIds) : [],
-        }).then((r) => {
-          if (!r.success) throw new Error(r.error || 'Cleanup rejected by server.');
-        }).catch((err) => {
-          reportFinancialSyncFailure('Data cleanup', err);
-          persistenceFailures.push(`Fee Vouchers / Collections & Transactions (${err?.message || 'failed'})`);
-        })
-      );
+      const count = (options.vouchers ? vouchersRef.current.length : 0) + (options.collections ? collectionsRef.current.length + transactionsRef.current.length : 0);
+      steps.push({
+        label: 'Fee Vouchers / Collections & Transactions',
+        count,
+        run: async () => {
+          const allIds = await apiFetchAllFinancialIds();
+          if (!allIds.success) return { success: false, error: allIds.error || 'could not list all records on the server' };
+          const r = await apiVoucherBatchUpdate({
+            deleteVoucherIds: options.vouchers ? allIds.voucherIds : [],
+            deleteTransactionIds: options.collections ? allIds.transactionIds : [],
+            deleteCollectionIds: options.collections ? allIds.collectionIds : [],
+          });
+          return r.success ? { success: true } : { success: false, error: r.error || 'the server refused the deletion' };
+        },
+      });
     }
 
-    await Promise.all(syncJobs);
+    // 2. Transport assignments and fee-template overrides (children of students, classes, buses, stops).
+    if (options.students || options.transportAssignments || fullTransportWipe) {
+      steps.push({ label: 'Student Transport Assignments', count: L.transportAssignments.length, run: clear('transportAssignments', () => []) });
+    }
+    const keepTemplate = (t: FeeTemplate) =>
+      !((options.students && t.studentId) || (options.classes && t.classId));
+    if (options.templates) {
+      steps.push({ label: 'Fee Particular Templates (reset to the standard baseline)', count: L.templates.filter((t: FeeTemplate) => !!t.studentId || !!t.classId).length || L.templates.length, run: clear('templates', () => INITIAL_GLOBAL_TEMPLATES) });
+    } else if (options.students || options.classes) {
+      steps.push({ label: 'Fee Template Overrides', count: L.templates.filter((t: FeeTemplate) => !keepTemplate(t)).length, run: clear('templates', (cur) => cur.filter(keepTemplate)) });
+    }
 
-    if (persistenceFailures.length > 0) {
-      // Some deletions didn't actually reach the database — pull the true
-      // server state back down rather than leaving the UI showing data
-      // that, in reality, was never removed.
-      const fresh = await fetchServerState();
-      if (fresh?.success && fresh.data) {
-        applyServerState(fresh.data);
+    // 3. Students, then classes, families, buses, stops and bank accounts.
+    if (options.students) steps.push({ label: 'Students & Profiles', count: L.students.length, run: clear('students', () => []) });
+    if (options.classes) steps.push({ label: 'Classes & Sections', count: L.classes.length, run: clear('classes', () => []) });
+    if (options.families) steps.push({ label: 'Families & Guardians', count: L.families.length, run: clear('families', () => []) });
+    if (options.transportBuses || fullTransportWipe) steps.push({ label: 'Buses Fleet Directory', count: L.buses.length, run: clear('buses', () => []) });
+    if (options.transportStops || fullTransportWipe) steps.push({ label: 'Bus Stops & Fare Rates', count: L.stops.length, run: clear('stops', () => []) });
+    if (options.bankAccounts) steps.push({ label: 'Bank Accounts', count: L.bankAccounts.length, run: clear('bankAccounts', () => []) });
+
+    // 4. Secondary users (the signed-in user is always kept).
+    const secondaryUsers = options.users ? users.filter((u) => u.id !== currentUser?.id) : [];
+    if (options.users) {
+      steps.push({
+        label: 'Secondary Users',
+        count: secondaryUsers.length,
+        run: async () => {
+          for (const u of secondaryUsers) {
+            const r = await apiDeleteUser(u.id);
+            if (!r.success) return { success: false, error: `${u.name || u.username}: ${r.error || 'could not be deleted'}` };
+          }
+          return { success: true };
+        },
+      });
+    }
+
+    let failure: { label: string; error?: string } | null = null;
+    for (const step of steps) {
+      const r = await step.run();
+      if (!r.success) {
+        failure = { label: step.label, error: r.error };
+        break;
       }
+      clearedTables.push(`${step.label} (${step.count} records)`);
+      recordsClearedCount += step.count;
+    }
+
+    // Show what the server really holds now, whatever happened.
+    const fresh = await fetchServerState();
+    if (fresh?.success && fresh.data) applyServerState(fresh.data);
+
+    if (failure) {
       return {
         success: false,
-        clearedTables: [],
-        recordsClearedCount: 0,
-        error: `Cleanup did not fully complete — the following could not be persisted: ${persistenceFailures.join('; ')}. No changes were kept.`,
+        fromServer: true,
+        clearedTables,
+        recordsClearedCount,
+        error:
+          `Cleanup stopped at "${failure.label}": ${failure.error || 'the server refused the deletion'}. ` +
+          (clearedTables.length > 0 ? `Already removed: ${clearedTables.join('; ')}.` : 'Nothing was removed.'),
       };
     }
 
@@ -5752,11 +5442,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
     });
 
-    return {
-      success: true,
-      clearedTables,
-      recordsClearedCount,
-    };
+    return { success: true, clearedTables, recordsClearedCount };
+    });
+
+  // Confirm-first financial writes. Every voucher / collection write runs through this
+  // helper: one queue (so two writes never overlap and each one works from the state the
+  // previous one left), a "saving" flag for the screen, and a rule the task must follow:
+  // compute from the latest lists, await the server, and change the screen ONLY after the
+  // server confirmed. A failed task returns { success: false, error } and changes nothing;
+  // when the server itself refused (fromServer), the latest saved data is reloaded quietly
+  // so a stale screen cannot cause the same refusal again.
+  type FinancialResult = { success: boolean; error?: string; fromServer?: boolean };
+  const financialQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const [financialPending, setFinancialPending] = useState(0);
+  const runFinancialWrite = <R extends FinancialResult>(label: string, task: () => Promise<R>): Promise<R> => {
+    setFinancialPending((n) => n + 1);
+    const run = financialQueue.current.then(async () => {
+      try {
+        const res = await task();
+        if (!res.success && res.fromServer) {
+          fetchServerState()
+            .then((r) => {
+              if (r?.success && r.data) applyServerState(r.data);
+            })
+            .catch(() => {});
+        }
+        return res;
+      } catch (err: any) {
+        console.error(`[API] ${label} failed:`, err);
+        return {
+          success: false,
+          error: `${label} could not be completed: ${err?.message || 'unexpected error'}. Nothing was changed.`,
+        } as unknown as R;
+      } finally {
+        setFinancialPending((n) => n - 1);
+      }
+    });
+    financialQueue.current = run.catch(() => undefined);
+    return run;
   };
 
   const reportFinancialSyncFailure = useCallback(
@@ -5787,25 +5510,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [showToast, applyServerState]
   );
 
-  // Surface background persistence failures for the generic simple-entity
-  // sync layer (students/classes/families/buses/stops/transportAssignments/
-  // templates/bankAccounts). Routine edits to these tables are persisted by
-  // a debounced background sync (see queueDatabaseSync in apiSync.ts) with
-  // no caller left waiting for the result, so a rejected create/update/
-  // delete there previously surfaced only as a console.warn — the user saw
-  // no error and the UI silently drifted from the server's real state until
-  // an unrelated refresh happened to overwrite it. This reuses the same
-  // toast + reconcile-from-server pattern already used for financial writes.
   useEffect(() => {
-    const unsubscribe = subscribeSyncFailures(({ collection, failedIds }) => {
-      const label = SYNC_ENTITY_LABELS[collection] || collection;
-      reportFinancialSyncFailure(
-        `${label} (${failedIds.length} record${failedIds.length === 1 ? '' : 's'})`,
-        new Error(`Failed to sync ${failedIds.length} ${collection} record(s): ${failedIds.join(', ')}`)
-      );
+    let last = 0;
+    return subscribeAuditWarnings(() => {
+      const now = Date.now();
+      if (now - last < 15000) return;
+      last = now;
+      showToast('The action was saved, but the audit log entry could not be recorded. Please tell an administrator.', 'error', 10000);
     });
-    return unsubscribe;
-  }, [reportFinancialSyncFailure]);
+  }, []);
 
   return (
     <AppContext.Provider
@@ -5844,10 +5557,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateStudent,
         deleteStudent,
         bulkDeleteStudents,
+        bulkAddStudents,
         families,
         addFamily,
         updateFamily,
         deleteFamily,
+        deleteFamilies,
         addStudentToFamily,
         removeStudentFromFamily,
         buses,
@@ -5865,6 +5580,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveTransportAssignment,
         bulkSaveTransportAssignments,
         deleteTransportAssignment,
+        deleteTransportAssignments,
         bulkUpdateTransportDaysForMonth,
         templates,
         saveGlobalTemplate,
@@ -5876,6 +5592,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveStudentTemplateOverrides,
         bulkSaveMultipleStudentTemplateOverrides,
         deleteStudentTemplates,
+        deleteStudentTemplateScopes,
         resetAllTemplates,
         deleteTemplate,
         vouchers,
@@ -5888,6 +5605,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkCsvCollection,
         bulkCarryForwardDefaulters,
         undoCarryForwardVoucher,
+        financialSaving: financialPending > 0,
         actionLock,
         startActionLock,
         updateActionLock,
@@ -5905,6 +5623,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetThemeConfig,
         priorMonthRule,
         setPriorMonthRule,
+        savePolicySettings,
         skippedMonthRule,
         setSkippedMonthRule,
         voucherDeletionResolution,
@@ -5948,10 +5667,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         auditRetentionMonths,
         setAuditRetentionMonths,
         studentAccountHistory,
-        addStudentAccountHistory,
         getStudentAccountHistory,
         updateStudentStatus,
         showToast,
+        refreshFromServer,
       }}
     >
       {children}

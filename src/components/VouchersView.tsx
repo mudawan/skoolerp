@@ -4,7 +4,7 @@ import { DEFAULT_PAYMENT_MODE, type PaymentMode } from '../utils/paymentMode';
 import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, VoucherStatus, ParticularKind, VoucherItem } from '../types';
-import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, roundUpToMultiple, VoucherPreviewCalculation, getCurrencyCode } from '../utils/feeMath';
+import { buildLatestVoucherMap, formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getMonthPickerWindow, getNextMonthString, mergeWithDataMonths, roundUpToMultiple, VoucherPreviewCalculation, getCurrencyCode } from '../utils/feeMath';
 import { MonthPicker } from './MonthPicker';
 import { DatePicker } from './DatePicker';
 import { PrintVoucherModal } from './PrintVoucherModal';
@@ -59,6 +59,7 @@ export const VouchersView: React.FC = () => {
   const {
     activeMonth,
     vouchers,
+    isMonthLocked,
     transactions,
     students,
     classes,
@@ -73,6 +74,7 @@ export const VouchersView: React.FC = () => {
     bulkDeleteVouchers,
     bulkCarryForwardDefaulters,
     undoCarryForwardVoucher,
+    financialSaving,
     startActionLock,
     stopActionLock,
     hasPermission,
@@ -88,6 +90,10 @@ export const VouchersView: React.FC = () => {
     roundingEnabled,
     showToast,
   } = useApp();
+  const latestVoucherByStudent = useMemo(() => buildLatestVoucherMap(vouchers), [vouchers]);
+  const canTakePayment = (v: { id: string; studentId: string; month: string }) =>
+    latestVoucherByStudent.get(v.studentId)?.id === v.id && !isMonthLocked(v.month);
+
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClassId, setSelectedClassId] = useState('all');
@@ -96,7 +102,7 @@ export const VouchersView: React.FC = () => {
   const [itemsPerPage, setItemsPerPage] = useState(25);
 
   // Table Sorting State
-  const [sortField, setSortField] = useState<'voucherNo' | 'regNo' | 'name' | 'class' | 'netDue' | 'paid' | 'status'>('voucherNo');
+  const [sortField, setSortField] = useState<'voucherNo' | 'regNo' | 'name' | 'class' | 'netDue' | 'paid' | 'status' | 'dueDate'>('voucherNo');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const handleSort = (field: 'voucherNo' | 'regNo' | 'name' | 'class' | 'netDue' | 'paid' | 'status') => {
@@ -427,10 +433,10 @@ export const VouchersView: React.FC = () => {
     });
   };
 
-  const executeUndoCarryForward = () => {
-    if (!undoCarryModal?.targetVoucher) return;
+  const executeUndoCarryForward = async () => {
+    if (!undoCarryModal?.targetVoucher || financialSaving) return;
     const v = undoCarryModal.targetVoucher;
-    const res = undoCarryForwardVoucher(v.id);
+    const res = await undoCarryForwardVoucher(v.id);
 
     if (res.success) {
       showToast(`Successfully reverted carry forward for Voucher #${v.voucherNo} (${formatMonthName(v.month)})!`);
@@ -645,7 +651,7 @@ export const VouchersView: React.FC = () => {
       `Generating and saving ${selectedGenStudentIds.length} vouchers to database...`
     );
     try {
-      const res = commitVoucherGeneration(
+      const res = await commitVoucherGeneration(
         targetMonth,
         'students',
         undefined,
@@ -658,6 +664,7 @@ export const VouchersView: React.FC = () => {
         showToast(
           `Successfully generated ${res.generatedCount} new fee voucher(s) for ${formatMonthName(targetMonth)}!`
         );
+        if (res.warning) showToast(res.warning, 'error', 12000);
         setShowGeneratorModal(false);
         setPolicyConfirmModal(null);
       } else {
@@ -680,7 +687,7 @@ export const VouchersView: React.FC = () => {
     }
 
     const affectedPriorPreviews =
-      priorMonthRule === 'warning' || priorMonthRule === 'recalculate'
+      priorMonthRule === 'recalculate'
         ? previewsData?.previews.filter(
             (p) => selectedGenStudentIds.includes(p.student.id) && p.hasFutureVouchers
           ) || []
@@ -696,14 +703,14 @@ export const VouchersView: React.FC = () => {
     if (affectedPriorPreviews.length > 0 || affectedSkippedPreviews.length > 0) {
       setPolicyConfirmModal({
         isOpen: true,
-        priorRule: priorMonthRule === 'recalculate' ? 'recalculate' : 'warning',
+        priorRule: 'recalculate',
         affectedPriorPreviews,
         affectedSkippedPreviews,
       });
       return;
     }
 
-    executeCommitGeneration();
+    void executeCommitGeneration();
   };
 
   const handleOpenCollectModal = (voucher: FeeVoucher) => {
@@ -717,9 +724,9 @@ export const VouchersView: React.FC = () => {
     setCollectDate(new Date().toISOString().split('T')[0]);
   };
 
-  const handleSaveLineItemsOnly = () => {
+  const handleSaveLineItemsOnly = async () => {
     if (!collectingVoucher) return;
-    const res = updateVoucherParticulars(collectingVoucher.id, collectItems);
+    const res = await updateVoucherParticulars(collectingVoucher.id, collectItems);
     if (res.success) {
       showToast('Voucher line items and totals updated successfully!');
       if (res.voucher) {
@@ -730,9 +737,9 @@ export const VouchersView: React.FC = () => {
     }
   };
 
-  const handleSavePayment = (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!collectingVoucher) return;
+    if (!collectingVoucher || financialSaving) return;
 
     const numAmount = Number(collectAmount) || 0;
     if (numAmount <= 0) {
@@ -740,7 +747,7 @@ export const VouchersView: React.FC = () => {
       return;
     }
 
-    const res = collectVoucherPayment(
+    const res = await collectVoucherPayment(
       collectingVoucher.id,
       numAmount,
       collectMode,
@@ -791,8 +798,8 @@ export const VouchersView: React.FC = () => {
     });
   };
 
-  const handleConfirmDelete = () => {
-    if (!deleteModal) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteModal || financialSaving) return;
 
     if (deleteModal.hasDownstream && voucherDeletionResolution === 'manual') {
       showToast(
@@ -805,7 +812,7 @@ export const VouchersView: React.FC = () => {
 
     if (deleteModal.mode === 'single' && deleteModal.targetVoucher) {
       const v = deleteModal.targetVoucher;
-      const res = deleteVoucher(v.id, deleteModal.hasTransactions);
+      const res = await deleteVoucher(v.id, deleteModal.hasTransactions);
 
       if (res.success) {
         if (deleteModal.hasDownstream && voucherDeletionResolution === 'auto-heal') {
@@ -831,7 +838,7 @@ export const VouchersView: React.FC = () => {
       }
     } else if (deleteModal.mode === 'bulk' && deleteModal.targetIds) {
       const ids = deleteModal.targetIds;
-      const res = bulkDeleteVouchers(ids, deleteModal.hasTransactions);
+      const res = await bulkDeleteVouchers(ids, deleteModal.hasTransactions);
 
       if (res.success) {
         if (deleteModal.hasDownstream && voucherDeletionResolution === 'auto-heal') {
@@ -1147,7 +1154,7 @@ export const VouchersView: React.FC = () => {
                   const student = students.find((s) => s.id === v.studentId);
                   const schoolClass = classes.find((c) => c.id === v.classId);
                   const isSelected = selectedIds.includes(v.id);
-                  const canCollect = v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.collect');
+                  const canCollect = v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('fees.collect') && canTakePayment(v);
                   const canCarry = v.status !== 'Paid' && v.status !== 'Carried' && v.status !== 'Reversed' && hasPermission('defaulters.manage');
                   const canUndoCarry = v.status === 'Carried' && hasPermission('defaulters.manage');
                   const canDelete = hasPermission('fees.delete');
@@ -1221,6 +1228,12 @@ export const VouchersView: React.FC = () => {
                                   ? 'Collect payment permission required'
                                   : v.status === 'Carried'
                                   ? 'Balance already carried forward'
+                                  : v.status === 'Reversed'
+                                  ? 'Voucher reversed'
+                                  : isMonthLocked(v.month)
+                                  ? `${formatMonthName(v.month)} is closed`
+                                  : latestVoucherByStudent.get(v.studentId)?.id !== v.id
+                                  ? `Pay against the latest voucher (${formatMonthName(latestVoucherByStudent.get(v.studentId)?.month || v.month)})`
                                   : v.status === 'Paid'
                                   ? 'Record Additional / Advance Payment'
                                   : 'Collect Payment'
@@ -1713,7 +1726,6 @@ export const VouchersView: React.FC = () => {
                 {(previewsData.previews.some((p) => p.isBeforeFirstBillingMonth) ||
                   previewsData.previews.some((p) => p.isBlockedByPriorRule) ||
                   previewsData.previews.some((p) => p.isBlockedBySkippedRule) ||
-                  (priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers)) ||
                   (skippedMonthRule === 'warning' && previewsData.previews.some((p) => p.hasSkippedMonths && !p.isAlreadyGenerated)) ||
                   (priorMonthRule === 'recalculate' && previewsData.previews.some((p) => p.hasFutureVouchers))) && (
                   <div className="pt-1.5 sm:pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px] text-slate-600">
@@ -1737,13 +1749,6 @@ export const VouchersView: React.FC = () => {
                       <div className="inline-flex items-center gap-1.5 text-rose-700 font-medium">
                         <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                         <span>Sequential rule: students with skipped months blocked.</span>
-                      </div>
-                    )}
-
-                    {priorMonthRule === 'warning' && previewsData.previews.some((p) => p.hasFutureVouchers) && (
-                      <div className="inline-flex items-center gap-1.5 text-amber-800 font-medium">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        <span>Future vouchers exist (confirmation will prompt).</span>
                       </div>
                     )}
 
@@ -2006,11 +2011,6 @@ export const VouchersView: React.FC = () => {
                                     <AlertTriangle className="w-3 h-3 text-amber-600" />
                                     Skipped Warning
                                   </span>
-                                ) : p.hasFutureVouchers && priorMonthRule === 'warning' ? (
-                                  <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1">
-                                    <AlertTriangle className="w-3 h-3 text-amber-600" />
-                                    Warning Mode
-                                  </span>
                                 ) : p.hasFutureVouchers && priorMonthRule === 'recalculate' ? (
                                   <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center justify-center gap-1">
                                     <RefreshCw className="w-3 h-3 text-indigo-600" />
@@ -2110,8 +2110,9 @@ export const VouchersView: React.FC = () => {
           canUndoCarry={hasPermission('defaulters.manage')}
           canDelete={hasPermission('fees.delete')}
           canReissue={hasPermission('fees.generate')}
-          onReissue={(v) => {
-            const res = reissueVoucher(v.id);
+          onReissue={async (v) => {
+            if (financialSaving) return;
+            const res = await reissueVoucher(v.id);
             if (!res.success) {
               showToast(res.error || 'Failed to reissue voucher.', 'error', 9000);
               return;

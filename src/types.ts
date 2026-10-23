@@ -46,6 +46,23 @@ export interface Institution {
   updatedAt?: string;
 }
 
+/** An invite exactly as the server stores and returns it (list and create). */
+export interface ServerInvite {
+  id: string;
+  institution_id: string;
+  institutionName?: string;
+  institutionCode?: string;
+  invite_code: string;
+  full_name: string;
+  assigned_role: UserRole;
+  permissions?: string[];
+  expires_at: string;
+  status: 'pending' | 'claimed' | 'expired';
+  created_by: string;
+  created_at: string;
+}
+
+/** The invite details returned when a code is validated at sign-up. */
 export interface OperatorInvite {
   id: string;
   institutionId: string;
@@ -74,6 +91,8 @@ export interface User {
   avatarUrl?: string;
   lastLogin?: string;
   status?: 'active' | 'invited' | 'deactivated';
+  /** Set after a platform password reset: the user must choose a new password before anything else. */
+  mustChangePassword?: boolean;
 }
 
 export interface SchoolClass {
@@ -264,6 +283,8 @@ export interface FeeCollection {
 
 export interface InstituteProfile {
   name: string;
+  /** School / institution code issued by the server. */
+  code?: string;
   logoUrl: string;
   address: string;
   phone: string;
@@ -308,6 +329,7 @@ export type ActiveTab =
   | 'classes'
   | 'vouchers'
   | 'collections'
+  | 'bankStatements'
   | 'defaulters'
   | 'monthEnd'
   | 'voucherLayout'
@@ -333,7 +355,7 @@ export interface AppThemeConfig {
   sidebarTheme: SidebarTheme;
 }
 
-export type PriorMonthVoucherRule = 'strict' | 'warning' | 'recalculate';
+export type PriorMonthVoucherRule = 'strict' | 'recalculate';
 export type SkippedMonthVoucherRule = 'strict' | 'warning' | 'allow';
 export type VoucherDeletionResolution = 'auto-heal' | 'cascade' | 'manual';
 export type VoucherCopyType = 'bank' | 'institute' | 'student';
@@ -383,6 +405,9 @@ export type AuditActionType =
   | 'carry_forward'
   | 'month_closure'
   | 'student_discount'
+  | 'student_creation'
+  | 'student_update'
+  | 'student_bulk'
   | 'student_deletion'
   | 'operator_security'
   | 'system_cleanup'

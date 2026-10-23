@@ -282,10 +282,10 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
     const warnings: string[] = [];
 
     if (selectedTables.students && !selectedTables.vouchers && vouchers.length > 0) {
-      warnings.push('Deleting Students while keeping Vouchers will create orphaned fee vouchers without student profiles.');
+      warnings.push('The database will refuse to delete Students while their Fee Vouchers remain. Select Fee Vouchers as well.');
     }
     if (selectedTables.classes && !selectedTables.students && students.length > 0) {
-      warnings.push('Deleting Classes while retaining Students will leave student records with invalid or missing class references.');
+      warnings.push('The database will refuse to delete Classes that still have Students. Select Students as well.');
     }
     if (selectedTables.collections && !selectedTables.vouchers && vouchers.length > 0) {
       warnings.push('Purging Collections while keeping Vouchers will revert all previously paid vouchers back to Unpaid status.');
@@ -297,10 +297,10 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
       warnings.push('Clearing Student Transport Assignments will stop future transport fees, but existing vouchers will retain historical transport charges.');
     }
     if (selectedTables.transportStops && !selectedTables.transportAssignments && transportAssignments.length > 0) {
-      warnings.push('Deleting Bus Stops while keeping Student Assignments will leave transport seat allocations without valid stop and fare references.');
+      warnings.push('The database will refuse to delete Bus Stops that still have Student Assignments. Select Student Transport Assignments as well.');
     }
     if (selectedTables.transportBuses && !selectedTables.transportAssignments && transportAssignments.length > 0) {
-      warnings.push('Deleting Buses Fleet while keeping Student Assignments will detach students from their assigned transport vehicles.');
+      warnings.push('The database will refuse to delete Buses that still have Student Assignments. Select Student Transport Assignments as well.');
     }
 
     return warnings;
@@ -402,7 +402,7 @@ export const DataCleanupView: React.FC<DataCleanupViewProps> = ({ hideHeader = f
         </div>
         <h3 className="text-base font-bold text-slate-900">Administrator Access Required</h3>
         <p className="text-xs text-slate-600 leading-relaxed">
-          The Selection-Based Database Cleanup & Table Reset utility requires Super Administrator authentication permissions. Please sign in with an Admin operator account to manage database purges.
+          The Selection-Based Database Cleanup & Table Reset utility requires Administrator permissions. Please sign in with an Admin operator account to manage database purges.
         </p>
       </div>
     );

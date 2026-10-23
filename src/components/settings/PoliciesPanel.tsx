@@ -993,7 +993,10 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              A charge missed for an earlier month can be added to the current voucher as a labelled fee head instead of backdating a voucher.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Rule 1: Strict Chronological Rule */}
               <div
                 onClick={() => setSelectedPriorRule('strict')}
@@ -1032,45 +1035,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                 </div>
               </div>
 
-              {/* Rule 2: Sequential Month Warning */}
-              <div
-                onClick={() => setSelectedPriorRule('warning')}
-                className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
-                  selectedPriorRule === 'warning'
-                    ? 'border-teal-600 bg-teal-50/40 shadow-2xs'
-                    : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-start gap-2">
-                    <input
-                      type="radio"
-                      name="priorMonthRule"
-                      value="warning"
-                      checked={selectedPriorRule === 'warning'}
-                      onChange={() => setSelectedPriorRule('warning')}
-                      className="mt-0.5 text-teal-600 focus:ring-teal-500"
-                    />
-                    <div>
-                      <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        2. Warning Alert
-                      </span>
-                      <span className="text-[10px] text-amber-700 font-semibold uppercase tracking-wider block">
-                        (Allow with Alert)
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-relaxed pl-5">
-                    Allows generating prior vouchers with a warning; downstream future vouchers keep static balances.
-                  </p>
-                </div>
-                <div className="text-[10px] text-amber-900 bg-amber-50 p-2 rounded-lg mt-2.5 border border-amber-200/60">
-                  ⚠️ Downstream vouchers will NOT automatically inherit newly added arrears.
-                </div>
-              </div>
-
-              {/* Rule 3: Auto-Recalculate Future Arrears */}
+              {/* Rule 2: Auto-Recalculate Future Arrears */}
               <div
                 onClick={() => setSelectedPriorRule('recalculate')}
                 className={`p-3.5 rounded-xl border-2 transition cursor-pointer relative flex flex-col justify-between ${
@@ -1092,7 +1057,7 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                     <div>
                       <span className="font-bold text-xs text-slate-900 block flex items-center gap-1">
                         <RefreshCw className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                        3. Auto-Recalculate
+                        2. Auto-Recalculate
                       </span>
                       <span className="text-[10px] text-indigo-700 font-semibold uppercase tracking-wider block">
                         (Auto-Update Future Dues)

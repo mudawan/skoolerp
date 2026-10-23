@@ -62,6 +62,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
     startActionLock,
     stopActionLock,
     collectVoucherPayment,
+    financialSaving,
     defaultLateFeeRate,
     currentUser,
     hasPermission,
@@ -407,21 +408,21 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   };
 
   // Quick Payment Collection Submit
-  const handleQuickCollect = (e: React.FormEvent) => {
+  const handleQuickCollect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!collectingVoucher) return;
+    if (!collectingVoucher || financialSaving) return;
     if (collectingVoucher.amount <= 0) {
       showToast('Payment amount must be greater than 0.', 'error');
       return;
     }
 
-    const res = collectVoucherPayment(
+    const res = await collectVoucherPayment(
       collectingVoucher.voucherId,
       collectingVoucher.amount,
       collectingVoucher.mode,
-      collectingVoucher.date,
       collectingVoucher.refNo,
-      collectingVoucher.notes
+      collectingVoucher.notes,
+      collectingVoucher.date
     );
 
     if (res.success) {
@@ -869,9 +870,8 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="text-slate-600 font-mono mt-1 text-[11px]">{b.accountTitle}</div>
+                    <div className="text-slate-600 font-mono mt-1 text-[11px]">{b.title}</div>
                     <div className="text-slate-500 font-mono text-[11px]">A/C: {b.accountNumber}</div>
-                    {b.iban && <div className="text-slate-400 font-mono text-[10px] truncate">IBAN: {b.iban}</div>}
                   </div>
                 ))}
               </div>
@@ -1553,9 +1553,10 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition shadow-xs cursor-pointer"
+                  disabled={financialSaving}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  Record Payment
+                  {financialSaving ? 'Saving…' : 'Record Payment'}
                 </button>
               </div>
             </form>
