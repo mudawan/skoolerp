@@ -11,6 +11,7 @@ import {
   applyAssigned,
   assignStudent,
   createUpload,
+  deleteUpload,
   getUpload,
   getUploadFile,
   ignoreTransaction,
@@ -115,6 +116,18 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
 
   app.get('/api/bank-statements/uploads/:id', auth, wrap(async (req, res) => {
     res.json({ success: true, upload: await getUpload(pool, inst(req), req.params.id) });
+  }));
+
+  app.delete('/api/bank-statements/uploads/:id', auth, wrap(async (req, res) => {
+    await deleteUpload(pool, inst(req), req.params.id);
+    await d.recordAudit(req, {
+      actionType: 'bank_statement_delete',
+      actionTitle: 'Bank Statement Upload Deleted',
+      module: 'Collections',
+      description: `Deleted bank statement upload batch ${req.params.id}`,
+      targetId: req.params.id,
+    });
+    res.json({ success: true });
   }));
 
   app.get('/api/bank-statements/uploads/:id/file', auth, wrap(async (req, res) => {

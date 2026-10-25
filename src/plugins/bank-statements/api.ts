@@ -31,6 +31,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<Re
 export const bsApi = {
   adapters: () => call<{ adapters: AdapterInfo[] }>('GET', '/adapters'),
   uploads: () => call<{ uploads: StatementUploadSummary[] }>('GET', '/uploads'),
+  deleteUpload: (id: string) => call<{ success: boolean }>('DELETE', `/uploads/${id}`),
   upload: (p: { filename: string; mimeType: string; contentBase64: string; feeMonth: string; adapterId?: string }) =>
     call<{ upload: StatementUploadSummary }>('POST', '/uploads', p),
   one: (id: string) => call<{ upload: StatementUploadSummary }>('GET', `/uploads/${id}`),

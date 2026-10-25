@@ -357,6 +357,25 @@ export async function getUploadFile(db: Queryable, institutionId: string, upload
   return { filename: r.rows[0].filename as string, mimeType: (r.rows[0].mime_type as string) || 'application/octet-stream', content: r.rows[0].content as Buffer };
 }
 
+export async function deleteUpload(db: Queryable, institutionId: string, uploadId: string): Promise<boolean> {
+  const upload = await getUpload(db, institutionId, uploadId);
+  if (upload.feeMonth && (await isMonthLocked(db, institutionId, upload.feeMonth))) {
+    throw new HttpError(423, `Fee books for ${upload.feeMonth} are locked. An Admin must unlock the month before statements can be deleted.`);
+  }
+  const appliedCheck = await db.query(
+    `SELECT COUNT(*)::int as count FROM bank_statement_transactions 
+     WHERE institution_id = $1 AND upload_id = $2 AND status = 'applied'`,
+    [institutionId, uploadId]
+  );
+  if (appliedCheck.rows[0]?.count > 0) {
+    throw new HttpError(400, 'Cannot delete a statement that has already applied fee collections. Reverse the collections first if needed.');
+  }
+
+  await db.query(`DELETE FROM bank_statement_events WHERE institution_id = $1 AND upload_id = $2`, [institutionId, uploadId]);
+  await db.query(`DELETE FROM bank_statement_uploads WHERE institution_id = $1 AND id = $2`, [institutionId, uploadId]);
+  return true;
+}
+
 export type TxFilter = 'open' | 'all' | StatementTxStatus;
 
 export async function listTransactions(
@@ -382,9 +401,19 @@ export async function listTransactions(
 // Status transitions (pending <-> assigned, ignored, and re-opening a reversed application)
 // ---------------------------------------------------------------------------------------------
 
+async function assertTxMonthNotLocked(db: Queryable, institutionId: string, uploadId: string) {
+  const u = await db.query(`SELECT fee_month FROM bank_statement_uploads WHERE id = $1 AND institution_id = $2`, [uploadId, institutionId]);
+  if (u.rows.length > 0 && u.rows[0].fee_month) {
+    if (await isMonthLocked(db, institutionId, u.rows[0].fee_month)) {
+      throw new HttpError(423, `Fee books for ${u.rows[0].fee_month} are locked. An Admin must unlock the month first.`);
+    }
+  }
+}
+
 async function lockTx(db: Queryable, institutionId: string, txId: string) {
   const r = await db.query(`SELECT * FROM bank_statement_transactions WHERE id = $1 AND institution_id = $2 FOR UPDATE`, [txId, institutionId]);
   if (r.rows.length === 0) throw new HttpError(404, 'Bank transaction not found.');
+  await assertTxMonthNotLocked(db, institutionId, r.rows[0].upload_id);
   return r.rows[0];
 }
 
@@ -631,6 +660,9 @@ export async function applyAssigned(
 ): Promise<ApplyResult> {
   if (!deps.receivePayments) throw new Error('Bank statements: receivePayments is not wired.');
   const upload = await getUpload(deps.pool, institutionId, uploadId);
+  if (upload.feeMonth && (await isMonthLocked(deps.pool, institutionId, upload.feeMonth))) {
+    throw new HttpError(423, `Fee books for ${upload.feeMonth} are locked. An Admin must unlock the month before fee collections can be applied.`);
+  }
   const preview = await previewApply(deps.pool, institutionId, uploadId, opts.txIds);
   const ready = preview.rows.filter((r) => r.ready);
   const skipped = preview.rows.filter((r) => !r.ready).map((r) => ({ txId: r.txId, reason: r.blockedReason || 'Not ready' }));
