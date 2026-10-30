@@ -217,13 +217,22 @@ export const BankStatementsView: React.FC = () => {
   // ------------------------------------------------------------------ row actions
   const replaceRow = (t: StatementTxRow) => setRows((prev) => prev.map((r) => (r.id === t.id ? t : r)));
 
-  const assign = async (tx: StatementTxRow, studentId: string) => {
+  const hasInvalidSplit = useMemo(() => {
+    return rows.some((r) => {
+      if (r.status !== 'assigned') return false;
+      const d = r.duesAmount !== null && r.duesAmount !== undefined ? r.duesAmount : r.amount;
+      const f = r.fineAmount !== null && r.fineAmount !== undefined ? r.fineAmount : 0;
+      return d + f > r.amount + 0.01;
+    });
+  }, [rows]);
+
+  const assign = async (tx: StatementTxRow, studentId: string, split?: { duesAmount?: number; fineAmount?: number }) => {
     if (locked) {
       showToast('Fee books for this month are locked. Student allocations cannot be modified.', 'error');
       return false;
     }
     setBusyTx(tx.id);
-    const r = await bsApi.assign(tx.id, studentId);
+    const r = await bsApi.assign(tx.id, studentId, split);
     setBusyTx(null);
     if (!r.success) {
       showToast(r.error, 'error');
@@ -236,6 +245,21 @@ export const BankStatementsView: React.FC = () => {
       void loadUploads();
     }
     return true;
+  };
+
+  const updateSplit = async (tx: StatementTxRow, dues: number, fine: number) => {
+    if (locked) {
+      showToast('Fee books for this month are locked. Amounts cannot be modified.', 'error');
+      return;
+    }
+    setBusyTx(tx.id);
+    const r = await bsApi.updateSplit(tx.id, dues, fine);
+    setBusyTx(null);
+    if (!r.success) {
+      showToast(r.error, 'error');
+      return;
+    }
+    replaceRow(r.transaction);
   };
 
   const unassign = async (tx: StatementTxRow) => {
@@ -315,7 +339,7 @@ export const BankStatementsView: React.FC = () => {
   const choose = async (s: Suggestion) => {
     if (!pickerTx || locked) return;
     const tx = pickerTx;
-    if (await assign(tx, s.studentId)) {
+    if (await assign(tx, s.studentId, { duesAmount: s.suggestedDues, fineAmount: s.suggestedFine })) {
       setPickerTx(null);
       setFocus((f) => Math.min(f + 1, Math.max(0, rows.length - 1)));
     }
@@ -326,6 +350,10 @@ export const BankStatementsView: React.FC = () => {
   // ------------------------------------------------------------------ apply
   const openApply = async () => {
     if (!selectedId || locked) return;
+    if (hasInvalidSplit) {
+      showToast('Some transactions have dues + fine exceeding credit amount. Please adjust the split before posting.', 'error');
+      return;
+    }
     setApplyOpen(true);
     setApplyError(null);
     setPreview(null);
@@ -402,7 +430,9 @@ export const BankStatementsView: React.FC = () => {
           const s = suggestions[tx.id]?.[Number(e.key) - 1];
           if (s) {
             e.preventDefault();
-            void assign(tx, s.studentId).then((ok) => ok && setFocus((f) => Math.min(f + 1, visible.length - 1)));
+            void assign(tx, s.studentId, { duesAmount: s.suggestedDues, fineAmount: s.suggestedFine }).then(
+              (ok) => ok && setFocus((f) => Math.min(f + 1, visible.length - 1))
+            );
           }
         } else if (e.key === 'u' && tx.status === 'assigned') void unassign(tx);
         else if (e.key === 'i') {
@@ -747,11 +777,17 @@ export const BankStatementsView: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={assignedCount === 0 || locked}
-                    onClick={() => !locked && void openApply()}
-                    style={assignedCount > 0 && !locked ? { backgroundColor: preset.primaryColor } : undefined}
+                    disabled={assignedCount === 0 || locked || hasInvalidSplit}
+                    onClick={() => !locked && !hasInvalidSplit && void openApply()}
+                    style={assignedCount > 0 && !locked && !hasInvalidSplit ? { backgroundColor: preset.primaryColor } : undefined}
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white shadow-xs transition hover:opacity-90 active:scale-98 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap bg-teal-700"
-                    title={locked ? 'Month is locked — collections cannot be posted' : 'Press Ctrl+Enter / Cmd+Enter to open'}
+                    title={
+                      locked
+                        ? 'Month is locked — collections cannot be posted'
+                        : hasInvalidSplit
+                        ? 'Some transactions have allocated dues + fine exceeding statement credit'
+                        : 'Press Ctrl+Enter / Cmd+Enter to open'
+                    }
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Review &amp; Apply Collections</span>
@@ -945,10 +981,13 @@ export const BankStatementsView: React.FC = () => {
                         <th className="px-3 py-3 font-bold w-12 text-center">#</th>
                         <th className="px-4 py-3 font-bold w-28">Date</th>
                         <th className="px-4 py-3 font-bold text-right w-32">Credit Amount</th>
-                        <th className="px-4 py-3 font-bold min-w-[280px]">Bank Narration &amp; Ref</th>
-                        <th className="px-4 py-3 font-bold min-w-[320px]">
+                        <th className="px-4 py-3 font-bold min-w-[240px]">Bank Narration &amp; Ref</th>
+                        <th className="px-4 py-3 font-bold min-w-[280px]">
                           {tab === 'open' ? 'Student Allocation' : tab === 'applied' ? 'Receipt & Allocation' : 'Ignore Reason'}
                         </th>
+                        <th className="px-3 py-3 font-bold text-right w-28">Base Dues</th>
+                        <th className="px-3 py-3 font-bold text-right w-24">Late Fine</th>
+                        <th className="px-3 py-3 font-bold text-center w-36">Split Status</th>
                         <th className="px-4 py-3 font-bold text-right w-24">Actions</th>
                       </tr>
                     </thead>
@@ -984,7 +1023,7 @@ export const BankStatementsView: React.FC = () => {
                             </td>
 
                             {/* Narration & Reference Column */}
-                            <td className="px-4 py-3 text-slate-700 min-w-[280px]">
+                            <td className="px-4 py-3 text-slate-700 min-w-[240px]">
                               <div className="font-medium text-slate-800 line-clamp-2 leading-relaxed" title={tx.description}>
                                 {tx.description || <em className="text-slate-400">Narration not extractable</em>}
                               </div>
@@ -997,14 +1036,19 @@ export const BankStatementsView: React.FC = () => {
                             </td>
 
                             {/* Allocation / Target Column */}
-                            <td className="px-4 py-3">
+                            <td className="px-4 py-3 min-w-[280px]">
                               {tab === 'open' && (
                                 <AssignCell
                                   tx={tx}
                                   focused={isFocused}
                                   suggestions={suggestions[tx.id] || []}
                                   disabled={locked}
-                                  onAccept={(s) => void assign(tx, s.studentId)}
+                                  onAccept={(s) =>
+                                    void assign(tx, s.studentId, {
+                                      duesAmount: s.suggestedDues,
+                                      fineAmount: s.suggestedFine,
+                                    })
+                                  }
                                   onOpen={() => openPicker(tx)}
                                 />
                               )}
@@ -1038,6 +1082,14 @@ export const BankStatementsView: React.FC = () => {
                                 </div>
                               )}
                             </td>
+
+                            {/* Permanent Dedicated Columns: Base Dues, Late Fine, and Split Status */}
+                            <DuesFineSplitCells
+                              tx={tx}
+                              tab={tab}
+                              disabled={locked}
+                              onUpdateSplit={(d, f) => void updateSplit(tx, d, f)}
+                            />
 
                             {/* Actions Column */}
                             <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -1226,15 +1278,22 @@ export const BankStatementsView: React.FC = () => {
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-bold text-slate-900 text-sm">{s.name}</span>
                             {s.voucher ? (
-                              <span
-                                className={`text-xs font-mono font-bold ${
-                                  s.voucher.outstanding > 0 ? 'text-amber-700' : 'text-slate-600'
-                                }`}
-                              >
-                                {s.voucher.outstanding > 0
-                                  ? `Due ${formatCurrency(s.voucher.outstanding)}`
-                                  : s.voucher.status}
-                              </span>
+                              <div className="text-right">
+                                <span
+                                  className={`text-xs font-mono font-bold block ${
+                                    s.voucher.outstanding > 0 ? 'text-amber-700' : 'text-slate-600'
+                                  }`}
+                                >
+                                  {s.voucher.outstanding > 0
+                                    ? `Due ${formatCurrency(s.voucher.outstanding)}`
+                                    : s.voucher.status}
+                                </span>
+                                {s.isOverdue && s.suggestedFine ? (
+                                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-1 py-0.2 rounded inline-block mt-0.5">
+                                    +Fine Rs. {s.suggestedFine}
+                                  </span>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
 
@@ -1469,7 +1528,8 @@ export const BankStatementsView: React.FC = () => {
                         <tr>
                           <th className="px-3.5 py-2.5 font-bold">Student</th>
                           <th className="px-3.5 py-2.5 font-bold text-right">Bank Credit</th>
-                          <th className="px-3.5 py-2.5 font-bold text-right">Voucher Due</th>
+                          <th className="px-3.5 py-2.5 font-bold text-right">Base Dues</th>
+                          <th className="px-3.5 py-2.5 font-bold text-right">Late Fine</th>
                           <th className="px-3.5 py-2.5 font-bold">Posting Consequence</th>
                         </tr>
                       </thead>
@@ -1485,20 +1545,34 @@ export const BankStatementsView: React.FC = () => {
                             <td className="px-3.5 py-2.5 text-right font-mono font-bold text-emerald-600 tabular-nums">
                               {formatCurrency(r.amount)}
                             </td>
-                            <td className="px-3.5 py-2.5 text-right font-mono text-slate-700 tabular-nums">
-                              {r.outstanding === null ? '—' : formatCurrency(r.outstanding)}
+                            <td className="px-3.5 py-2.5 text-right font-mono text-slate-700 tabular-nums font-semibold">
+                              {formatCurrency(r.duesAmount)}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-mono tabular-nums">
+                              {r.fineAmount > 0 ? (
+                                <span className="font-bold text-amber-700">{formatCurrency(r.fineAmount)}</span>
+                              ) : (
+                                <span className="text-slate-400">Rs. 0</span>
+                              )}
                             </td>
                             <td className="px-3.5 py-2.5">
                               {r.ready ? (
-                                r.excess > 0 ? (
-                                  <span className="text-amber-800 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
-                                    Clears due; {formatCurrency(r.excess)} advance credit
-                                  </span>
-                                ) : (
-                                  <span className="text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px]">
-                                    {r.amount < (r.outstanding || 0) ? 'Partial Payment' : 'Clears Voucher Full'}
-                                  </span>
-                                )
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {r.fineAmount > 0 && (
+                                    <span className="text-amber-800 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
+                                      Includes {formatCurrency(r.fineAmount)} fine
+                                    </span>
+                                  )}
+                                  {r.excess > 0 ? (
+                                    <span className="text-blue-800 font-semibold bg-blue-50 border border-blue-200 px-2 py-0.5 rounded text-[11px]">
+                                      +{formatCurrency(r.excess)} advance credit
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px]">
+                                      {r.duesAmount < (r.outstanding || 0) ? 'Partial Payment' : 'Clears Voucher Full'}
+                                    </span>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-rose-700 font-semibold text-[11px] flex items-center gap-1">
                                   <AlertCircle className="w-3 h-3" />
@@ -1602,18 +1676,33 @@ const AssignCell: React.FC<AssignCellProps> = ({
       <button
         type="button"
         onClick={onOpen}
-        className="text-left cursor-pointer group flex items-center gap-2.5 p-1.5 rounded-xl bg-teal-50/80 hover:bg-teal-100/70 border border-teal-200 transition"
+        className="text-left cursor-pointer group flex items-start gap-2.5 p-1.5 rounded-xl bg-teal-50/80 hover:bg-teal-100/70 border border-teal-200 transition"
         title="Click or press Enter to change student assignment"
       >
-        <StudentAvatar name={tx.studentName || 'Student'} size="xs" />
-        <div className="min-w-0">
+        <StudentAvatar name={tx.studentName || 'Student'} size="xs" className="mt-0.5" />
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="font-bold text-teal-900 text-xs truncate">{tx.studentName}</span>
             <span className="font-mono text-[10px] text-teal-700 font-semibold">{tx.studentRegNo}</span>
           </div>
           {tx.studentClass && <div className="text-[10px] text-teal-700/80">{tx.studentClass}</div>}
+          {tx.voucherDueDate && (
+            <div className="mt-1 flex items-center gap-1">
+              {tx.isOverdue ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded border border-amber-300">
+                  <Clock className="w-2.5 h-2.5 text-amber-600" />
+                  Overdue (Due: {tx.voucherDueDate}{tx.voucherLateFeeRate ? `, Fine: Rs. ${tx.voucherLateFeeRate}` : ''})
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                  <Check className="w-2.5 h-2.5 text-emerald-600" />
+                  On-time (Due: {tx.voucherDueDate})
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <span className="text-[10px] font-bold text-teal-700 opacity-60 group-hover:opacity-100 ml-auto pr-1">
+        <span className="text-[10px] font-bold text-teal-700 opacity-60 group-hover:opacity-100 ml-auto pr-1 shrink-0">
           Change
         </span>
       </button>
@@ -1633,7 +1722,11 @@ const AssignCell: React.FC<AssignCellProps> = ({
             onAccept(s);
           }}
           title={s.reasons.join(' · ')}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:border-teal-500 hover:bg-teal-50/70 px-2.5 py-1 text-xs cursor-pointer shadow-2xs transition"
+          className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs cursor-pointer shadow-2xs transition ${
+            s.isOverdue
+              ? 'border-amber-300 bg-amber-50/70 hover:bg-amber-100 hover:border-amber-400'
+              : 'border-slate-200 bg-white hover:border-teal-500 hover:bg-teal-50/70'
+          }`}
         >
           {focused && (
             <kbd className="text-[9px] font-bold font-mono bg-slate-100 border border-slate-200 text-slate-700 rounded px-1">
@@ -1642,6 +1735,11 @@ const AssignCell: React.FC<AssignCellProps> = ({
           )}
           <span className="font-semibold text-slate-800">{s.name}</span>
           <span className="font-mono text-slate-400 text-[11px]">{s.regNo}</span>
+          {s.isOverdue && s.suggestedFine ? (
+            <span className="text-[10px] font-bold text-amber-700 bg-amber-200/60 px-1 rounded">
+              +Rs.{s.suggestedFine} fine
+            </span>
+          ) : null}
         </button>
       ))}
 
@@ -1654,5 +1752,236 @@ const AssignCell: React.FC<AssignCellProps> = ({
         <span>{suggestions.length ? 'More...' : 'Find student'}</span>
       </button>
     </div>
+  );
+};
+
+interface DuesFineSplitCellsProps {
+  tx: StatementTxRow;
+  tab: Tab;
+  disabled: boolean;
+  onUpdateSplit: (dues: number, fine: number) => void;
+}
+
+const DuesFineSplitCells: React.FC<DuesFineSplitCellsProps> = ({
+  tx,
+  tab,
+  disabled,
+  onUpdateSplit,
+}) => {
+  const isAssigned = tx.status === 'assigned';
+  const isApplied = tx.status === 'applied';
+
+  const currentDues = tx.duesAmount !== null && tx.duesAmount !== undefined ? tx.duesAmount : tx.amount;
+  const currentFine = tx.fineAmount !== null && tx.fineAmount !== undefined ? tx.fineAmount : 0;
+
+  const [duesInput, setDuesInput] = useState<string>(String(currentDues));
+  const [fineInput, setFineInput] = useState<string>(String(currentFine));
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDuesInput(String(currentDues));
+      setFineInput(String(currentFine));
+    }
+  }, [currentDues, currentFine, isEditing]);
+
+  if (!isAssigned && !isApplied) {
+    return (
+      <>
+        <td className="px-3 py-3 text-right font-mono text-slate-300 select-none">—</td>
+        <td className="px-3 py-3 text-right font-mono text-slate-300 select-none">—</td>
+        <td className="px-3 py-3 text-center text-[11px] text-slate-400 select-none">
+          <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-medium text-[10px]">
+            Unallocated
+          </span>
+        </td>
+      </>
+    );
+  }
+
+  if (isApplied) {
+    const dues = tx.duesAmount ?? tx.amount;
+    const fine = tx.fineAmount ?? 0;
+    return (
+      <>
+        <td className="px-3 py-3 text-right font-mono font-semibold text-slate-800 tabular-nums">
+          {formatCurrency(dues)}
+        </td>
+        <td className="px-3 py-3 text-right font-mono tabular-nums">
+          {fine > 0 ? (
+            <span className="text-amber-700 font-semibold">{formatCurrency(fine)}</span>
+          ) : (
+            <span className="text-slate-400">Rs. 0</span>
+          )}
+        </td>
+        <td className="px-3 py-3 text-center">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            Posted
+          </span>
+        </td>
+      </>
+    );
+  }
+
+  const numDues = parseFloat(duesInput) || 0;
+  const numFine = parseFloat(fineInput) || 0;
+  const totalAllocated = Math.round((numDues + numFine) * 100) / 100;
+  const diff = Math.round((tx.amount - totalAllocated) * 100) / 100;
+  const isOverAllocated = diff < -0.01;
+  const isBalanced = Math.abs(diff) <= 0.01;
+
+  const handleCommit = (newDuesStr: string, newFineStr: string) => {
+    setIsEditing(false);
+    const d = Math.max(0, parseFloat(newDuesStr) || 0);
+    const f = Math.max(0, parseFloat(newFineStr) || 0);
+    if (d + f <= tx.amount + 0.01) {
+      if (d !== currentDues || f !== currentFine) {
+        onUpdateSplit(d, f);
+      }
+    }
+  };
+
+  const setSplitDirect = (d: number, f: number) => {
+    setDuesInput(String(d));
+    setFineInput(String(f));
+    setIsEditing(false);
+    onUpdateSplit(d, f);
+  };
+
+  return (
+    <>
+      {/* Base Dues Input Cell */}
+      <td className="px-3 py-3 text-right whitespace-nowrap">
+        <div className="relative inline-flex items-center">
+          <span className="absolute left-2 text-[10px] text-slate-400 font-mono select-none">Rs.</span>
+          <input
+            type="number"
+            min="0"
+            max={tx.amount}
+            step="1"
+            disabled={disabled}
+            value={duesInput}
+            onFocus={() => setIsEditing(true)}
+            onChange={(e) => setDuesInput(e.target.value)}
+            onBlur={() => handleCommit(duesInput, fineInput)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+              }
+            }}
+            title="Base tuition and dues allocated to voucher"
+            className={`w-24 pl-7 pr-1.5 py-1 text-right font-mono font-semibold text-xs rounded-lg border transition ${
+              isOverAllocated
+                ? 'border-rose-400 bg-rose-50 text-rose-900 focus:ring-rose-500'
+                : 'border-slate-300 bg-white hover:border-slate-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/20 text-slate-800'
+            }`}
+          />
+        </div>
+      </td>
+
+      {/* Late Fine Input Cell */}
+      <td className="px-3 py-3 text-right whitespace-nowrap">
+        <div className="relative inline-flex items-center">
+          <span className="absolute left-2 text-[10px] text-slate-400 font-mono select-none">Rs.</span>
+          <input
+            type="number"
+            min="0"
+            max={tx.amount}
+            step="1"
+            disabled={disabled}
+            value={fineInput}
+            onFocus={() => setIsEditing(true)}
+            onChange={(e) => setFineInput(e.target.value)}
+            onBlur={() => handleCommit(duesInput, fineInput)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+              }
+            }}
+            title="Late payment fine surcharge"
+            className={`w-20 pl-7 pr-1.5 py-1 text-right font-mono font-semibold text-xs rounded-lg border transition ${
+              isOverAllocated
+                ? 'border-rose-400 bg-rose-50 text-rose-900 focus:ring-rose-500'
+                : numFine > 0
+                ? 'border-amber-300 bg-amber-50/50 text-amber-900 focus:border-amber-500 focus:ring-amber-500/20'
+                : 'border-slate-300 bg-white hover:border-slate-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-500/20 text-slate-800'
+            }`}
+          />
+        </div>
+      </td>
+
+      {/* Split Status & Quick Adjust Cell */}
+      <td className="px-3 py-3 text-center whitespace-nowrap">
+        <div className="flex items-center justify-center gap-1.5">
+          {isOverAllocated ? (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300"
+              title={`Total allocated (Rs. ${totalAllocated}) exceeds transaction credit (Rs. ${tx.amount}) by Rs. ${Math.abs(diff)}`}
+            >
+              <AlertCircle className="w-3 h-3 text-rose-600" />
+              Exceeds: +Rs.{Math.abs(diff)}
+            </span>
+          ) : isBalanced ? (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200"
+              title="Transaction credit perfectly covers allocated dues and fine"
+            >
+              <Check className="w-3 h-3 text-emerald-600" />
+              Balanced
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200"
+              title={`Unallocated Rs. ${diff} will be held as advance credit in student ledger`}
+            >
+              +Rs.{diff} Adv
+            </span>
+          )}
+
+          {/* Quick Preset Actions Dropdown */}
+          <div className="relative group inline-block text-left">
+            <button
+              type="button"
+              disabled={disabled}
+              className="p-1 text-slate-400 hover:text-slate-600 rounded hover:bg-slate-100 cursor-pointer transition"
+              title="Quick split options (Waiver, Full Dues, Standard Fine)"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+            <div className="hidden group-hover:block absolute right-0 top-full z-20 w-44 p-1 bg-white rounded-xl shadow-lg border border-slate-200 text-left text-xs space-y-0.5">
+              <button
+                type="button"
+                onClick={() => setSplitDirect(tx.amount, 0)}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 text-slate-700 font-medium flex items-center justify-between"
+              >
+                <span>Full to Dues</span>
+                <span className="text-[10px] text-slate-400">Fine 0</span>
+              </button>
+              {tx.voucherLateFeeRate && tx.voucherLateFeeRate > 0 && tx.amount > tx.voucherLateFeeRate && (
+                <button
+                  type="button"
+                  onClick={() => setSplitDirect(tx.amount - (tx.voucherLateFeeRate || 0), tx.voucherLateFeeRate || 0)}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 text-slate-700 font-medium flex items-center justify-between"
+                >
+                  <span>Standard Fine Split</span>
+                  <span className="text-[10px] text-amber-600">Rs. {tx.voucherLateFeeRate}</span>
+                </button>
+              )}
+              {numFine > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSplitDirect(numDues, 0)}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-100 text-rose-700 font-medium flex items-center justify-between"
+                >
+                  <span>Waive Fine (0)</span>
+                  <span className="text-[10px] text-blue-600">+Adv</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </td>
+    </>
   );
 };

@@ -64,6 +64,11 @@ export interface StatementTxRow {
   collectionNo: string | null;
   /** Applied, but the collection it created has since been deleted/reversed. */
   collectionMissing: boolean;
+  duesAmount?: number | null;
+  fineAmount?: number | null;
+  voucherDueDate?: string | null;
+  voucherLateFeeRate?: number | null;
+  isOverdue?: boolean;
 }
 
 export interface VoucherHint {
@@ -75,6 +80,8 @@ export interface VoucherHint {
   /** False when the voucher cannot take a payment (carried, reversed, or a later voucher exists). */
   payable: boolean;
   blockedReason: string | null;
+  dueDate?: string | null;
+  lateFeeRate?: number;
 }
 
 export interface Suggestion {
@@ -88,6 +95,9 @@ export interface Suggestion {
   reasons: string[];
   voucher: VoucherHint | null;
   assignedInUpload: boolean;
+  suggestedDues?: number;
+  suggestedFine?: number;
+  isOverdue?: boolean;
 }
 
 export interface ApplyPreviewRow {
@@ -102,6 +112,8 @@ export interface ApplyPreviewRow {
   voucherId: string | null;
   voucherNo: string | null;
   outstanding: number | null;
+  duesAmount: number;
+  fineAmount: number;
   /** Amount above what the voucher still owes; the fee engine holds it as advance credit. */
   excess: number;
   ready: boolean;

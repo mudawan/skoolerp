@@ -40,7 +40,10 @@ export const bsApi = {
   suggestions: (id: string) => call<{ suggestions: Record<string, Suggestion[]> }>('GET', `/uploads/${id}/suggestions`),
   suggestionsFor: (txId: string, q?: string) =>
     call<{ suggestions: Suggestion[] }>('GET', `/transactions/${txId}/suggestions${q ? `?q=${encodeURIComponent(q)}` : ''}`),
-  assign: (txId: string, studentId: string) => call<{ transaction: StatementTxRow }>('PUT', `/transactions/${txId}/assign`, { studentId }),
+  assign: (txId: string, studentId: string, split?: { duesAmount?: number; fineAmount?: number }) =>
+    call<{ transaction: StatementTxRow }>('PUT', `/transactions/${txId}/assign`, { studentId, ...split }),
+  updateSplit: (txId: string, duesAmount: number, fineAmount: number) =>
+    call<{ transaction: StatementTxRow }>('PATCH', `/transactions/${txId}/split`, { duesAmount, fineAmount }),
   unassign: (txId: string) => call<{ transaction: StatementTxRow }>('DELETE', `/transactions/${txId}/assign`),
   ignore: (txId: string, reason?: string) => call<{ transaction: StatementTxRow }>('POST', `/transactions/${txId}/ignore`, { reason }),
   unignore: (txId: string) => call<{ transaction: StatementTxRow }>('POST', `/transactions/${txId}/unignore`),

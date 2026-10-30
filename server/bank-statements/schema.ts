@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS bank_statement_transactions (
   collection_id VARCHAR(64),
   payment_txn_id VARCHAR(64),
   voucher_id VARCHAR(64),
+  dues_amount NUMERIC(14,2),
+  fine_amount NUMERIC(14,2),
   applied_by VARCHAR(64),
   applied_by_name VARCHAR(255),
   applied_at TIMESTAMPTZ,
@@ -125,6 +127,10 @@ export async function ensureBankStatementSchema(db: SchemaRunner): Promise<void>
   // pg_trgm is created by the main schema; repeating it is harmless and lets this run standalone.
   await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
   await db.query(BANK_STATEMENT_SCHEMA_SQL);
+  await db.query(`
+    ALTER TABLE bank_statement_transactions ADD COLUMN IF NOT EXISTS dues_amount NUMERIC(14,2);
+    ALTER TABLE bank_statement_transactions ADD COLUMN IF NOT EXISTS fine_amount NUMERIC(14,2);
+  `);
   ready = true;
 }
 

@@ -21,7 +21,17 @@ export interface CandidateSignals {
 }
 
 /** Pure scoring of one student for one transaction amount. */
-export function scoreCandidate(amount: number, sig: CandidateSignals): { score: number; reasons: string[] } {
+export function scoreCandidate(
+  amount: number,
+  sig: CandidateSignals,
+  txDate?: string
+): {
+  score: number;
+  reasons: string[];
+  suggestedDues?: number;
+  suggestedFine?: number;
+  isOverdue?: boolean;
+} {
   let score = 0;
   const reasons: string[] = [];
 
@@ -31,20 +41,70 @@ export function scoreCandidate(amount: number, sig: CandidateSignals): { score: 
   }
 
   const v = sig.voucher;
+  let isOverdue = false;
+  let suggestedDues = amount;
+  let suggestedFine = 0;
+
   if (v && (v.status === 'Issued' || v.status === 'Partial') && v.outstanding > 0) {
-    const d = Math.abs(v.outstanding - amount) / Math.max(v.outstanding, amount);
-    if (d < 0.0005) {
-      score += 300;
-      reasons.push('Amount equals the outstanding balance');
-    } else if (d <= 0.05) {
-      score += 200;
-      reasons.push('Amount is within 5% of the outstanding balance');
-    } else if (d <= 0.25) {
-      score += 100;
-      reasons.push('Amount is close to the outstanding balance');
+    const dueDateStr = v.dueDate ? v.dueDate.slice(0, 10) : null;
+    const txDateStr = txDate ? txDate.slice(0, 10) : null;
+    const lateFee = Number(v.lateFeeRate || 0);
+
+    if (dueDateStr && txDateStr && txDateStr > dueDateStr && lateFee > 0) {
+      isOverdue = true;
+      const expectedWithFine = v.outstanding + lateFee;
+      const dFine = Math.abs(expectedWithFine - amount) / Math.max(expectedWithFine, amount);
+      const dBase = Math.abs(v.outstanding - amount) / Math.max(v.outstanding, amount);
+
+      if (dFine < 0.0005) {
+        score += 300;
+        reasons.push(`Amount equals outstanding balance with late fine (Rs. ${v.outstanding} + Rs. ${lateFee})`);
+        suggestedDues = v.outstanding;
+        suggestedFine = lateFee;
+      } else if (dFine <= 0.05) {
+        score += 200;
+        reasons.push('Amount is within 5% of outstanding balance with late fine');
+        suggestedDues = v.outstanding;
+        suggestedFine = Math.max(0, amount - v.outstanding);
+      } else if (dBase < 0.0005) {
+        score += 300;
+        reasons.push('Amount equals outstanding base balance (late fine waived or unpaid)');
+        suggestedDues = v.outstanding;
+        suggestedFine = 0;
+      } else if (dBase <= 0.05) {
+        score += 200;
+        reasons.push('Amount is within 5% of the outstanding balance');
+        suggestedDues = Math.min(v.outstanding, amount);
+        suggestedFine = 0;
+      } else if (dFine <= 0.25 || dBase <= 0.25) {
+        score += 100;
+        reasons.push('Amount is close to the outstanding balance');
+        suggestedDues = Math.min(v.outstanding, amount);
+        suggestedFine = Math.min(lateFee, Math.max(0, amount - suggestedDues));
+      } else {
+        score += 50;
+        reasons.push('Has an open overdue voucher this month');
+        suggestedDues = Math.min(v.outstanding, amount);
+        suggestedFine = Math.min(lateFee, Math.max(0, amount - suggestedDues));
+      }
     } else {
-      score += 50;
-      reasons.push('Has an open voucher this month');
+      // On-time payment or no late fee configured
+      const d = Math.abs(v.outstanding - amount) / Math.max(v.outstanding, amount);
+      if (d < 0.0005) {
+        score += 300;
+        reasons.push('Amount equals the outstanding balance');
+      } else if (d <= 0.05) {
+        score += 200;
+        reasons.push('Amount is within 5% of the outstanding balance');
+      } else if (d <= 0.25) {
+        score += 100;
+        reasons.push('Amount is close to the outstanding balance');
+      } else {
+        score += 50;
+        reasons.push('Has an open voucher this month');
+      }
+      suggestedDues = Math.min(v.outstanding, amount);
+      suggestedFine = 0;
     }
   } else if (v && v.status === 'Paid') {
     score -= 30;
@@ -62,7 +122,7 @@ export function scoreCandidate(amount: number, sig: CandidateSignals): { score: 
   } else {
     score += 20;
   }
-  return { score, reasons };
+  return { score, reasons, suggestedDues, suggestedFine, isOverdue };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -90,6 +150,7 @@ export interface SuggestionContext {
 export async function loadMonthVouchers(db: Queryable, institutionId: string, feeMonth: string): Promise<SuggestionContext> {
   const res = await db.query(
     `SELECT v.id, v.voucher_no, v.student_id, v.month, v.status, v.net_due, v.amount_paid,
+            v.due_date, COALESCE(v.late_fee_rate, 0) AS late_fee_rate,
             EXISTS (SELECT 1 FROM vouchers t
                     WHERE t.institution_id = v.institution_id AND t.student_id = v.student_id
                       AND t.month > v.month AND t.status <> 'Reversed') AS has_later
@@ -113,6 +174,8 @@ export async function loadMonthVouchers(db: Queryable, institutionId: string, fe
       payable: blockedReason === null,
       blockedReason,
       netDue,
+      dueDate: r.due_date ? String(r.due_date).trim() : null,
+      lateFeeRate: Number(r.late_fee_rate || 0),
     });
   }
   return { feeMonth, vouchers, students: new Map() };
@@ -170,6 +233,7 @@ export async function lookupFragments(db: Queryable, institutionId: string, text
 export interface TxForSuggestion {
   id: string;
   amount: number;
+  date?: string;
   description: string;
   reference: string | null;
 }
@@ -202,7 +266,18 @@ export async function suggestForTransactions(
   }
 
   const result = new Map<string, Suggestion[]>();
-  const perTx: Array<{ t: TxForSuggestion; scored: Array<{ id: string; score: number; reasons: string[]; assigned: boolean }> }> = [];
+  const perTx: Array<{
+    t: TxForSuggestion;
+    scored: Array<{
+      id: string;
+      score: number;
+      reasons: string[];
+      assigned: boolean;
+      suggestedDues?: number;
+      suggestedFine?: number;
+      isOverdue?: boolean;
+    }>;
+  }> = [];
   const needStudents = new Set<string>();
 
   for (const t of txns) {
@@ -210,15 +285,27 @@ export async function suggestForTransactions(
     const history = scoreHistory(rows);
     const taken = assignedElsewhere(t.id);
     const candidates = new Set<string>([...history.keys(), ...ctx.vouchers.keys()]);
-    const scored: Array<{ id: string; score: number; reasons: string[]; assigned: boolean }> = [];
+    const scored: Array<{
+      id: string;
+      score: number;
+      reasons: string[];
+      assigned: boolean;
+      suggestedDues?: number;
+      suggestedFine?: number;
+      isOverdue?: boolean;
+    }> = [];
     for (const id of candidates) {
       const voucher = ctx.vouchers.get(id) || null;
       // Without any signal for this transaction a student is not a suggestion.
       const h = history.get(id) || null;
       const open = voucher && (voucher.status === 'Issued' || voucher.status === 'Partial') && voucher.outstanding > 0;
       if (!h && !open) continue;
-      const { score, reasons } = scoreCandidate(t.amount, { history: h, voucher, assignedInUpload: taken.has(id) });
-      scored.push({ id, score, reasons, assigned: taken.has(id) });
+      const { score, reasons, suggestedDues, suggestedFine, isOverdue } = scoreCandidate(
+        t.amount,
+        { history: h, voucher, assignedInUpload: taken.has(id) },
+        t.date
+      );
+      scored.push({ id, score, reasons, assigned: taken.has(id), suggestedDues, suggestedFine, isOverdue });
     }
     scored.sort((a, b) => b.score - a.score);
     const top = scored.slice(0, limit);
@@ -232,7 +319,18 @@ export async function suggestForTransactions(
     for (const s of scored) {
       const st = students.get(s.id);
       if (!st) continue;
-      list.push(toSuggestion(st, s.score, s.reasons, ctx.vouchers.get(s.id) || null, s.assigned));
+      list.push(
+        toSuggestion(
+          st,
+          s.score,
+          s.reasons,
+          ctx.vouchers.get(s.id) || null,
+          s.assigned,
+          s.suggestedDues,
+          s.suggestedFine,
+          s.isOverdue
+        )
+      );
     }
     result.set(t.id, list);
   }
@@ -244,7 +342,10 @@ export function toSuggestion(
   score: number,
   reasons: string[],
   voucher: (VoucherHint & { netDue: number }) | null,
-  assignedInUpload: boolean
+  assignedInUpload: boolean,
+  suggestedDues?: number,
+  suggestedFine?: number,
+  isOverdue?: boolean
 ): Suggestion {
   const hint: VoucherHint | null = voucher
     ? {
@@ -255,6 +356,8 @@ export function toSuggestion(
         outstanding: voucher.outstanding,
         payable: voucher.payable,
         blockedReason: voucher.blockedReason,
+        dueDate: voucher.dueDate,
+        lateFeeRate: voucher.lateFeeRate,
       }
     : null;
   return {
@@ -268,5 +371,8 @@ export function toSuggestion(
     reasons,
     voucher: hint,
     assignedInUpload,
+    suggestedDues,
+    suggestedFine,
+    isOverdue,
   };
 }

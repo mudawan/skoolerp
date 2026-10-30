@@ -52,6 +52,7 @@ export interface ReceivePaymentsFn {
         id: string;
         voucherId: string;
         amount: number;
+        fineAdded?: number;
         paymentMode: string;
         referenceNo?: string;
         notes?: string;
@@ -128,6 +129,8 @@ function mapUpload(r: any): StatementUploadSummary {
 }
 
 function mapTx(r: any): StatementTxRow {
+  const vDueDate = r.v_due_date ? String(r.v_due_date).trim() : null;
+  const isOverdue = !!(vDueDate && r.txn_date && r.txn_date.slice(0, 10) > vDueDate.slice(0, 10));
   return {
     id: r.id,
     uploadId: r.upload_id,
@@ -151,6 +154,11 @@ function mapTx(r: any): StatementTxRow {
     collectionId: r.collection_id,
     collectionNo: r.collection_no || null,
     collectionMissing: !!r.collection_missing,
+    duesAmount: r.dues_amount === null ? null : num(r.dues_amount),
+    fineAmount: r.fine_amount === null ? null : num(r.fine_amount),
+    voucherDueDate: vDueDate,
+    voucherLateFeeRate: r.v_late_fee_rate === null ? null : num(r.v_late_fee_rate),
+    isOverdue,
   };
 }
 
@@ -178,11 +186,13 @@ const UPLOAD_SELECT = `
 const TX_SELECT = `
   SELECT t.*, s.name AS s_name, s.reg_no AS s_reg_no, s.status AS s_status, cl.name AS class_name,
          col.collection_no AS collection_no,
+         v.due_date AS v_due_date, v.late_fee_rate AS v_late_fee_rate,
          (t.status = 'applied' AND col.id IS NULL) AS collection_missing
   FROM bank_statement_transactions t
   LEFT JOIN students s ON s.id = t.student_id AND s.institution_id = t.institution_id
   LEFT JOIN classes cl ON cl.id = s.class_id AND cl.institution_id = t.institution_id
-  LEFT JOIN collections col ON col.id = t.collection_id AND col.institution_id = t.institution_id`;
+  LEFT JOIN collections col ON col.id = t.collection_id AND col.institution_id = t.institution_id
+  LEFT JOIN vouchers v ON v.id = t.voucher_id AND v.institution_id = t.institution_id`;
 
 async function event(
   db: Queryable,
@@ -424,18 +434,104 @@ async function readTx(db: Queryable, institutionId: string, txId: string): Promi
 
 const EDITABLE = new Set(['pending', 'assigned']);
 
-export async function assignStudent(deps: ServiceDeps, institutionId: string, actor: Actor, txId: string, studentId: string): Promise<StatementTxRow> {
+export async function assignStudent(
+  deps: ServiceDeps,
+  institutionId: string,
+  actor: Actor,
+  txId: string,
+  studentId: string,
+  split?: { duesAmount?: number; fineAmount?: number }
+): Promise<StatementTxRow> {
   return deps.withTx(async (db) => {
     const t = await lockTx(db, institutionId, txId);
     if (!EDITABLE.has(t.status)) throw new HttpError(409, `This transaction is already ${t.status} and can no longer be reassigned.`);
     const s = await db.query(`SELECT id FROM students WHERE id = $1 AND institution_id = $2`, [studentId, institutionId]);
     if (s.rows.length === 0) throw new HttpError(404, 'That student does not exist.');
-    await db.query(
-      `UPDATE bank_statement_transactions SET status='assigned', student_id=$1, assigned_by=$2, assigned_by_name=$3, assigned_at=NOW()
-       WHERE id=$4 AND institution_id=$5`,
-      [studentId, actor.id, actor.name, txId, institutionId]
+
+    const upload = await getUpload(db, institutionId, t.upload_id);
+    const vRes = await db.query(
+      `SELECT id, due_date, late_fee_rate, net_due, amount_paid, status
+       FROM vouchers
+       WHERE institution_id = $1 AND student_id = $2 AND month = $3 AND status <> 'Reversed'`,
+      [institutionId, studentId, upload.feeMonth]
     );
-    await event(db, institutionId, actor, { uploadId: t.upload_id, txnId: txId, action: 'assign', from: t.student_id, to: studentId });
+    const v = vRes.rows[0] || null;
+    const amount = num(t.amount);
+
+    let dues = amount;
+    let fine = 0;
+
+    if (split?.duesAmount !== undefined && split?.fineAmount !== undefined) {
+      dues = Math.max(0, num(split.duesAmount));
+      fine = Math.max(0, num(split.fineAmount));
+      if (dues + fine > amount + 0.01) {
+        throw new HttpError(400, `The sum of base dues (${dues}) and fine (${fine}) cannot exceed the credit amount (${amount}).`);
+      }
+    } else if (v) {
+      const outstanding = Math.max(0, Number(v.net_due) - Number(v.amount_paid));
+      const vDueDate = v.due_date ? String(v.due_date).trim().slice(0, 10) : null;
+      const txDate = t.txn_date ? String(t.txn_date).trim().slice(0, 10) : null;
+      const lateRate = Number(v.late_fee_rate || 0);
+
+      if (vDueDate && txDate && txDate > vDueDate && lateRate > 0) {
+        dues = Math.min(outstanding, amount);
+        fine = Math.min(lateRate, Math.max(0, amount - dues));
+      } else {
+        dues = Math.min(outstanding, amount);
+        fine = 0;
+      }
+    }
+
+    await db.query(
+      `UPDATE bank_statement_transactions
+       SET status='assigned', student_id=$1, assigned_by=$2, assigned_by_name=$3, assigned_at=NOW(),
+           voucher_id=$4, dues_amount=$5, fine_amount=$6
+       WHERE id=$7 AND institution_id=$8`,
+      [studentId, actor.id, actor.name, v?.id ?? null, dues, fine, txId, institutionId]
+    );
+    await event(db, institutionId, actor, {
+      uploadId: t.upload_id,
+      txnId: txId,
+      action: 'assign',
+      from: t.student_id,
+      to: studentId,
+      detail: { voucherId: v?.id ?? null, duesAmount: dues, fineAmount: fine }
+    });
+    return readTx(db, institutionId, txId);
+  });
+}
+
+export async function updateTxSplit(
+  deps: ServiceDeps,
+  institutionId: string,
+  actor: Actor,
+  txId: string,
+  duesAmount: number,
+  fineAmount: number
+): Promise<StatementTxRow> {
+  return deps.withTx(async (db) => {
+    const t = await lockTx(db, institutionId, txId);
+    if (t.status !== 'assigned') {
+      throw new HttpError(409, 'Only assigned transactions can have their dues/fine split updated.');
+    }
+    const amount = num(t.amount);
+    const dues = Math.max(0, num(duesAmount));
+    const fine = Math.max(0, num(fineAmount));
+    if (dues + fine > amount + 0.01) {
+      throw new HttpError(400, `The sum of base dues (${dues}) and fine (${fine}) cannot exceed the credit amount (${amount}).`);
+    }
+    await db.query(
+      `UPDATE bank_statement_transactions
+       SET dues_amount = $1, fine_amount = $2
+       WHERE id = $3 AND institution_id = $4`,
+      [dues, fine, txId, institutionId]
+    );
+    await event(db, institutionId, actor, {
+      uploadId: t.upload_id,
+      txnId: txId,
+      action: 'update_split',
+      detail: { duesAmount: dues, fineAmount: fine }
+    });
     return readTx(db, institutionId, txId);
   });
 }
@@ -448,7 +544,9 @@ export async function unassignStudent(deps: ServiceDeps, institutionId: string, 
       throw new HttpError(409, `This transaction is already ${t.status}.`);
     }
     await db.query(
-      `UPDATE bank_statement_transactions SET status='pending', student_id=NULL, assigned_by=NULL, assigned_by_name=NULL, assigned_at=NULL
+      `UPDATE bank_statement_transactions
+       SET status='pending', student_id=NULL, assigned_by=NULL, assigned_by_name=NULL, assigned_at=NULL,
+           voucher_id=NULL, dues_amount=NULL, fine_amount=NULL
        WHERE id=$1 AND institution_id=$2`,
       [txId, institutionId]
     );
@@ -519,7 +617,7 @@ export async function suggestionsForUpload(db: Queryable, institutionId: string,
   const ctx = await loadMonthVouchers(db, institutionId, upload.feeMonth);
   const rows = (
     await db.query(
-      `SELECT id, amount, description, reference, status, student_id FROM bank_statement_transactions
+      `SELECT id, txn_date, amount, description, reference, status, student_id FROM bank_statement_transactions
        WHERE institution_id = $1 AND upload_id = $2 AND status IN ('pending','assigned','applied')`,
       [institutionId, uploadId]
     )
@@ -537,7 +635,9 @@ export async function suggestionsForUpload(db: Queryable, institutionId: string,
     for (const [studentId, txs] of assignedBy) if ([...txs].some((id) => id !== txId)) out.add(studentId);
     return out;
   };
-  const open = rows.filter((r) => r.status === 'pending' || r.status === 'assigned').map((r) => ({ id: r.id, amount: num(r.amount), description: r.description, reference: r.reference }));
+  const open = rows
+    .filter((r) => r.status === 'pending' || r.status === 'assigned')
+    .map((r) => ({ id: r.id, amount: num(r.amount), date: r.txn_date, description: r.description, reference: r.reference }));
   const result = await suggestForTransactions(db, institutionId, ctx, open, elsewhere, limit);
   return Object.fromEntries(result);
 }
@@ -567,7 +667,14 @@ export async function suggestionsForTransaction(
   const amount = num(t.amount);
 
   if (!q || !q.trim()) {
-    const m = await suggestForTransactions(db, institutionId, ctx, [{ id: txId, amount, description: t.description, reference: t.reference }], () => assigned, limit);
+    const m = await suggestForTransactions(
+      db,
+      institutionId,
+      ctx,
+      [{ id: txId, amount, date: t.txn_date, description: t.description, reference: t.reference }],
+      () => assigned,
+      limit
+    );
     return m.get(txId) || [];
   }
 
@@ -581,8 +688,23 @@ export async function suggestionsForTransaction(
     const st = students.get(id);
     if (!st) continue;
     const v = ctx.vouchers.get(id) || null;
-    const { score, reasons } = scoreCandidate(amount, { history: history.get(id) || null, voucher: v, assignedInUpload: assigned.has(id) });
-    out.push(toSuggestion(st, score, reasons.length ? reasons : ['Matches your search'], v, assigned.has(id)));
+    const { score, reasons, suggestedDues, suggestedFine, isOverdue } = scoreCandidate(
+      amount,
+      { history: history.get(id) || null, voucher: v, assignedInUpload: assigned.has(id) },
+      t.txn_date
+    );
+    out.push(
+      toSuggestion(
+        st,
+        score,
+        reasons.length ? reasons : ['Matches your search'],
+        v,
+        assigned.has(id),
+        suggestedDues,
+        suggestedFine,
+        isOverdue
+      )
+    );
   }
   // Search order (best text match first) is the tie-breaker; signals reorder within it.
   const order = new Map(ids.map((id, i) => [id, i]));
@@ -623,6 +745,27 @@ export async function previewApply(db: Queryable, institutionId: string, uploadI
     else if (v.status === 'Reversed') blocked = `Voucher ${v.voucherNo} is reversed.`;
     else if (!v.payable) blocked = v.blockedReason;
     const outstanding = v ? v.outstanding : null;
+
+    let duesAmount = r.dues_amount !== null && r.dues_amount !== undefined ? num(r.dues_amount) : amount;
+    let fineAmount = r.fine_amount !== null && r.fine_amount !== undefined ? num(r.fine_amount) : 0;
+
+    if (r.dues_amount === null || r.dues_amount === undefined) {
+      if (v) {
+        const isLate = !!(v.dueDate && r.txn_date && r.txn_date.slice(0, 10) > v.dueDate.slice(0, 10));
+        const lateFee = Number(v.lateFeeRate || 0);
+        if (isLate && lateFee > 0) {
+          duesAmount = Math.min(v.outstanding, amount);
+          fineAmount = Math.min(lateFee, Math.max(0, amount - duesAmount));
+        } else {
+          duesAmount = Math.min(v.outstanding, amount);
+          fineAmount = 0;
+        }
+      }
+    }
+
+    const totalAllocated = duesAmount + fineAmount;
+    const excess = Math.max(0, Math.round((amount - totalAllocated) * 100) / 100);
+
     return {
       txId: r.id,
       rowIndex: r.row_index,
@@ -635,7 +778,9 @@ export async function previewApply(db: Queryable, institutionId: string, uploadI
       voucherId: v?.voucherId ?? null,
       voucherNo: v?.voucherNo ?? null,
       outstanding,
-      excess: outstanding === null ? 0 : Math.max(0, Math.round((amount - outstanding) * 100) / 100),
+      duesAmount,
+      fineAmount,
+      excess,
       ready: blocked === null,
       blockedReason: blocked,
     };
@@ -676,6 +821,7 @@ export async function applyAssigned(
     id: `txn-bs-${r.txId}`,
     voucherId: r.voucherId as string,
     amount: r.amount,
+    fineAdded: r.fineAmount > 0 ? r.fineAmount : undefined,
     paymentMode: mode || inferPaymentMode(r.description),
     referenceNo: undefined as string | undefined,
     notes: `Bank statement ${upload.filename}: ${r.description.slice(0, 160)}`,

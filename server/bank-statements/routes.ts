@@ -23,6 +23,7 @@ import {
   suggestionsForUpload,
   unassignStudent,
   unignoreTransaction,
+  updateTxSplit,
   type Actor,
   type ServiceDeps,
   type TxFilter,
@@ -151,7 +152,19 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
   app.put('/api/bank-statements/transactions/:id/assign', auth, wrap(async (req, res) => {
     const studentId = req.body?.studentId;
     if (typeof studentId !== 'string' || !studentId) throw new HttpError(400, 'Choose a student.');
-    res.json({ success: true, transaction: await assignStudent(baseDeps, inst(req), actorOf(req), req.params.id, studentId) });
+    const split = (req.body?.duesAmount !== undefined && req.body?.fineAmount !== undefined)
+      ? { duesAmount: Number(req.body.duesAmount), fineAmount: Number(req.body.fineAmount) }
+      : undefined;
+    res.json({ success: true, transaction: await assignStudent(baseDeps, inst(req), actorOf(req), req.params.id, studentId, split) });
+  }));
+
+  app.patch('/api/bank-statements/transactions/:id/split', auth, wrap(async (req, res) => {
+    const { duesAmount, fineAmount } = req.body || {};
+    if (duesAmount === undefined || fineAmount === undefined) throw new HttpError(400, 'Both duesAmount and fineAmount are required.');
+    res.json({
+      success: true,
+      transaction: await updateTxSplit(baseDeps, inst(req), actorOf(req), req.params.id, Number(duesAmount), Number(fineAmount)),
+    });
   }));
 
   app.delete('/api/bank-statements/transactions/:id/assign', auth, wrap(async (req, res) => {
