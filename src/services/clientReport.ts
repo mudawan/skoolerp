@@ -74,28 +74,46 @@ const nativeFetch: typeof fetch = (...a) => (globalThis as any).__nativeFetch(..
 export function installClientFailureReporting(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
-  (globalThis as any).__nativeFetch = window.fetch.bind(window);
+  try {
+    const origFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+    if (origFetch) {
+      (globalThis as any).__nativeFetch = origFetch;
 
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    try {
-      return await (globalThis as any).__nativeFetch(input, init);
-    } catch (err) {
-      try {
-        const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-        const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-        const url = new URL(raw, window.location.href);
-        const writes = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
-        const leaving = typeof document !== 'undefined' && document.visibilityState === 'hidden';
-        const aborted = (err as any)?.name === 'AbortError';
-        if (writes && !aborted && !leaving && url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== ENDPOINT) {
-          reportClientFailure({ kind: 'client_network', path: url.pathname, method, message: clip((err as any)?.message, 120) || 'Network request failed' });
+      const wrappedFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        try {
+          return await origFetch(input, init);
+        } catch (err) {
+          try {
+            const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+            const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+            const url = new URL(raw, window.location.href);
+            const writes = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+            const leaving = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+            const aborted = (err as any)?.name === 'AbortError';
+            if (writes && !aborted && !leaving && url.origin === window.location.origin && url.pathname.startsWith('/api/') && url.pathname !== ENDPOINT) {
+              reportClientFailure({ kind: 'client_network', path: url.pathname, method, message: clip((err as any)?.message, 120) || 'Network request failed' });
+            }
+          } catch {
+            /* ignore */
+          }
+          throw err;
         }
+      };
+
+      try {
+        Object.defineProperty(window, 'fetch', {
+          value: wrappedFetch,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
       } catch {
-        /* ignore */
+        try {
+          (window as any).fetch = wrappedFetch;
+        } catch {}
       }
-      throw err;
     }
-  };
+  } catch {}
 
   window.addEventListener('online', () => void flush());
   window.addEventListener('error', (e) => {

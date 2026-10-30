@@ -446,7 +446,7 @@ export const ProfilePanel: React.FC<ProfilePanelProps> = (props) => {
               Security & Inactivity Session Control
             </h3>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Sessions do not persist across browser restarts and auto-expire after idle inactivity.
+              Strict Banking Security (Option B): Sessions do not persist across browser restarts and auto-expire after idle inactivity.
             </p>
           </div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold shrink-0">

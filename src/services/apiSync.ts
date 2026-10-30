@@ -1134,15 +1134,32 @@ export function subscribeAuditWarnings(fn: AuditWarningListener): () => void {
   return () => { auditWarningListeners.delete(fn); };
 }
 if (typeof window !== 'undefined' && !(window as any).__auditFetchWrapped) {
-  (window as any).__auditFetchWrapped = true;
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (...args: Parameters<typeof fetch>) => {
-    const res = await nativeFetch(...args);
-    try {
-      if (res.headers.get('X-Audit-Warning')) auditWarningListeners.forEach((fn) => fn());
-    } catch {}
-    return res;
-  };
+  try {
+    const nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+    if (nativeFetch) {
+      const wrappedFetch = async (...args: Parameters<typeof fetch>) => {
+        const res = await nativeFetch(...args);
+        try {
+          if (res.headers.get('X-Audit-Warning')) auditWarningListeners.forEach((fn) => fn());
+        } catch {}
+        return res;
+      };
+      try {
+        Object.defineProperty(window, 'fetch', {
+          value: wrappedFetch,
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
+        (window as any).__auditFetchWrapped = true;
+      } catch {
+        try {
+          (window as any).fetch = wrappedFetch;
+          (window as any).__auditFetchWrapped = true;
+        } catch {}
+      }
+    }
+  } catch {}
 }
 
 

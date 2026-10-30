@@ -205,6 +205,12 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
             hasPermission('fees.view') ||
             hasPermission('settings.manage'),
         },
+      ],
+    },
+    {
+      id: 'voucher_config',
+      label: 'Voucher Parameters & Settings',
+      items: [
         {
           id: 'voucherLayout',
           label: 'Voucher Print Layout',
