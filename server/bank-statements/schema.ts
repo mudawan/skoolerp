@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS bank_statement_uploads (
   parse_status VARCHAR(16) NOT NULL CHECK (parse_status IN ('parsed','failed')),
   parse_error TEXT,
   warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
-  exact_duplicate_of VARCHAR(64),
   total_credits INTEGER NOT NULL DEFAULT 0,
   new_count INTEGER NOT NULL DEFAULT 0,
   duplicate_count INTEGER NOT NULL DEFAULT 0,
@@ -38,6 +37,7 @@ CREATE TABLE IF NOT EXISTS bank_statement_uploads (
   uploaded_by_name VARCHAR(255),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- The same file cannot be loaded twice (created by ensureBankStatementSchema after old duplicate records are removed).
 CREATE INDEX IF NOT EXISTS idx_bank_statement_uploads_inst ON bank_statement_uploads (institution_id, uploaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bank_statement_uploads_month ON bank_statement_uploads (institution_id, fee_month);
 
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS bank_statement_transactions (
   voucher_id VARCHAR(64),
   dues_amount NUMERIC(14,2),
   fine_amount NUMERIC(14,2),
+  payment_mode VARCHAR(16) CHECK (payment_mode IN ('BankDeposit','OnlineTransfer','SchoolCashier')),
   applied_by VARCHAR(64),
   applied_by_name VARCHAR(255),
   applied_at TIMESTAMPTZ,
@@ -126,10 +127,27 @@ export async function ensureBankStatementSchema(db: SchemaRunner): Promise<void>
   if (ready) return;
   // pg_trgm is created by the main schema; repeating it is harmless and lets this run standalone.
   await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
+  // Upgrade from earlier versions, in this order: drop duplicate-file upload records (they only held 'duplicate' rows),
+  // drop the retired column, clear files nothing points to, then enforce one parsed upload per file.
+  await db.query(`
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'bank_statement_uploads' AND column_name = 'exact_duplicate_of') THEN
+        DELETE FROM bank_statement_events WHERE upload_id IN (SELECT id FROM bank_statement_uploads WHERE exact_duplicate_of IS NOT NULL);
+        DELETE FROM bank_statement_uploads WHERE exact_duplicate_of IS NOT NULL;
+        ALTER TABLE bank_statement_uploads DROP COLUMN exact_duplicate_of;
+      END IF;
+    END $$;
+  `);
   await db.query(BANK_STATEMENT_SCHEMA_SQL);
+  await db.query(`
+    DELETE FROM bank_statement_files f WHERE NOT EXISTS (SELECT 1 FROM bank_statement_uploads u WHERE u.file_id = f.id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_bank_statement_upload_hash ON bank_statement_uploads (institution_id, file_hash) WHERE parse_status = 'parsed';
+    CREATE INDEX IF NOT EXISTS idx_bank_statement_fragment_source ON bank_statement_fragments (source_txn_id);
+  `);
   await db.query(`
     ALTER TABLE bank_statement_transactions ADD COLUMN IF NOT EXISTS dues_amount NUMERIC(14,2);
     ALTER TABLE bank_statement_transactions ADD COLUMN IF NOT EXISTS fine_amount NUMERIC(14,2);
+    ALTER TABLE bank_statement_transactions ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(16) CHECK (payment_mode IN ('BankDeposit','OnlineTransfer','SchoolCashier'));
   `);
   ready = true;
 }

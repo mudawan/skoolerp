@@ -842,17 +842,17 @@ export const PoliciesPanel: React.FC<PoliciesPanelProps> = (props) => {
                       {
                         type: 'bank' as VoucherCopyType,
                         title: 'Bank Copy',
-                        tagColor: 'text-blue-900 bg-blue-50 border-blue-200',
+                        tagColor: 'text-black bg-white border-black',
                       },
                       {
                         type: 'institute' as VoucherCopyType,
                         title: 'Institute Copy',
-                        tagColor: 'text-teal-900 bg-teal-50 border-teal-200',
+                        tagColor: 'text-black bg-white border-black',
                       },
                       {
                         type: 'student' as VoucherCopyType,
                         title: 'Student Copy',
-                        tagColor: 'text-slate-900 bg-slate-100 border-slate-200',
+                        tagColor: 'text-black bg-white border-black',
                       },
                     ].map((item) => {
                       const isIncluded = selectedVoucherDefaultCopies.includes(item.type);

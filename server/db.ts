@@ -2774,6 +2774,8 @@ class DatabaseService {
         countOtherActiveVouchers: (studentId: string, excludeId: string) => Promise<number>;
         /** True when the student has a later non-reversed voucher than this one (so it is no longer the payable voucher). */
         hasLaterActiveVoucher: (voucherId: string) => Promise<boolean>;
+        /** The transaction's own database client, for add-on modules that must read/lock more rows in the same transaction. */
+        client: any;
       }
     ) => Promise<{ writes: VoucherTxWrites; result: T }>
   ): Promise<T> {
@@ -2850,6 +2852,7 @@ class DatabaseService {
         }
 
         const helpers = {
+          client,
           mintDocumentNumberBlock: async (prefix: string, year: string, count: number = 1, digits: number = 6): Promise<string[]> => {
             if (count <= 0) return [];
             const cleanPrefix = (prefix || 'FE').trim().toUpperCase();

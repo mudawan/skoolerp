@@ -6,7 +6,7 @@ export const FEE_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** `duplicate` rows exist only to record that an upload contained an already-known transaction. */
 export type StatementTxStatus = 'pending' | 'assigned' | 'applied' | 'ignored' | 'duplicate';
 
-export type PaymentModeChoice = 'auto' | 'BankDeposit' | 'OnlineTransfer' | 'SchoolCashier';
+export type PaymentMode = 'BankDeposit' | 'OnlineTransfer' | 'SchoolCashier';
 
 export interface AdapterInfo {
   id: string;
@@ -29,7 +29,6 @@ export interface StatementUploadSummary {
   parseError: string | null;
   warnings: string[];
   /** Another upload of byte-identical content existed before this one. */
-  exactDuplicateOf: string | null;
   totalCredits: number;
   newCount: number;
   duplicateCount: number;
@@ -60,6 +59,10 @@ export interface StatementTxRow {
   assignedAt: string | null;
   appliedByName: string | null;
   appliedAt: string | null;
+  /** How this payment will be (or was) recorded. A guess from the narration until the operator chooses. */
+  paymentMode: PaymentMode;
+  /** True while paymentMode is only the guess from the narration (nothing chosen/saved yet). */
+  paymentModeGuessed: boolean;
   collectionId: string | null;
   collectionNo: string | null;
   /** Applied, but the collection it created has since been deleted/reversed. */
@@ -116,6 +119,7 @@ export interface ApplyPreviewRow {
   fineAmount: number;
   /** Amount above what the voucher still owes; the fee engine holds it as advance credit. */
   excess: number;
+  paymentMode: PaymentMode;
   ready: boolean;
   blockedReason: string | null;
 }
@@ -127,6 +131,8 @@ export interface ApplyPreview {
   readyCount: number;
   blockedCount: number;
   readyTotal: number;
+  /** Totals over the rows that are ready, so the confirmation can summarise without listing every student. */
+  totals: { duesTotal: number; fineTotal: number; fineCount: number; excessTotal: number; excessCount: number; partialCount: number };
 }
 
 export interface ApplyResult {
@@ -135,4 +141,21 @@ export interface ApplyResult {
   appliedCount: number;
   totalAmount: number;
   skipped: Array<{ txId: string; reason: string }>;
+}
+
+/** What deleting a statement will do (computed by the server; same code as the delete itself). */
+export interface DeletePlan {
+  uploadId: string;
+  filename: string;
+  feeMonth: string;
+  transactions: number;
+  appliedRows: number;
+  collections: Array<{ id: string; collectionNo: string; totalAmount: number; paymentCount: number }>;
+  paymentsToReverse: number;
+  amountToReverse: number;
+  studentCount: number;
+  monthsTouched: string[];
+  lockedMonths: string[];
+  foreignPayments: number;
+  blockedReason: string | null;
 }

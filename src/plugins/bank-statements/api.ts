@@ -3,7 +3,8 @@ import type {
   AdapterInfo,
   ApplyPreview,
   ApplyResult,
-  PaymentModeChoice,
+  DeletePlan,
+  PaymentMode,
   StatementTxRow,
   StatementUploadSummary,
   Suggestion,
@@ -31,7 +32,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<Re
 export const bsApi = {
   adapters: () => call<{ adapters: AdapterInfo[] }>('GET', '/adapters'),
   uploads: () => call<{ uploads: StatementUploadSummary[] }>('GET', '/uploads'),
-  deleteUpload: (id: string) => call<{ success: boolean }>('DELETE', `/uploads/${id}`),
+  deletePreview: (id: string) => call<{ plan: DeletePlan; canReverse: boolean }>('GET', `/uploads/${id}/delete-preview`),
+  deleteUpload: (id: string) => call<{ result: { collectionsReversed: number; paymentsReversed: number; amountReversed: number } }>('DELETE', `/uploads/${id}`),
   upload: (p: { filename: string; mimeType: string; contentBase64: string; feeMonth: string; adapterId?: string }) =>
     call<{ upload: StatementUploadSummary }>('POST', '/uploads', p),
   one: (id: string) => call<{ upload: StatementUploadSummary }>('GET', `/uploads/${id}`),
@@ -49,8 +51,9 @@ export const bsApi = {
   unignore: (txId: string) => call<{ transaction: StatementTxRow }>('POST', `/transactions/${txId}/unignore`),
   reopen: (txId: string) => call<{ transaction: StatementTxRow }>('POST', `/transactions/${txId}/reopen`),
   preview: (id: string, txIds?: string[]) => call<{ preview: ApplyPreview }>('POST', `/uploads/${id}/apply/preview`, { txIds }),
-  apply: (id: string, paymentMode: PaymentModeChoice, txIds?: string[]) =>
-    call<{ result: ApplyResult }>('POST', `/uploads/${id}/apply`, { paymentMode, txIds }),
+  setPaymentMode: (txId: string, paymentMode: PaymentMode) =>
+    call<{ transaction: StatementTxRow }>('PATCH', `/transactions/${txId}/payment-mode`, { paymentMode }),
+  apply: (id: string, txIds?: string[]) => call<{ result: ApplyResult }>('POST', `/uploads/${id}/apply`, { txIds }),
   fileUrl: (id: string) => `/api/bank-statements/uploads/${id}/file`,
 };
 

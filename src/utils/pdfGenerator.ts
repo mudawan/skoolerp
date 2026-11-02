@@ -1,3 +1,12 @@
+import {
+  VOUCHER_RGB,
+  VOUCHER_HEX,
+  VOUCHER_FONT,
+  VOUCHER_LINE,
+  VOUCHER_COPY_TITLES,
+  VOUCHER_STUDENT_ROWS,
+  formatLineItemAmount,
+} from './voucherTheme';
 import jsPDF from 'jspdf';
 import { paymentModeText, isBankedMode } from './paymentMode';
 import JSZip from 'jszip';
@@ -201,14 +210,21 @@ function renderVoucherToPdfPage(
     context.bankAccounts.find((b) => b.active && b.isDefault) ||
     context.bankAccounts.find((b) => b.active);
 
-  const copyDefinitions: Record<
-    VoucherCopyType,
-    { title: string; tagR: number; tagG: number; tagB: number }
-  > = {
-    bank: { title: 'BANK COPY', tagR: 30, tagG: 58, tagB: 138 }, // Dark blue
-    institute: { title: 'INSTITUTE COPY', tagR: 15, tagG: 118, tagB: 110 }, // Dark teal
-    student: { title: 'STUDENT COPY', tagR: 30, tagG: 41, tagB: 59 }, // Dark slate
+  const copyDefinitions: Record<VoucherCopyType, { title: string }> = {
+    bank: { title: VOUCHER_COPY_TITLES.bank },
+    institute: { title: VOUCHER_COPY_TITLES.institute },
+    student: { title: VOUCHER_COPY_TITLES.student },
   };
+  const INK = VOUCHER_RGB.ink;
+  const MUTED = VOUCHER_RGB.muted;
+  const FILL = VOUCHER_RGB.fill;
+  const setInk = () => doc.setTextColor(INK[0], INK[1], INK[2]);
+  const setMuted = () => doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  const setLine = (w: number) => {
+    doc.setDrawColor(VOUCHER_RGB.border[0], VOUCHER_RGB.border[1], VOUCHER_RGB.border[2]);
+    doc.setLineWidth(w);
+  };
+  const setFill = () => doc.setFillColor(FILL[0], FILL[1], FILL[2]);
 
   const defaultOrder: VoucherCopyType[] = ['bank', 'institute', 'student'];
   const userOrder =
@@ -236,30 +252,28 @@ function renderVoucherToPdfPage(
     const colX = leftMargin + colIdx * (colWidth + colGap);
 
     // Outer card border
-    doc.setDrawColor(203, 213, 225); // slate-300
-    doc.setLineWidth(0.4);
+    setLine(VOUCHER_LINE.card);
     doc.rect(colX, topY, colWidth, 194, 'D');
 
-    // Copy Tag Badge Header
-    doc.setFillColor(copy.tagR, copy.tagG, copy.tagB);
-    doc.rect(colX + 2, topY + 2, 34, 6, 'F');
-
-    doc.setTextColor(255, 255, 255);
+    // Copy badge: no background, black text, thin outline
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 2, topY + 2, 34, 6, 'D');
+    setInk();
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.text(copy.title, colX + 4, topY + 6);
+    doc.setFontSize(VOUCHER_FONT.body);
+    doc.text(copy.title, colX + 19, topY + 6.2, { align: 'center' });
 
-    // Voucher Number (top right of copy)
-    doc.setTextColor(15, 23, 42); // slate-900
+    // Voucher number (top right of copy)
     doc.setFont('courier', 'bold');
-    doc.setFontSize(8);
-    doc.text(voucher.voucherNo, colX + colWidth - 3, topY + 6, { align: 'right' });
+    doc.setFontSize(VOUCHER_FONT.body);
+    doc.text(voucher.voucherNo, colX + colWidth - 3, topY + 6.2, { align: 'right' });
 
-    // Institute Header & Logo
+    // Institute header & logo (logo unchanged)
     const addressStr = context.institute.address || '';
     const truncatedAddress = addressStr.length > 48 ? addressStr.substring(0, 46) + '...' : addressStr;
     const logoUrl = context.institute.logoUrl;
     const hasLogo = Boolean(logoUrl && logoUrl.trim().length > 0);
+    let headerCenterX = colX + colWidth / 2;
 
     if (hasLogo) {
       try {
@@ -268,122 +282,83 @@ function renderVoucherToPdfPage(
       } catch (e) {
         console.warn('Could not draw logo in voucher PDF copy:', e);
       }
-
-      // Draw text shifted to make room for logo
-      const textCenterX = colX + 16 + (colWidth - 18) / 2;
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(15, 23, 42);
-      const instName = (context.institute.name || 'INSTITUTE').toUpperCase();
-      const truncatedName = instName.length > 30 ? instName.substring(0, 28) + '..' : instName;
-      doc.text(truncatedName, textCenterX, topY + 13.5, { align: 'center' });
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6);
-      doc.setTextColor(100, 116, 139); // slate-500
-      doc.text(truncatedAddress, textCenterX, topY + 17.5, { align: 'center' });
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7);
-      doc.setTextColor(15, 118, 110); // teal-800
-      doc.text(`FEE VOUCHER • ${formatMonthName(voucher.month).toUpperCase()}`, textCenterX, topY + 21.5, {
-        align: 'center',
-      });
-    } else {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9.5);
-      doc.setTextColor(15, 23, 42);
-      doc.text((context.institute.name || 'INSTITUTE').toUpperCase(), colX + colWidth / 2, topY + 14, {
-        align: 'center',
-      });
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(100, 116, 139); // slate-500
-      doc.text(truncatedAddress, colX + colWidth / 2, topY + 18, { align: 'center' });
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(15, 118, 110); // teal-800
-      doc.text(`FEE VOUCHER • ${formatMonthName(voucher.month).toUpperCase()}`, colX + colWidth / 2, topY + 22, {
-        align: 'center',
-      });
+      headerCenterX = colX + 16 + (colWidth - 18) / 2;
     }
 
-    // Divider Line
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.setLineWidth(0.3);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(VOUCHER_FONT.title);
+    setInk();
+    const instName = (context.institute.name || 'INSTITUTE').toUpperCase();
+    const nameMax = hasLogo ? 30 : 38;
+    const truncatedName = instName.length > nameMax ? instName.substring(0, nameMax - 2) + '..' : instName;
+    doc.text(truncatedName, headerCenterX, topY + 13.5, { align: 'center' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(VOUCHER_FONT.small);
+    setMuted();
+    doc.text(truncatedAddress, headerCenterX, topY + 17.5, { align: 'center' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(VOUCHER_FONT.body);
+    setInk();
+    doc.text(`FEE VOUCHER • ${formatMonthName(voucher.month).toUpperCase()}`, headerCenterX, topY + 21.5, {
+      align: 'center',
+    });
+
+    // Divider line
+    setLine(VOUCHER_LINE.rule);
     doc.line(colX + 3, topY + 24, colX + colWidth - 3, topY + 24);
 
-    // Student Details Grid
-    doc.setFillColor(248, 250, 252);
-    doc.setDrawColor(226, 232, 240);
-    doc.rect(colX + 3, topY + 26, colWidth - 6, 17, 'FD');
+    // Student particulars: four rows, heading followed by value
+    const boxY = topY + 26;
+    const rowPitch = 4.4;
+    const boxH = rowPitch * 4 + 2;
+    setFill();
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 3, boxY, colWidth - 6, boxH, 'FD');
 
+    const clip = (v: string, n: number) => (v.length > n ? v.substring(0, n - 2) + '..' : v);
+    const studentValues: Record<string, string> = {
+      name: clip(student?.name || 'Unknown', 42),
+      father: clip(student?.fatherName || 'N/A', 42),
+      regNo: student?.regNo || 'N/A',
+      class: clip(schoolClass?.name || 'N/A', 42),
+    };
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
-    doc.setTextColor(100, 116, 139);
+    doc.setFontSize(VOUCHER_FONT.body);
+    const valueX = colX + 5 + Math.max(...VOUCHER_STUDENT_ROWS.map((r) => doc.getTextWidth(r.heading))) + 2;
+    VOUCHER_STUDENT_ROWS.forEach((row, i) => {
+      const y = boxY + 4.2 + i * rowPitch;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(VOUCHER_FONT.body);
+      setMuted();
+      doc.text(row.heading, colX + 5, y);
+      doc.setFont('helvetica', 'bold');
+      setInk();
+      doc.text(studentValues[row.key], valueX, y);
+    });
 
-    // Col 1 of Student Grid
-    doc.text('Student Name:', colX + 5, topY + 30);
+    // Date row: no background
+    const dateY = boxY + boxH + 1.5;
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 3, dateY, colWidth - 6, 6, 'D');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    const stuName = (student?.name || 'Unknown').length > 22 ? (student?.name || 'Unknown').substring(0, 20) + '..' : (student?.name || 'Unknown');
-    doc.text(stuName, colX + 5, topY + 34);
+    doc.setFontSize(VOUCHER_FONT.body);
+    setInk();
+    doc.text(`Issue Date: ${voucher.issueDate}`, colX + 5, dateY + 4.2);
+    doc.text(`Due Date: ${voucher.dueDate}`, colX + colWidth - 5, dateY + 4.2, { align: 'right' });
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
-    doc.setTextColor(100, 116, 139);
-    doc.text('Class:', colX + 5, topY + 38);
+    const tableY = dateY + 8;
+
+    // Particulars table header (light fill)
+    setFill();
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 3, tableY, colWidth - 6, 5.5, 'FD');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text(schoolClass?.name || 'N/A', colX + 5, topY + 42);
-
-    // Col 2 of Student Grid
-    const midX = colX + colWidth / 2;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
-    doc.setTextColor(100, 116, 139);
-    doc.text('Registration No.:', midX, topY + 30);
-    doc.setFont('courier', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text(student?.regNo || 'N/A', midX, topY + 34);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6);
-    doc.setTextColor(100, 116, 139);
-    doc.text('Father Name:', midX, topY + 38);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(15, 23, 42);
-    const fatherName = (student?.fatherName || 'N/A').length > 22 ? (student?.fatherName || 'N/A').substring(0, 20) + '..' : (student?.fatherName || 'N/A');
-    doc.text(fatherName, midX, topY + 42);
-
-    // Date Bar: Issue Date on Left, Due Date on Right
-    doc.setFillColor(254, 243, 199); // amber-100
-    doc.setDrawColor(251, 191, 36);  // amber-400
-    doc.rect(colX + 3, topY + 45, colWidth - 6, 6, 'FD');
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(120, 53, 15); // amber-900
-    doc.text(`Issue Date: ${voucher.issueDate}`, colX + 5, topY + 49.2);
-    doc.text(`Due Date: ${voucher.dueDate}`, colX + colWidth - 5, topY + 49.2, { align: 'right' });
-
-    // Particulars Table Header ("Particulars" on left, "Amount" on right)
-    doc.setFillColor(241, 245, 249); // slate-100
-    doc.setDrawColor(203, 213, 225);
-    doc.rect(colX + 3, topY + 53, colWidth - 6, 5.5, 'FD');
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(51, 65, 85); // slate-700
-    doc.text('Particulars', colX + 5, topY + 56.8);
-    doc.text(`Amount (${getCurrencyCode()})`, colX + colWidth - 5, topY + 56.8, { align: 'right' });
+    doc.setFontSize(VOUCHER_FONT.body);
+    setInk();
+    doc.text('Particulars', colX + 5, tableY + 3.9);
+    doc.text(`Amount (${getCurrencyCode()})`, colX + colWidth - 5, tableY + 3.9, { align: 'right' });
 
     // Itemized Particulars Rows (all line items ordered strictly as defined in Settings module)
     const standardOrder: { kind: ParticularKind; defaultLabel: string }[] = [
@@ -445,63 +420,45 @@ function renderVoucherToPdfPage(
       };
     });
 
-    let itemY = topY + 62.5;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
+    let itemY = tableY + 9.5;
+    doc.setFontSize(VOUCHER_FONT.body);
 
     itemsToRender.forEach((item) => {
-      doc.setTextColor(30, 41, 59);
-      const labelStr = item.label.length > 30 ? item.label.substring(0, 28) + '..' : item.label;
-      doc.text(labelStr, colX + 5, itemY);
-
-      if (item.amount < 0) {
-        doc.setTextColor(4, 120, 87); // emerald-700
-      } else {
-        doc.setTextColor(15, 23, 42);
-      }
-      doc.setFont('helvetica', 'bold');
-      doc.text(formatCurrency(item.amount), colX + colWidth - 5, itemY, { align: 'right' });
+      setInk();
       doc.setFont('helvetica', 'normal');
+      const labelStr = item.label.length > 36 ? item.label.substring(0, 34) + '..' : item.label;
+      doc.text(labelStr, colX + 5, itemY);
+      doc.text(formatLineItemAmount(item.amount), colX + colWidth - 5, itemY, { align: 'right' });
 
-      // Light dotted line under row
-      doc.setDrawColor(241, 245, 249);
-      doc.line(colX + 3, itemY + 1.2, colX + colWidth - 3, itemY + 1.2);
-
+      doc.setDrawColor(VOUCHER_RGB.itemRule[0], VOUCHER_RGB.itemRule[1], VOUCHER_RGB.itemRule[2]);
+      doc.setLineWidth(VOUCHER_LINE.rule);
+      doc.line(colX + 3, itemY + 1.4, colX + colWidth - 3, itemY + 1.4);
       itemY += 4.8;
     });
 
-    // Net Due Amount Line (Lightened sophisticated theme with border)
+    // Net due row (light fill)
     const netDueY = itemY + 1.5;
-    doc.setFillColor(241, 245, 249); // slate-100
-    doc.setDrawColor(203, 213, 225); // slate-300
+    setFill();
+    setLine(VOUCHER_LINE.rule);
     doc.rect(colX + 3, netDueY, colWidth - 6, 6.5, 'FD');
 
     const effectiveRoundingMultiple = voucher.roundingMultiple ?? context.roundingMultiple ?? 10;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(30, 41, 59); // slate-800
+    doc.setFontSize(VOUCHER_FONT.body);
+    setInk();
     doc.text('NET DUE AMOUNT:', colX + 5, netDueY + 4.5);
+    doc.setFontSize(VOUCHER_FONT.title);
+    doc.text(formatCurrency(voucher.netDue), colX + colWidth - 5, netDueY + 4.6, { align: 'right' });
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(15, 118, 110); // teal-700
-    doc.text(formatCurrency(voucher.netDue), colX + colWidth - 5, netDueY + 4.5, { align: 'right' });
-
-    // Payable After Due Date Line
+    // Payable after due date: no background
     const payableAfterDueDate = voucher.netDue + getAppliedFineAmount(voucher, effectiveRoundingMultiple);
     const afterDueY = netDueY + 7.2;
-    doc.setFillColor(254, 242, 242); // rose-50
-    doc.setDrawColor(254, 205, 211); // rose-200
-    doc.rect(colX + 3, afterDueY, colWidth - 6, 6, 'FD');
-
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 3, afterDueY, colWidth - 6, 6, 'D');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(6.8);
-    doc.setTextColor(159, 18, 57); // rose-900
+    doc.setFontSize(VOUCHER_FONT.body);
+    setInk();
     doc.text('PAYABLE AFTER DUE DATE:', colX + 5, afterDueY + 4.2);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(190, 18, 60); // rose-700
     doc.text(formatCurrency(payableAfterDueDate), colX + colWidth - 5, afterDueY + 4.2, { align: 'right' });
 
     // Bank Details Box (with Left-to-Right English & Right-to-Left Instructions)
@@ -512,13 +469,13 @@ function renderVoucherToPdfPage(
 
     // Calculate wrapped English lines (prevent clipping)
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5.8);
+    doc.setFontSize(VOUCHER_FONT.small);
     const ltrLines: string[] = ltrInst ? doc.splitTextToSize(ltrInst, innerBankWidth) : [];
     const ltrHeightMm = ltrLines.length * 3.2;
 
     // Render RTL text via high-DPI canvas to properly connect cursive-script ligatures and avoid corrupted glyphs
     const renderedRtl = rtlInst
-      ? renderRtlTextToImage(rtlInst, innerBankWidth, { fontSizePt: 6.8, textColor: '#334155' })
+      ? renderRtlTextToImage(rtlInst, innerBankWidth, { fontSizePt: 6.8, textColor: VOUCHER_HEX.ink })
       : null;
     const rtlHeightMm = renderedRtl ? renderedRtl.heightMm : 0;
 
@@ -535,23 +492,22 @@ function renderVoucherToPdfPage(
       }
     }
 
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.setDrawColor(226, 232, 240);
-    doc.rect(colX + 3, bankY, colWidth - 6, boxHeight, 'FD');
+    setLine(VOUCHER_LINE.rule);
+    doc.rect(colX + 3, bankY, colWidth - 6, boxHeight, 'D');
 
     if (activeBank) {
-      doc.setTextColor(15, 23, 42);
+      setInk();
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
+      doc.setFontSize(VOUCHER_FONT.body);
       doc.text(activeBank.bankName, colX + 5, bankY + 4.5);
 
-      doc.setFont('courier', 'bold');
-      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(VOUCHER_FONT.body);
       doc.text(`A/C: ${activeBank.accountNumber}`, colX + colWidth - 5, bankY + 4.5, { align: 'right' });
 
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      doc.setTextColor(100, 116, 139);
+      doc.setFontSize(VOUCHER_FONT.small);
+      setMuted();
       const titleStr = activeBank.title.length > 40 ? activeBank.title.substring(0, 38) + '...' : activeBank.title;
       doc.text(`Title: ${titleStr}`, colX + 5, bankY + 8.8);
 
@@ -561,7 +517,7 @@ function renderVoucherToPdfPage(
 
       if (hasInstructions) {
         // Divider inside box
-        doc.setDrawColor(226, 232, 240);
+        setLine(VOUCHER_LINE.rule);
         doc.line(colX + 5, bankY + 10.5, colX + colWidth - 5, bankY + 10.5);
 
         let currentInstY = bankY + 13.8;
@@ -569,8 +525,8 @@ function renderVoucherToPdfPage(
         // 1. Left-to-Right Instructions (English) - Full wrap without any clipping
         if (ltrLines.length > 0) {
           doc.setFont('helvetica', 'normal');
-          doc.setFontSize(5.8);
-          doc.setTextColor(71, 85, 105); // slate-600
+          doc.setFontSize(VOUCHER_FONT.small);
+          setInk();
           ltrLines.forEach((line: string, idx: number) => {
             doc.text(line, colX + 5, currentInstY + idx * 3.2);
           });
@@ -591,8 +547,8 @@ function renderVoucherToPdfPage(
       }
     } else {
       doc.setFont('helvetica', 'italic');
-      doc.setFontSize(7);
-      doc.setTextColor(100, 116, 139);
+      doc.setFontSize(VOUCHER_FONT.small);
+      setMuted();
       doc.text('Payment can be made at the institute accounts office', colX + colWidth / 2, bankY + 7.5, {
         align: 'center',
       });
@@ -600,9 +556,9 @@ function renderVoucherToPdfPage(
 
     // Signatures
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(6.5);
-    doc.setTextColor(148, 163, 184); // slate-400
-    doc.setDrawColor(203, 213, 225);
+    doc.setFontSize(VOUCHER_FONT.small);
+    setMuted();
+    setLine(VOUCHER_LINE.rule);
 
     const sigHalf = colWidth / 2;
     doc.line(colX + 5, topY + 186, colX + sigHalf - 8, topY + 186);
@@ -610,6 +566,16 @@ function renderVoucherToPdfPage(
 
     doc.line(colX + sigHalf + 8, topY + 186, colX + colWidth - 5, topY + 186);
     doc.text('Accounts Office', colX + sigHalf + (sigHalf - 3) / 2, topY + 189.5, { align: 'center' });
+
+    // Tear-off line in the gap before the next copy
+    if (colIdx < finalCopies.length - 1) {
+      const tearX = colX + colWidth + colGap / 2;
+      doc.setDrawColor(VOUCHER_RGB.tear[0], VOUCHER_RGB.tear[1], VOUCHER_RGB.tear[2]);
+      doc.setLineWidth(0.3);
+      doc.setLineDashPattern([1.6, 1.4], 0);
+      doc.line(tearX, 3, tearX, 207);
+      doc.setLineDashPattern([], 0);
+    }
   });
 }
 

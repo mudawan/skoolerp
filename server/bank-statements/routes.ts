@@ -4,6 +4,7 @@
 import type express from 'express';
 import { dbService } from '../db';
 import { receivePayments } from '../collections-core';
+import { isPermissionAllowed } from '../../src/utils/permissions';
 import { ensureBankStatementSchema } from './schema';
 import { listAdapters } from './adapters/registry';
 import {
@@ -19,6 +20,7 @@ import {
   listUploads,
   previewApply,
   reopenTransaction,
+  setPaymentMode,
   suggestionsForTransaction,
   suggestionsForUpload,
   unassignStudent,
@@ -28,7 +30,6 @@ import {
   type ServiceDeps,
   type TxFilter,
 } from './service';
-import type { PaymentModeChoice } from '../../src/plugins/bank-statements/shared';
 
 export interface BankStatementRouteDeps {
   requireAuth: (permission?: string) => express.RequestHandler;
@@ -37,7 +38,6 @@ export interface BankStatementRouteDeps {
   broadcastEvent: (event: any, institutionId?: string) => void;
 }
 
-const PAYMENT_CHOICES = new Set(['auto', 'BankDeposit', 'OnlineTransfer', 'SchoolCashier']);
 
 export async function registerBankStatementRoutes(app: express.Express, d: BankStatementRouteDeps): Promise<void> {
   await dbService.init();
@@ -71,6 +71,7 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
 
   const auth = d.requireAuth('fees.collect');
   const inst = (req: any) => req.institutionId as string;
+  const userCtx = (req: any) => ({ role: req.user?.role as any, permissions: req.user?.permissions });
 
   app.get('/api/bank-statements/adapters', auth, (_req, res) => {
     res.json({ success: true, adapters: listAdapters().map((a) => ({ id: a.id, version: a.version, label: a.label, formats: a.formats })) });
@@ -115,16 +116,39 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
     res.json({ success: true, upload: await getUpload(pool, inst(req), req.params.id) });
   }));
 
+  // What deleting this statement would do (reversal included), computed by the same code as the delete and rolled back.
+  app.get('/api/bank-statements/uploads/:id/delete-preview', auth, wrap(async (req, res) => {
+    const deps: ServiceDeps = { ...baseDeps, runVoucherTransaction: (i, scope, m) => dbService.runVoucherTransaction(i, scope as any, m as any) };
+    const plan = await deleteUpload(deps, inst(req), req.params.id, { dryRun: true });
+    res.json({ success: true, plan, canReverse: isPermissionAllowed(userCtx(req), 'fees.delete') });
+  }));
+
+  // Hard delete, "as if never uploaded": reverses what it posted and removes it, all in one database transaction.
   app.delete('/api/bank-statements/uploads/:id', auth, wrap(async (req, res) => {
-    await deleteUpload(pool, inst(req), req.params.id);
-    await d.recordAudit(req, {
-      actionType: 'bank_statement_delete',
-      actionTitle: 'Bank Statement Upload Deleted',
-      module: 'Collections',
-      description: `Deleted bank statement upload batch ${req.params.id}`,
-      targetId: req.params.id,
-    });
-    res.json({ success: true });
+    const deps: ServiceDeps = {
+      ...baseDeps,
+      runVoucherTransaction: (i, scope, m) => dbService.runVoucherTransaction(i, scope as any, m as any),
+      auditInTx: (client, entry) => d.recordAuditInTx(req, entry, client),
+    };
+    // Reversing posted payments is a deletion in the fee engine, so it needs the same permission as reversing a collection.
+    const plan = await deleteUpload(deps, inst(req), req.params.id, { dryRun: true });
+    if (plan.paymentsToReverse > 0 && !isPermissionAllowed(userCtx(req), 'fees.delete')) {
+      throw new HttpError(403, "This statement has posted payments. Deleting it reverses them, which requires the 'fees.delete' permission.");
+    }
+    const result = await deleteUpload(deps, inst(req), req.params.id);
+    dbService.incrementRevision(inst(req));
+    const rev = dbService.getRevisionInfo(inst(req));
+    d.broadcastEvent(
+      {
+        type: 'db_mutation',
+        institutionId: inst(req),
+        revision: rev.revision,
+        originClientId: (req.headers['x-client-id'] as string) || '',
+        lastModified: rev.lastModified,
+      },
+      inst(req)
+    );
+    res.json({ success: true, result, revision: rev.revision });
   }));
 
   app.get('/api/bank-statements/uploads/:id/file', auth, wrap(async (req, res) => {
@@ -167,6 +191,12 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
     });
   }));
 
+  app.patch('/api/bank-statements/transactions/:id/payment-mode', auth, wrap(async (req, res) => {
+    const mode = req.body?.paymentMode;
+    if (typeof mode !== 'string') throw new HttpError(400, 'paymentMode is required.');
+    res.json({ success: true, transaction: await setPaymentMode(baseDeps, inst(req), actorOf(req), req.params.id, mode) });
+  }));
+
   app.delete('/api/bank-statements/transactions/:id/assign', auth, wrap(async (req, res) => {
     res.json({ success: true, transaction: await unassignStudent(baseDeps, inst(req), actorOf(req), req.params.id) });
   }));
@@ -192,8 +222,6 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
   }));
 
   app.post('/api/bank-statements/uploads/:id/apply', auth, wrap(async (req, res) => {
-    const choice = req.body?.paymentMode;
-    if (choice !== undefined && !PAYMENT_CHOICES.has(choice)) throw new HttpError(400, 'Unknown payment mode.');
     const clientId = (req.headers['x-client-id'] as string) || '';
     const deps: ServiceDeps = {
       ...baseDeps,
@@ -202,7 +230,6 @@ export async function registerBankStatementRoutes(app: express.Express, d: BankS
     };
     const result = await applyAssigned(deps, inst(req), actorOf(req), req.params.id, {
       txIds: txIdsOf(req),
-      paymentMode: choice as PaymentModeChoice | undefined,
     });
     dbService.incrementRevision(inst(req));
     const rev = dbService.getRevisionInfo(inst(req));

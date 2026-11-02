@@ -32,7 +32,8 @@ import { formatCurrency, formatMonthName } from '../../utils/feeMath';
 import { bsApi, fileToBase64 } from './api';
 import type {
   ApplyPreview,
-  PaymentModeChoice,
+  DeletePlan,
+  PaymentMode,
   StatementTxRow,
   StatementUploadSummary,
   Suggestion,
@@ -54,6 +55,14 @@ export const BankStatementsView: React.FC = () => {
   const [loadingUploads, setLoadingUploads] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uploadToDelete, setUploadToDelete] = useState<StatementUploadSummary | null>(null);
+  const [deletePlan, setDeletePlan] = useState<DeletePlan | null>(null);
+  const [deleteCanReverse, setDeleteCanReverse] = useState(true);
+  const [deletePlanLoading, setDeletePlanLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // Screen data is only ever replaced by what the server returns (the loaders below). One write at a time, so the
+  // screen never shows a state the database has not confirmed yet.
+  const writing = useRef(false);
 
   // Filter uploads exclusively to the active billing month from the vertical sidebar
   const displayedUploads = useMemo(() => {
@@ -89,7 +98,6 @@ export const BankStatementsView: React.FC = () => {
   const [applyOpen, setApplyOpen] = useState(false);
   const [preview, setPreview] = useState<ApplyPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<PaymentModeChoice>('auto');
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
@@ -122,8 +130,8 @@ export const BankStatementsView: React.FC = () => {
   }, [loadUploads]);
 
   const loadRows = useCallback(
-    async (id: string, which: Tab) => {
-      setLoadingRows(true);
+    async (id: string, which: Tab, quiet = false) => {
+      if (!quiet) setLoadingRows(true);
       const r = await bsApi.transactions(id, which);
       if (r.success) setRows(r.transactions);
       else showToast(r.error, 'error');
@@ -147,8 +155,19 @@ export const BankStatementsView: React.FC = () => {
 
   const reloadAll = useCallback(async () => {
     if (!selectedId) return;
-    await Promise.all([loadUploads(), loadRows(selectedId, tab)]);
+    await Promise.all([loadUploads(), loadRows(selectedId, tab, true)]);
   }, [selectedId, tab, loadUploads, loadRows]);
+
+  /** Runs one write to completion; a second write started meanwhile is ignored (returns undefined). */
+  const exclusive = async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
+    if (writing.current) return undefined;
+    writing.current = true;
+    try {
+      return await fn();
+    } finally {
+      writing.current = false;
+    }
+  };
 
   // ------------------------------------------------------------------ upload
   const doUpload = async (file: File | undefined) => {
@@ -191,31 +210,57 @@ export const BankStatementsView: React.FC = () => {
   };
 
   // ------------------------------------------------------------------ delete upload
+  // Opening the dialog asks the server what the delete would do (reversal included); nothing changes until the
+  // server confirms the delete itself, and then everything on screen is reloaded from the database.
+  const askDelete = async (u: StatementUploadSummary) => {
+    setUploadToDelete(u);
+    setDeletePlan(null);
+    setDeleteError(null);
+    setDeletePlanLoading(true);
+    const r = await bsApi.deletePreview(u.id);
+    setDeletePlanLoading(false);
+    if (r.success) {
+      setDeletePlan(r.plan);
+      setDeleteCanReverse(r.canReverse);
+    } else {
+      setDeleteError(r.error || 'Could not check what deleting this statement would do.');
+    }
+  };
+
+  const closeDelete = () => {
+    if (deleting) return;
+    setUploadToDelete(null);
+    setDeletePlan(null);
+    setDeleteError(null);
+  };
+
   const confirmDeleteUpload = async () => {
-    if (!uploadToDelete) return;
-    if (locked) {
-      showToast('Fee books for this month are locked. Statements cannot be deleted.', 'error');
-      setUploadToDelete(null);
+    if (!uploadToDelete || deleting) return;
+    const filename = uploadToDelete.filename;
+    setDeleting(true);
+    setDeleteError(null);
+    const r = await exclusive(() => bsApi.deleteUpload(uploadToDelete.id));
+    setDeleting(false);
+    if (!r) return;
+    if (!r.success) {
+      setDeleteError(r.error || 'The server did not delete the statement. Nothing was changed.');
       return;
     }
-    const targetId = uploadToDelete.id;
-    const filename = uploadToDelete.filename;
-    const r = await bsApi.deleteUpload(targetId);
-    if (r.success) {
-      showToast(`Removed statement "${filename}" from consideration.`, 'info');
-      setUploads((prev) => prev.filter((u) => u.id !== targetId));
-      if (selectedId === targetId) {
-        const remaining = displayedUploads.filter((u) => u.id !== targetId);
-        setSelectedId(remaining.length > 0 ? remaining[0].id : null);
-      }
-    } else {
-      showToast(r.error || 'Failed to remove statement.', 'error');
-    }
     setUploadToDelete(null);
+    setDeletePlan(null);
+    const rv = r.result;
+    showToast(
+      rv && rv.paymentsReversed > 0
+        ? `Deleted "${filename}" and reversed ${rv.paymentsReversed} posted payment(s) totalling ${formatCurrency(rv.amountReversed)}.`
+        : `Deleted "${filename}".`,
+      'success',
+      6000
+    );
+    await refreshFromServer();
+    await loadUploads();
   };
 
   // ------------------------------------------------------------------ row actions
-  const replaceRow = (t: StatementTxRow) => setRows((prev) => prev.map((r) => (r.id === t.id ? t : r)));
 
   const hasInvalidSplit = useMemo(() => {
     return rows.some((r) => {
@@ -231,20 +276,19 @@ export const BankStatementsView: React.FC = () => {
       showToast('Fee books for this month are locked. Student allocations cannot be modified.', 'error');
       return false;
     }
-    setBusyTx(tx.id);
-    const r = await bsApi.assign(tx.id, studentId, split);
-    setBusyTx(null);
-    if (!r.success) {
-      showToast(r.error, 'error');
-      return false;
-    }
-    replaceRow(r.transaction);
-    if (selectedId) {
-      const s = await bsApi.suggestions(selectedId);
-      if (s.success) setSuggestions(s.suggestions);
-      void loadUploads();
-    }
-    return true;
+    const done = await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r = await bsApi.assign(tx.id, studentId, split);
+      if (!r.success) {
+        setBusyTx(null);
+        showToast(r.error, 'error');
+        return false;
+      }
+      await reloadAll();
+      setBusyTx(null);
+      return true;
+    });
+    return done === true;
   };
 
   const updateSplit = async (tx: StatementTxRow, dues: number, fine: number) => {
@@ -252,14 +296,28 @@ export const BankStatementsView: React.FC = () => {
       showToast('Fee books for this month are locked. Amounts cannot be modified.', 'error');
       return;
     }
-    setBusyTx(tx.id);
-    const r = await bsApi.updateSplit(tx.id, dues, fine);
-    setBusyTx(null);
-    if (!r.success) {
-      showToast(r.error, 'error');
+    await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r = await bsApi.updateSplit(tx.id, dues, fine);
+      if (!r.success) showToast(r.error, 'error');
+      else await reloadAll();
+      setBusyTx(null);
+    });
+  };
+
+  // The operator's choice of how this credit is recorded; saved on the row, then the screen reloads from the database.
+  const changeMode = async (tx: StatementTxRow, mode: PaymentMode) => {
+    if (locked) {
+      showToast('Fee books for this month are locked. Payment methods cannot be modified.', 'error');
       return;
     }
-    replaceRow(r.transaction);
+    await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r = await bsApi.setPaymentMode(tx.id, mode);
+      if (!r.success) showToast(r.error, 'error');
+      else await reloadAll();
+      setBusyTx(null);
+    });
   };
 
   const unassign = async (tx: StatementTxRow) => {
@@ -267,16 +325,13 @@ export const BankStatementsView: React.FC = () => {
       showToast('Fee books for this month are locked. Student allocations cannot be modified.', 'error');
       return;
     }
-    setBusyTx(tx.id);
-    const r = await bsApi.unassign(tx.id);
-    setBusyTx(null);
-    if (!r.success) return void showToast(r.error, 'error');
-    replaceRow(r.transaction);
-    if (selectedId) {
-      const s = await bsApi.suggestions(selectedId);
-      if (s.success) setSuggestions(s.suggestions);
-      void loadUploads();
-    }
+    await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r = await bsApi.unassign(tx.id);
+      if (!r.success) showToast(r.error, 'error');
+      else await reloadAll();
+      setBusyTx(null);
+    });
   };
 
   const confirmIgnore = async () => {
@@ -287,13 +342,15 @@ export const BankStatementsView: React.FC = () => {
       return;
     }
     const tx = ignoreTx;
-    setBusyTx(tx.id);
-    const r = await bsApi.ignore(tx.id, ignoreReason);
-    setBusyTx(null);
-    setIgnoreTx(null);
-    setIgnoreReason('');
-    if (!r.success) return void showToast(r.error, 'error');
-    await reloadAll();
+    await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r = await bsApi.ignore(tx.id, ignoreReason);
+      setIgnoreTx(null);
+      setIgnoreReason('');
+      if (!r.success) showToast(r.error, 'error');
+      else await reloadAll();
+      setBusyTx(null);
+    });
   };
 
   const simple = async (fn: (id: string) => Promise<{ success: boolean } & { error?: string }>, tx: StatementTxRow) => {
@@ -301,11 +358,13 @@ export const BankStatementsView: React.FC = () => {
       showToast('Fee books for this month are locked. Changes cannot be performed.', 'error');
       return;
     }
-    setBusyTx(tx.id);
-    const r: any = await fn(tx.id);
-    setBusyTx(null);
-    if (!r.success) return void showToast(r.error, 'error');
-    await reloadAll();
+    await exclusive(async () => {
+      setBusyTx(tx.id);
+      const r: any = await fn(tx.id);
+      if (!r.success) showToast(r.error, 'error');
+      else await reloadAll();
+      setBusyTx(null);
+    });
   };
 
   // ------------------------------------------------------------------ picker
@@ -369,8 +428,9 @@ export const BankStatementsView: React.FC = () => {
     setApplying(true);
     setApplyError(null);
     const readyIds = preview.rows.filter((r) => r.ready).map((r) => r.txId);
-    const r = await bsApi.apply(selectedId, paymentMode, readyIds);
+    const r = await exclusive(() => bsApi.apply(selectedId, readyIds));
     setApplying(false);
+    if (!r) return;
     if (!r.success) {
       setApplyError(r.error);
       return;
@@ -435,6 +495,7 @@ export const BankStatementsView: React.FC = () => {
             );
           }
         } else if (e.key === 'u' && tx.status === 'assigned') void unassign(tx);
+        else if (e.key === 'm') void changeMode(tx, tx.paymentMode === 'OnlineTransfer' ? 'BankDeposit' : 'OnlineTransfer');
         else if (e.key === 'i') {
           e.preventDefault();
           setIgnoreTx(tx);
@@ -657,18 +718,13 @@ export const BankStatementsView: React.FC = () => {
                     {/* Delete Statement Action Button */}
                     <button
                       type="button"
-                      disabled={locked}
-                      title={
-                        locked
-                          ? 'Month is locked — statement batches cannot be removed'
-                          : 'Remove statement upload from consideration'
-                      }
+                      title="Delete this statement"
+                      aria-label={`Delete ${u.filename}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (locked) return;
-                        setUploadToDelete(u);
+                        void askDelete(u);
                       }}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:text-slate-400 disabled:hover:bg-transparent"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer shrink-0"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -719,13 +775,11 @@ export const BankStatementsView: React.FC = () => {
                     </a>
                     <button
                       type="button"
-                      disabled={locked}
-                      title={locked ? 'Month is locked — statements cannot be removed' : undefined}
-                      onClick={() => !locked && setUploadToDelete(selected)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 shadow-2xs transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => void askDelete(selected)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 shadow-2xs transition cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Remove from Consideration
+                      Delete Statement
                     </button>
                   </div>
                 </div>
@@ -938,6 +992,10 @@ export const BankStatementsView: React.FC = () => {
                   <span>unassign</span>
                 </div>
                 <div className="flex items-center gap-1">
+                  <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px] text-slate-700 shadow-2xs">M</kbd>
+                  <span>payment method</span>
+                </div>
+                <div className="flex items-center gap-1">
                   <kbd className="px-1.5 py-0.5 bg-white border border-slate-200 rounded font-mono text-[10px] text-slate-700 shadow-2xs">I</kbd>
                   <span>ignore</span>
                 </div>
@@ -985,6 +1043,7 @@ export const BankStatementsView: React.FC = () => {
                         <th className="px-4 py-3 font-bold min-w-[280px]">
                           {tab === 'open' ? 'Student Allocation' : tab === 'applied' ? 'Receipt & Allocation' : 'Ignore Reason'}
                         </th>
+                        <th className="px-3 py-3 font-bold min-w-[170px]">Payment Method</th>
                         <th className="px-3 py-3 font-bold text-right w-28">Base Dues</th>
                         <th className="px-3 py-3 font-bold text-right w-24">Late Fine</th>
                         <th className="px-3 py-3 font-bold text-center w-36">Split Status</th>
@@ -1083,6 +1142,34 @@ export const BankStatementsView: React.FC = () => {
                               )}
                             </td>
 
+                            {/* Payment method: chosen with the student; preselected from the narration until the operator picks one */}
+                            <td className="px-3 py-3 min-w-[170px]">
+                              {tab === 'open' ? (
+                                <div>
+                                  <select
+                                    aria-label="Payment method"
+                                    value={tx.paymentMode}
+                                    disabled={locked || busyTx === tx.id}
+                                    onChange={(e) => void changeMode(tx, e.target.value as PaymentMode)}
+                                    className={`w-full border rounded-lg px-2 py-1.5 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20 disabled:opacity-50 ${
+                                      tx.paymentModeGuessed ? 'border-dashed border-slate-300 text-slate-500' : 'border-slate-300 text-slate-800'
+                                    }`}
+                                  >
+                                    <option value="BankDeposit">Bank Deposit</option>
+                                    <option value="OnlineTransfer">Online Transfer</option>
+                                    {tx.paymentMode === 'SchoolCashier' && <option value="SchoolCashier">School Cashier</option>}
+                                  </select>
+                                  {tx.paymentModeGuessed}
+                                </div>
+                              ) : tab === 'applied' ? (
+                                <span className="text-[11px] font-semibold text-slate-700">
+                                  {tx.paymentMode === 'OnlineTransfer' ? 'Online Transfer' : tx.paymentMode === 'SchoolCashier' ? 'School Cashier' : 'Bank Deposit'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+
                             {/* Permanent Dedicated Columns: Base Dues, Late Fine, and Split Status */}
                             <DuesFineSplitCells
                               tx={tx}
@@ -1155,28 +1242,57 @@ export const BankStatementsView: React.FC = () => {
         )}
       </div>
 
-      {/* Delete Statement Confirmation Modal */}
+      {/* Delete Statement Confirmation Modal: the server says what will happen; nothing changes until it confirms. */}
       <ConfirmModal
         isOpen={!!uploadToDelete}
-        onClose={() => setUploadToDelete(null)}
+        onClose={closeDelete}
         onConfirm={() => void confirmDeleteUpload()}
-        title="Delete Statement Batch?"
+        title="Delete Statement?"
         message={
           <div>
             <p>
-              Are you sure you want to remove <strong>{uploadToDelete?.filename}</strong>?
+              Permanently delete <strong>{uploadToDelete?.filename}</strong>
             </p>
-            <p className="mt-2 text-xs text-slate-500">
-              This will remove all associated pending and assigned transactions from consideration.
-            </p>
-            {uploadToDelete && uploadToDelete.counts.applied > 0 && (
-              <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium">
-                Caution: This statement contains {uploadToDelete.counts.applied} already posted collections. Statements with posted collections cannot be deleted until reversed.
+            {deletePlanLoading && (
+              <p className="mt-3 text-xs text-slate-500 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking what this will change…
+              </p>
+            )}
+            {deletePlan && (
+              <div className="mt-3 text-xs text-slate-600 space-y-1.5">
+                <p>
+                  This removes the statement, its original file, and {deletePlan.transactions} transaction(s). It cannot be undone.
+                </p>
+                {deletePlan.paymentsToReverse > 0 && (
+                  <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-medium">
+                    It also reverses {deletePlan.paymentsToReverse} posted payment(s) totalling {formatCurrency(deletePlan.amountToReverse)} for{' '}
+                    {deletePlan.studentCount} student(s) in {deletePlan.collections.map((c) => c.collectionNo).join(', ')}.
+                    <div className="mt-1 font-normal">Months affected: {deletePlan.monthsTouched.map(formatMonthName).join(', ')}.</div>
+                  </div>
+                )}
+                {deletePlan.paymentsToReverse > 0 && !deleteCanReverse && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-medium">
+                    Reversing posted payments needs the "delete fees" permission, which you do not have.
+                  </div>
+                )}
+                {deletePlan.blockedReason && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 font-medium">{deletePlan.blockedReason}</div>
+                )}
               </div>
+            )}
+            {deleteError && (
+              <div className="mt-3 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">{deleteError}</div>
             )}
           </div>
         }
-        confirmLabel="Remove Statement"
+        confirmLabel={deleting ? 'Deleting…' : 'Delete Statement'}
+        confirmDisabled={
+          deleting ||
+          deletePlanLoading ||
+          !deletePlan ||
+          !!deletePlan.blockedReason ||
+          (deletePlan.paymentsToReverse > 0 && !deleteCanReverse)
+        }
         variant="danger"
       />
 
@@ -1504,87 +1620,39 @@ export const BankStatementsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Payment Mode Selection */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-slate-200 bg-white">
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Payment Collection Method</div>
-                      <div className="text-[11px] text-slate-500">Specify how these receipts should be classified in financial reports.</div>
-                    </div>
-                    <select
-                      value={paymentMode}
-                      onChange={(e) => setPaymentMode(e.target.value as PaymentModeChoice)}
-                      className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-                    >
-                      <option value="auto">Auto-detect from Narration (Default)</option>
-                      <option value="BankDeposit">Bank Deposit (Slip / Branch)</option>
-                      <option value="OnlineTransfer">Online Bank Transfer (FT / IBFT)</option>
-                    </select>
-                  </div>
+                  {/* What will be posted, summarised: students are not listed one by one */}
+                  {(() => {
+                    const t = preview.totals;
+                    const parts = [
+                      `Base dues ${formatCurrency(t.duesTotal)}`,
+                      t.fineCount > 0 ? `Late fines ${formatCurrency(t.fineTotal)} (${t.fineCount} payment${t.fineCount === 1 ? '' : 's'})` : null,
+                      t.excessCount > 0 ? `Advance credit ${formatCurrency(t.excessTotal)} (${t.excessCount} payment${t.excessCount === 1 ? '' : 's'})` : null,
+                      t.partialCount > 0 ? `${t.partialCount} partial payment${t.partialCount === 1 ? '' : 's'}` : null,
+                    ].filter(Boolean);
+                    return preview.readyCount > 0 ? (
+                      <p className="text-xs text-slate-600 px-1">{parts.join(' · ')}</p>
+                    ) : null;
+                  })()}
 
-                  {/* Preview Items Table */}
-                  <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-2xs">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                        <tr>
-                          <th className="px-3.5 py-2.5 font-bold">Student</th>
-                          <th className="px-3.5 py-2.5 font-bold text-right">Bank Credit</th>
-                          <th className="px-3.5 py-2.5 font-bold text-right">Base Dues</th>
-                          <th className="px-3.5 py-2.5 font-bold text-right">Late Fine</th>
-                          <th className="px-3.5 py-2.5 font-bold">Posting Consequence</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 bg-white">
-                        {preview.rows.map((r) => (
-                          <tr key={r.txId} className={r.ready ? 'hover:bg-slate-50/60' : 'bg-rose-50/40'}>
-                            <td className="px-3.5 py-2.5">
-                              <div className="font-bold text-slate-800">{r.studentName}</div>
-                              <div className="text-[11px] text-slate-500 font-mono">
-                                {r.studentRegNo} · {r.date}
-                              </div>
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-mono font-bold text-emerald-600 tabular-nums">
-                              {formatCurrency(r.amount)}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-mono text-slate-700 tabular-nums font-semibold">
-                              {formatCurrency(r.duesAmount)}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-mono tabular-nums">
-                              {r.fineAmount > 0 ? (
-                                <span className="font-bold text-amber-700">{formatCurrency(r.fineAmount)}</span>
-                              ) : (
-                                <span className="text-slate-400">Rs. 0</span>
-                              )}
-                            </td>
-                            <td className="px-3.5 py-2.5">
-                              {r.ready ? (
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  {r.fineAmount > 0 && (
-                                    <span className="text-amber-800 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
-                                      Includes {formatCurrency(r.fineAmount)} fine
-                                    </span>
-                                  )}
-                                  {r.excess > 0 ? (
-                                    <span className="text-blue-800 font-semibold bg-blue-50 border border-blue-200 px-2 py-0.5 rounded text-[11px]">
-                                      +{formatCurrency(r.excess)} advance credit
-                                    </span>
-                                  ) : (
-                                    <span className="text-emerald-800 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px]">
-                                      {r.duesAmount < (r.outstanding || 0) ? 'Partial Payment' : 'Clears Voucher Full'}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-rose-700 font-semibold text-[11px] flex items-center gap-1">
-                                  <AlertCircle className="w-3 h-3" />
-                                  Skipped: {r.blockedReason}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {/* Only the rows that will NOT be posted, with the reason */}
+                  {preview.blockedCount > 0 && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs">
+                      <div className="font-bold text-rose-800 mb-1.5">Skipped ({preview.blockedCount})</div>
+                      <ul className="space-y-1">
+                        {preview.rows
+                          .filter((r) => !r.ready)
+                          .slice(0, 5)
+                          .map((r) => (
+                            <li key={r.txId} className="text-rose-900">
+                              <span className="font-semibold">{r.studentName || 'Unassigned'}</span>
+                              <span className="text-rose-700"> · {formatCurrency(r.amount)} · {r.date}</span>
+                              <div className="text-[11px] text-rose-700">{r.blockedReason}</div>
+                            </li>
+                          ))}
+                      </ul>
+                      {preview.blockedCount > 5 && <div className="mt-1.5 text-[11px] text-rose-700">and {preview.blockedCount - 5} more</div>}
+                    </div>
+                  )}
                 </>
               )}
             </div>

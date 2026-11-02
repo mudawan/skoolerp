@@ -10,9 +10,9 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "platform:create-admin": "tsx scripts/create-platform-admin.ts",
-    "test:guard": "node tests/guard-confirmed-writes.mjs && node tests/guard-awaited-and-financial.mjs && node tests/guard-platform-isolation.mjs",
+    "test:guard": "node tests/guard-confirmed-writes.mjs && node tests/guard-awaited-and-financial.mjs && node tests/guard-platform-isolation.mjs && node tests/guard-bank-statement-ui.mjs",
     "check": "npm run lint && npm run test:guard",
-    "test:bank": "node --import tsx --test tests/bank-statements/adapters.test.ts tests/bank-statements/logic.test.ts tests/bank-statements/integration.test.ts"
+    "test:bank": "node --import tsx --test tests/bank-statements/adapters.test.ts tests/bank-statements/logic.test.ts tests/bank-statements/integration.test.ts tests/voucher/voucher-pdf.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

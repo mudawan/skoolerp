@@ -59,7 +59,7 @@ import {
   ROLE_PRESET_PERMISSIONS,
   getEffectiveRole,
 } from '../utils/permissions';
-import { calculateStudentVoucherPreview, formatMonthName, getCurrentMonthString, getDaysInMonth, getEffectiveMultiple, getNextMonthString, getPreviousMonthString, roundUpToMultiple, recalculateVoucherChain, getChangedVouchers, getLockedMonthsTouched, formatLockedImpactMessage, VoucherPreviewCalculation, normalizeDateToISO, normalizeNationalId, formatCurrency, DEFAULT_CURRENCY, setActiveCurrency } from '../utils/feeMath';
+import { calculateStudentVoucherPreview, formatMonthName, getCurrentMonthString, getDaysInMonth, getEffectiveMultiple, getNextMonthString, getPreviousMonthString, roundUpToMultiple, recalculateVoucherChain, reverseCollectionPayments, getChangedVouchers, getLockedMonthsTouched, formatLockedImpactMessage, VoucherPreviewCalculation, normalizeDateToISO, normalizeNationalId, formatCurrency, DEFAULT_CURRENCY, setActiveCurrency } from '../utils/feeMath';
 import { reconcileFamiliesAndStudents } from '../utils/familyReconcile';
 import {
   fetchServerState,
@@ -5073,84 +5073,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Recalculate vouchers with payment deduction and fine reversal. Kept as a
     // pure function so it can be dry-run against the current snapshot (to refuse
     // up front when a locked month would change) and then applied for real.
-    const reverseCollectionOn = (prev: FeeVoucher[]): FeeVoucher[] => {
-      let updatedVouchers = prev.map((v) => {
-        const deduct = deductions.get(v.id) || 0;
-        const fineToRevert = fineReversals.get(v.id) || 0;
-
-        if (deduct === 0 && fineToRevert === 0) return v;
-
-        let cleanParticulars = v.particulars.map((p) => ({ ...p }));
-        let grossTotal = v.grossTotal;
-        let discountTotal = v.discountTotal;
-        let netDue = v.netDue;
-
-        // Undo fine additions if any
-        if (fineToRevert !== 0) {
-          const fineIndex = cleanParticulars.findIndex((p) => p.kind === 'Fine');
-          if (fineIndex >= 0) {
-            const currentFineAmount = cleanParticulars[fineIndex].amount;
-            const revertedFineAmount = Math.max(0, currentFineAmount - fineToRevert);
-            if (revertedFineAmount > 0) {
-              cleanParticulars[fineIndex] = {
-                ...cleanParticulars[fineIndex],
-                amount: revertedFineAmount,
-              };
-            } else {
-              cleanParticulars = cleanParticulars.filter((_, idx) => idx !== fineIndex);
-            }
-          }
-
-          const mult = getEffectiveMultiple(roundingEnabled, roundingMultiple, v.roundingMultiple);
-          grossTotal = cleanParticulars
-            .filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount')
-            .reduce((sum, p) => sum + p.amount, 0);
-          discountTotal = cleanParticulars
-            .filter((p) => p.kind === 'Discount')
-            .reduce((sum, p) => sum + Math.abs(p.amount), 0);
-          netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
-        }
-
-        const newPaid = Math.max(0, v.amountPaid - deduct);
-        let newStatus: FeeVoucher['status'] = v.status;
-        if (newStatus === 'Paid' || newStatus === 'Partial' || newStatus === 'Issued') {
-          if (newPaid >= netDue && netDue > 0) {
-            newStatus = 'Paid';
-          } else if (newPaid > 0) {
-            newStatus = 'Partial';
-          } else if (netDue <= 0 && newPaid === 0) {
-            newStatus = 'Paid';
-          } else {
-            newStatus = 'Issued';
-          }
-        }
-
-        return {
-          ...v,
-          particulars: cleanParticulars,
-          grossTotal,
-          discountTotal,
-          netDue,
-          amountPaid: newPaid,
-          status: newStatus,
-        };
-      });
-
-      // Recalculate downstream student voucher sequence if previous balance / arrears are affected.
-      // Each student's walk starts at their earliest reversed voucher's month
-      // and stops once balances stop changing.
-      if (affectedStudentIds.size > 0) {
-        const reverseFrom: Record<string, string> = {};
-        prev.forEach((pv) => {
-          if (deductions.has(pv.id) || fineReversals.has(pv.id)) {
-            if (!reverseFrom[pv.studentId] || pv.month < reverseFrom[pv.studentId]) reverseFrom[pv.studentId] = pv.month;
-          }
-        });
-        updatedVouchers = recalculateVouchersSequence(updatedVouchers, Array.from(affectedStudentIds), reverseFrom);
-      }
-
-      return updatedVouchers;
-    };
+    const reverseCollectionOn = (prev: FeeVoucher[]): FeeVoucher[] =>
+      reverseCollectionPayments(
+        prev,
+        colTxns.map((t) => ({ voucherId: t.voucherId, amount: t.amount, fineAdded: t.fineAdded, studentId: t.studentId })),
+        { roundingEnabled, roundingMultiple }
+      );
 
     {
       const dry = reverseCollectionOn(vouchers);

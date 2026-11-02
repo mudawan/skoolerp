@@ -1270,6 +1270,82 @@ export function recalculateVoucherChain(
 // Change detection (shared by the client dry-run and the server lock check)
 // ---------------------------------------------------------------------------
 
+/** One payment line being taken back (the parts of a transaction a reversal needs). */
+export interface ReversalPayment {
+  voucherId: string;
+  amount: number;
+  /** Fine that was added to the voucher at the time of payment (undone with it). */
+  fineAdded?: number;
+  studentId?: string;
+}
+
+/**
+ * Pure rules for reversing collections: take each payment back off its voucher, undo any fine added at payment,
+ * re-derive the status, then recalculate the students' later vouchers (previous balance, carried fine, net due).
+ * The ONE implementation of these rules: the server's collection reversal (bank-statement delete) and the
+ * Collections screen both call it. Returns a new list; the input is not modified.
+ */
+export function reverseCollectionPayments(prev: FeeVoucher[], payments: ReversalPayment[], policy: RoundingPolicy): FeeVoucher[] {
+  const deductions = new Map<string, number>();
+  const fineReversals = new Map<string, number>();
+  const affectedStudentIds = new Set<string>();
+  for (const t of payments) {
+    deductions.set(t.voucherId, (deductions.get(t.voucherId) || 0) + t.amount);
+    if (t.fineAdded && Number(t.fineAdded) !== 0) {
+      fineReversals.set(t.voucherId, (fineReversals.get(t.voucherId) || 0) + Number(t.fineAdded));
+    }
+    if (t.studentId) affectedStudentIds.add(t.studentId);
+  }
+
+  let updatedVouchers = prev.map((v) => {
+    const deduct = deductions.get(v.id) || 0;
+    const fineToRevert = fineReversals.get(v.id) || 0;
+    if (deduct === 0 && fineToRevert === 0) return v;
+
+    let cleanParticulars = v.particulars.map((p) => ({ ...p }));
+    let grossTotal = v.grossTotal;
+    let discountTotal = v.discountTotal;
+    let netDue = v.netDue;
+
+    if (fineToRevert !== 0) {
+      const fineIndex = cleanParticulars.findIndex((p) => p.kind === 'Fine');
+      if (fineIndex >= 0) {
+        const revertedFineAmount = Math.max(0, cleanParticulars[fineIndex].amount - fineToRevert);
+        if (revertedFineAmount > 0) {
+          cleanParticulars[fineIndex] = { ...cleanParticulars[fineIndex], amount: revertedFineAmount };
+        } else {
+          cleanParticulars = cleanParticulars.filter((_, idx) => idx !== fineIndex);
+        }
+      }
+      const mult = getEffectiveMultiple(policy.roundingEnabled, policy.roundingMultiple, v.roundingMultiple);
+      grossTotal = cleanParticulars.filter((p) => p.kind !== 'PreviousBalance' && p.kind !== 'Discount').reduce((sum, p) => sum + p.amount, 0);
+      discountTotal = cleanParticulars.filter((p) => p.kind === 'Discount').reduce((sum, p) => sum + Math.abs(p.amount), 0);
+      netDue = roundUpToMultiple(cleanParticulars.reduce((sum, p) => sum + p.amount, 0), mult);
+    }
+
+    const newPaid = Math.max(0, v.amountPaid - deduct);
+    let newStatus: FeeVoucher['status'] = v.status;
+    if (newStatus === 'Paid' || newStatus === 'Partial' || newStatus === 'Issued') {
+      if (newPaid >= netDue && netDue > 0) newStatus = 'Paid';
+      else if (newPaid > 0) newStatus = 'Partial';
+      else if (netDue <= 0 && newPaid === 0) newStatus = 'Paid';
+      else newStatus = 'Issued';
+    }
+    return { ...v, particulars: cleanParticulars, grossTotal, discountTotal, netDue, amountPaid: newPaid, status: newStatus };
+  });
+
+  if (affectedStudentIds.size > 0) {
+    const reverseFrom: Record<string, string> = {};
+    prev.forEach((pv) => {
+      if (deductions.has(pv.id) || fineReversals.has(pv.id)) {
+        if (!reverseFrom[pv.studentId] || pv.month < reverseFrom[pv.studentId]) reverseFrom[pv.studentId] = pv.month;
+      }
+    });
+    updatedVouchers = recalculateVoucherChain(updatedVouchers, Array.from(affectedStudentIds), policy, reverseFrom);
+  }
+  return updatedVouchers;
+}
+
 export function voucherValuesDiffer(a: FeeVoucher, b: FeeVoucher): boolean {
   const n = (x: unknown) => Number(x ?? 0);
   return (

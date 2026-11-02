@@ -9,7 +9,7 @@ import type {
   ApplyPreview,
   ApplyPreviewRow,
   ApplyResult,
-  PaymentModeChoice,
+  PaymentMode,
   StatementTxRow,
   StatementTxStatus,
   StatementUploadSummary,
@@ -17,6 +17,8 @@ import type {
 } from '../../src/plugins/bank-statements/shared';
 import { FEE_MONTH_RE } from '../../src/plugins/bank-statements/shared';
 import { AdapterError, type ParsedStatement, type StatementInput } from './types';
+import { getChangedVouchers, reverseCollectionPayments, type RoundingPolicy } from '../../src/utils/feeMath';
+import type { FeeVoucher } from '../../src/types';
 import { selectAdapter } from './adapters/registry';
 import { fingerprintAll, hashBuffer } from './fingerprint';
 import { extractFragments, lookupTexts, scoreHistory } from './fragments';
@@ -77,6 +79,12 @@ export interface ServiceDeps {
   /** Matches students for the search box; returns ids best-first. */
   searchStudentIds: (institutionId: string, q: string, limit: number) => Promise<string[]>;
   receivePayments?: ReceivePaymentsFn;
+  /** The fee engine's locked voucher transaction (server/db.ts runVoucherTransaction), used to reverse collections atomically. */
+  runVoucherTransaction?: (
+    institutionId: string,
+    scope: { voucherIds: string[]; includeStudentTail: true } | { voucherIds: string[] },
+    mutator: (locked: Map<string, any>, helpers: { client: any }) => Promise<{ writes: any; result: any }>
+  ) => Promise<any>;
   /** Writes an entry to the app's main audit trail inside the caller's transaction. */
   auditInTx?: (client: Queryable, entry: Record<string, any>) => Promise<void>;
 }
@@ -106,7 +114,6 @@ function mapUpload(r: any): StatementUploadSummary {
     parseStatus: r.parse_status,
     parseError: r.parse_error,
     warnings: Array.isArray(r.warnings) ? r.warnings : [],
-    exactDuplicateOf: r.exact_duplicate_of,
     totalCredits: r.total_credits,
     newCount: r.new_count,
     duplicateCount: r.duplicate_count,
@@ -126,6 +133,13 @@ function mapUpload(r: any): StatementUploadSummary {
       ignored: num(r.a_ignored),
     },
   };
+}
+
+const PAYMENT_MODES = new Set(['BankDeposit', 'OnlineTransfer', 'SchoolCashier']);
+
+/** What was used once posted, else what the operator chose, else the guess from the narration. */
+function effectivePaymentMode(r: any): PaymentMode {
+  return (r.paid_mode || r.payment_mode || inferPaymentMode(r.description || '')) as PaymentMode;
 }
 
 function mapTx(r: any): StatementTxRow {
@@ -151,6 +165,8 @@ function mapTx(r: any): StatementTxRow {
     assignedAt: toIso(r.assigned_at),
     appliedByName: r.applied_by_name,
     appliedAt: toIso(r.applied_at),
+    paymentMode: effectivePaymentMode(r),
+    paymentModeGuessed: !r.paid_mode && !r.payment_mode,
     collectionId: r.collection_id,
     collectionNo: r.collection_no || null,
     collectionMissing: !!r.collection_missing,
@@ -185,13 +201,14 @@ const UPLOAD_SELECT = `
 
 const TX_SELECT = `
   SELECT t.*, s.name AS s_name, s.reg_no AS s_reg_no, s.status AS s_status, cl.name AS class_name,
-         col.collection_no AS collection_no,
+         col.collection_no AS collection_no, pt.payment_mode AS paid_mode,
          v.due_date AS v_due_date, v.late_fee_rate AS v_late_fee_rate,
          (t.status = 'applied' AND col.id IS NULL) AS collection_missing
   FROM bank_statement_transactions t
   LEFT JOIN students s ON s.id = t.student_id AND s.institution_id = t.institution_id
   LEFT JOIN classes cl ON cl.id = s.class_id AND cl.institution_id = t.institution_id
   LEFT JOIN collections col ON col.id = t.collection_id AND col.institution_id = t.institution_id
+  LEFT JOIN transactions pt ON pt.id = t.payment_txn_id AND pt.institution_id = t.institution_id
   LEFT JOIN vouchers v ON v.id = t.voucher_id AND v.institution_id = t.institution_id`;
 
 async function event(
@@ -224,6 +241,28 @@ export async function isMonthLocked(db: Queryable, institutionId: string, month:
   return r.rows.length > 0;
 }
 
+const fmtDate = (v: any) => {
+  const iso = toIso(v);
+  return iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+};
+
+/** The successfully parsed upload of exactly this file, if the institution already has one. */
+async function findParsedUploadByHash(db: Queryable, institutionId: string, fileHash: string) {
+  const r = await db.query(
+    `SELECT filename, fee_month, uploaded_by_name, uploaded_at FROM bank_statement_uploads
+     WHERE institution_id = $1 AND file_hash = $2 AND parse_status = 'parsed' ORDER BY uploaded_at ASC LIMIT 1`,
+    [institutionId, fileHash]
+  );
+  return r.rows[0] as { filename: string; fee_month: string; uploaded_by_name: string | null; uploaded_at: any } | undefined;
+}
+
+const exactDuplicateError = (p: { filename: string; fee_month: string; uploaded_by_name: string | null; uploaded_at: any }) =>
+  new HttpError(
+    409,
+    `This exact file was already uploaded as "${p.filename}" for ${p.fee_month}${p.uploaded_by_name ? ` by ${p.uploaded_by_name}` : ''} on ${fmtDate(p.uploaded_at)}. ` +
+      `Open that statement instead, or delete it first if you need to load it again.`
+  );
+
 export async function createUpload(
   deps: ServiceDeps,
   institutionId: string,
@@ -239,6 +278,9 @@ export async function createUpload(
   }
 
   const fileHash = hashBuffer(input.buffer);
+  // The same file twice adds nothing: refuse before parsing or storing anything.
+  const already = await findParsedUploadByHash(deps.pool, institutionId, fileHash);
+  if (already) throw exactDuplicateError(already);
   const stmtInput: StatementInput = { filename, mimeType: input.mimeType, buffer: input.buffer };
 
   // Parse OUTSIDE any database transaction: it can be slow and touches nothing in the database.
@@ -259,6 +301,18 @@ export async function createUpload(
     }
   }
 
+  try {
+    return await storeUpload();
+  } catch (err: any) {
+    // Two identical uploads racing: the unique index lets one through and refuses the other.
+    if (err?.code === '23505' && String(err?.constraint || '').includes('uq_bank_statement_upload_hash')) {
+      const again = await findParsedUploadByHash(deps.pool, institutionId, fileHash);
+      if (again) throw exactDuplicateError(again);
+    }
+    throw err;
+  }
+
+  async function storeUpload(): Promise<StatementUploadSummary> {
   return deps.withTx(async (db) => {
     const fileId = rid('bsf');
     await db.query(
@@ -269,26 +323,19 @@ export async function createUpload(
     const fileRow = await db.query(`SELECT id FROM bank_statement_files WHERE institution_id = $1 AND file_hash = $2`, [institutionId, fileHash]);
     const storedFileId = fileRow.rows[0].id as string;
 
-    const prior = await db.query(
-      `SELECT id FROM bank_statement_uploads WHERE institution_id = $1 AND file_hash = $2 AND parse_status = 'parsed' ORDER BY uploaded_at ASC LIMIT 1`,
-      [institutionId, fileHash]
-    );
-    const exactDuplicateOf = prior.rows[0]?.id ?? null;
-
     const uploadId = rid('bsu');
     const warnings = parsed ? [...parsed.warnings] : [];
     if (parsed && parsed.transactions.length === 0) warnings.push('No credit transactions were found in this statement.');
-    if (exactDuplicateOf) warnings.push('This exact file was uploaded before; it can add no new transactions.');
 
     await db.query(
       `INSERT INTO bank_statement_uploads
         (id, institution_id, fee_month, filename, file_hash, file_id, adapter_id, adapter_version, bank_name, account_number,
-         period_from, period_to, parse_status, parse_error, warnings, exact_duplicate_of, uploaded_by, uploaded_by_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+         period_from, period_to, parse_status, parse_error, warnings, uploaded_by, uploaded_by_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         uploadId, institutionId, input.feeMonth, filename, fileHash, storedFileId, adapterId, adapterVersion,
         parsed?.bankName ?? null, parsed?.accountNumber ?? null, parsed?.periodFrom ?? null, parsed?.periodTo ?? null,
-        parsed ? 'parsed' : 'failed', parseError, JSON.stringify(warnings), exactDuplicateOf, actor.id, actor.name,
+        parsed ? 'parsed' : 'failed', parseError, JSON.stringify(warnings), actor.id, actor.name,
       ]
     );
 
@@ -323,6 +370,16 @@ export async function createUpload(
           `SELECT id, fingerprint FROM bank_statement_transactions WHERE institution_id = $1 AND fingerprint = ANY($2) AND status <> 'duplicate'`,
           [institutionId, dupes.map((d) => d.fingerprint)]
         );
+        if (newCount === 0) {
+          // Nothing new in this file: refuse it (the surrounding transaction rolls back the upload and the stored file).
+          const src = await db.query(
+            `SELECT u.filename, u.fee_month FROM bank_statement_transactions t JOIN bank_statement_uploads u ON u.id = t.upload_id
+             WHERE t.id = ANY($1) ORDER BY u.uploaded_at ASC LIMIT 1`,
+            [known.rows.map((r: any) => r.id)]
+          );
+          const from = src.rows[0] ? ` (from "${src.rows[0].filename}", ${src.rows[0].fee_month})` : '';
+          throw new HttpError(409, `All ${fps.length} transaction${fps.length === 1 ? '' : 's'} in this statement are already loaded${from}. Nothing new to add.`);
+        }
         const originalOf = new Map<string, string>(known.rows.map((r: any) => [r.fingerprint.trim(), r.id]));
         for (const t of dupes) {
           await db.query(
@@ -344,6 +401,7 @@ export async function createUpload(
     const out = await db.query(`${UPLOAD_SELECT} AND u.id = $2`, [institutionId, uploadId]);
     return mapUpload(out.rows[0]);
   });
+  }
 }
 
 export async function listUploads(db: Queryable, institutionId: string, limit = 100): Promise<StatementUploadSummary[]> {
@@ -367,23 +425,258 @@ export async function getUploadFile(db: Queryable, institutionId: string, upload
   return { filename: r.rows[0].filename as string, mimeType: (r.rows[0].mime_type as string) || 'application/octet-stream', content: r.rows[0].content as Buffer };
 }
 
-export async function deleteUpload(db: Queryable, institutionId: string, uploadId: string): Promise<boolean> {
-  const upload = await getUpload(db, institutionId, uploadId);
-  if (upload.feeMonth && (await isMonthLocked(db, institutionId, upload.feeMonth))) {
-    throw new HttpError(423, `Fee books for ${upload.feeMonth} are locked. An Admin must unlock the month before statements can be deleted.`);
+export interface DeleteUploadResult {
+  transactions: number;
+  applied: number;
+  fragments: number;
+  fileRemoved: boolean;
+  collectionsReversed: number;
+  paymentsReversed: number;
+  amountReversed: number;
+}
+
+/** What deleting a statement will do. The preview and the real delete are computed by the same code. */
+export interface DeletePlan {
+  uploadId: string;
+  filename: string;
+  feeMonth: string;
+  transactions: number;
+  appliedRows: number;
+  /** Collections still in Collections that this statement posted (the ones that will be reversed). */
+  collections: Array<{ id: string; collectionNo: string; totalAmount: number; paymentCount: number }>;
+  paymentsToReverse: number;
+  amountToReverse: number;
+  studentCount: number;
+  /** Months whose vouchers/collections the reversal would change (statement month included). */
+  monthsTouched: string[];
+  lockedMonths: string[];
+  /** Payments inside those collections that did not come from this statement (the delete is refused). */
+  foreignPayments: number;
+  blockedReason: string | null;
+}
+
+class DryRun extends Error {
+  constructor(public plan: DeletePlan) {
+    super('dry-run');
   }
-  const appliedCheck = await db.query(
-    `SELECT COUNT(*)::int as count FROM bank_statement_transactions 
+}
+const RETRY = 'BS_RETRY_PLAN';
+
+async function loadRoundingPolicy(db: Queryable, institutionId: string): Promise<RoundingPolicy> {
+  const r = await db.query(`SELECT settings FROM institutions WHERE id = $1`, [institutionId]);
+  let st: any = r.rows[0]?.settings || {};
+  if (typeof st === 'string') st = JSON.parse(st || '{}');
+  const m = Number(st.roundingMultiple);
+  return { roundingEnabled: st.roundingEnabled === undefined ? true : !!st.roundingEnabled, roundingMultiple: Number.isInteger(m) && m > 0 ? m : 1 };
+}
+
+/** Reads what the statement posted: its still-existing collections and their payments. */
+async function readPostings(db: Queryable, institutionId: string, uploadId: string) {
+  const rows = await db.query(
+    `SELECT id, collection_id, payment_txn_id FROM bank_statement_transactions
      WHERE institution_id = $1 AND upload_id = $2 AND status = 'applied'`,
     [institutionId, uploadId]
   );
-  if (appliedCheck.rows[0]?.count > 0) {
-    throw new HttpError(400, 'Cannot delete a statement that has already applied fee collections. Reverse the collections first if needed.');
-  }
+  const collIds = [...new Set(rows.rows.map((r: any) => r.collection_id).filter(Boolean))] as string[];
+  const cols = collIds.length
+    ? (await db.query(`SELECT id, collection_no, total_amount FROM collections WHERE institution_id = $1 AND id = ANY($2) ORDER BY collection_no`, [institutionId, collIds])).rows
+    : [];
+  const liveIds = cols.map((c: any) => c.id as string);
+  const txns = liveIds.length
+    ? (await db.query(
+        `SELECT id, collection_id, voucher_id, student_id, month, amount, fine_added FROM transactions
+         WHERE institution_id = $1 AND collection_id = ANY($2)`,
+        [institutionId, liveIds]
+      )).rows
+    : [];
+  const mine = new Set(rows.rows.map((r: any) => r.payment_txn_id).filter(Boolean));
+  return { appliedRows: rows.rows.length, cols, txns, foreign: txns.filter((t: any) => !mine.has(t.id)).length };
+}
 
-  await db.query(`DELETE FROM bank_statement_events WHERE institution_id = $1 AND upload_id = $2`, [institutionId, uploadId]);
-  await db.query(`DELETE FROM bank_statement_uploads WHERE institution_id = $1 AND id = $2`, [institutionId, uploadId]);
-  return true;
+/**
+ * The chain recalculation needs, for each student, the voucher just before the earliest voucher it changes (it hands the
+ * balance forward from it). Returns those predecessor ids so they are locked and loaded together with the rest.
+ */
+async function contextVoucherIds(db: Queryable, institutionId: string, voucherIds: string[]): Promise<string[]> {
+  if (voucherIds.length === 0) return [];
+  const vs = await db.query(`SELECT id, student_id, month FROM vouchers WHERE institution_id = $1 AND id = ANY($2)`, [institutionId, voucherIds]);
+  const earliest = new Map<string, string>();
+  for (const v of vs.rows) if (!earliest.has(v.student_id) || v.month < earliest.get(v.student_id)!) earliest.set(v.student_id, v.month);
+  const out: string[] = [];
+  for (const [student, month] of earliest) {
+    const p = await db.query(
+      `SELECT id FROM vouchers WHERE institution_id = $1 AND student_id = $2 AND month < $3 AND status <> 'Reversed' ORDER BY month DESC LIMIT 1`,
+      [institutionId, student, month]
+    );
+    if (p.rows[0]) out.push(p.rows[0].id as string);
+  }
+  return out;
+}
+
+/**
+ * Hard delete of a statement as if it had never been uploaded, in ONE database transaction:
+ *  1. the collections it posted are reversed with the fee engine's own rules (vouchers, fines, later balances),
+ *  2. its transactions, events, learned fragments and stored file are removed,
+ *  3. the audit entries are written.
+ * Nothing is visible to anyone until the whole thing commits; a locked month anywhere in it refuses everything.
+ * With `dryRun` the same code runs and is rolled back, returning what it would do.
+ */
+export async function deleteUpload(deps: ServiceDeps, institutionId: string, uploadId: string, opts: { dryRun: true }): Promise<DeletePlan>;
+export async function deleteUpload(deps: ServiceDeps, institutionId: string, uploadId: string, opts?: { dryRun?: false }): Promise<DeleteUploadResult>;
+export async function deleteUpload(deps: ServiceDeps, institutionId: string, uploadId: string, opts: { dryRun?: boolean } = {}): Promise<any> {
+  if (!deps.runVoucherTransaction) throw new Error('Voucher transactions are not available to the bank statement service.');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Which vouchers to lock is decided from an unlocked read, then re-checked under the locks below.
+    const first = await readPostings(deps.pool, institutionId, uploadId);
+    const paidIds = [...new Set(first.txns.map((t: any) => t.voucher_id as string))];
+    const voucherIds = [...new Set([...paidIds, ...(await contextVoucherIds(deps.pool, institutionId, paidIds))])];
+    let outcome: DeleteUploadResult | null = null;
+    try {
+      await deps.runVoucherTransaction(institutionId, { voucherIds, includeStudentTail: true }, async (locked, { client }) => {
+        const found = await client.query(
+          `SELECT id, filename, fee_month, file_id FROM bank_statement_uploads WHERE institution_id = $1 AND id = $2 FOR UPDATE`,
+          [institutionId, uploadId]
+        );
+        if (found.rows.length === 0) throw new HttpError(404, 'Statement upload not found.');
+        const up = found.rows[0];
+
+        const post = await readPostings(client, institutionId, uploadId);
+        const paidNow = [...new Set(post.txns.map((t: any) => t.voucher_id as string))];
+        const needed = [...paidNow, ...(await contextVoucherIds(client, institutionId, paidNow))];
+        if (needed.some((id) => !locked.has(id))) {
+          throw Object.assign(new Error('retry'), { code: RETRY }); // posted/changed meanwhile: re-plan with the right locks
+        }
+
+        const policy = await loadRoundingPolicy(client, institutionId);
+        const before = Array.from(locked.values()) as unknown as FeeVoucher[];
+        const payments = post.txns.map((t: any) => ({
+          voucherId: t.voucher_id as string,
+          amount: Number(t.amount),
+          fineAdded: t.fine_added == null ? undefined : Number(t.fine_added),
+          studentId: t.student_id as string,
+        }));
+        const after = payments.length ? reverseCollectionPayments(before, payments, policy) : before;
+        const changed = payments.length ? getChangedVouchers(before, after) : [];
+
+        const months = new Set<string>([up.fee_month, ...changed.map((v) => v.month), ...post.txns.map((t: any) => t.month).filter(Boolean)]);
+        const lockedRes = await client.query(
+          `SELECT month FROM locked_months WHERE institution_id = $1 AND month = ANY($2) ORDER BY month`,
+          [institutionId, [...months]]
+        );
+        const lockedMonths = lockedRes.rows.map((r: any) => r.month as string);
+        const counts = await client.query(`SELECT COUNT(*)::int AS n FROM bank_statement_transactions WHERE institution_id = $1 AND upload_id = $2`, [institutionId, uploadId]);
+        const perCol = (id: string) => post.txns.filter((t: any) => t.collection_id === id).length;
+        const plan: DeletePlan = {
+          uploadId,
+          filename: up.filename,
+          feeMonth: up.fee_month,
+          transactions: counts.rows[0].n,
+          appliedRows: post.appliedRows,
+          collections: post.cols.map((c: any) => ({ id: c.id, collectionNo: c.collection_no, totalAmount: Number(c.total_amount), paymentCount: perCol(c.id) })),
+          paymentsToReverse: post.txns.length,
+          amountToReverse: payments.reduce((s: number, p: any) => s + p.amount, 0),
+          studentCount: new Set(payments.map((p: any) => p.studentId)).size,
+          monthsTouched: [...months].sort(),
+          lockedMonths,
+          foreignPayments: post.foreign,
+          blockedReason: null,
+        };
+        if (lockedMonths.length > 0) {
+          plan.blockedReason = lockedMonths.includes(up.fee_month)
+            ? `Fee books for ${up.fee_month} are locked. An Admin must unlock the month before statements can be deleted.`
+            : `Deleting this statement would change locked month(s) ${lockedMonths.join(', ')}. An Admin must unlock them first.`;
+        } else if (post.foreign > 0) {
+          plan.blockedReason = `${post.foreign} payment(s) in this statement's collections were not posted from it, so they cannot be reversed here. Reverse those collections in Collections first.`;
+        }
+        if (opts.dryRun) throw new DryRun(plan);
+        if (plan.blockedReason) throw new HttpError(lockedMonths.length > 0 ? 423 : 409, plan.blockedReason);
+
+        const changedById: Record<string, any> = {};
+        for (const v of changed) changedById[v.id] = v;
+        return {
+          writes: {
+            voucherUpserts: changedById,
+            deleteTransactionIds: post.txns.map((t: any) => t.id as string),
+            deleteCollectionIds: post.cols.map((c: any) => c.id as string),
+            afterWrites: async (db: Queryable) => {
+              const frag = await db.query(
+                `DELETE FROM bank_statement_fragments WHERE institution_id = $1
+                   AND source_txn_id IN (SELECT id FROM bank_statement_transactions WHERE institution_id = $1 AND upload_id = $2)`,
+                [institutionId, uploadId]
+              );
+              await db.query(
+                `DELETE FROM bank_statement_events WHERE institution_id = $1
+                   AND (upload_id = $2 OR txn_id IN (SELECT id FROM bank_statement_transactions WHERE institution_id = $1 AND upload_id = $2))`,
+                [institutionId, uploadId]
+              );
+              await db.query(`DELETE FROM bank_statement_uploads WHERE institution_id = $1 AND id = $2`, [institutionId, uploadId]); // rows cascade
+              let fileRemoved = false;
+              if (up.file_id) {
+                const gone = await db.query(
+                  `DELETE FROM bank_statement_files f WHERE f.id = $1 AND f.institution_id = $2
+                     AND NOT EXISTS (SELECT 1 FROM bank_statement_uploads u WHERE u.file_id = f.id)`,
+                  [up.file_id, institutionId]
+                );
+                fileRemoved = (gone.rowCount || 0) > 0;
+              }
+              outcome = {
+                transactions: plan.transactions,
+                applied: plan.appliedRows,
+                fragments: frag.rowCount || 0,
+                fileRemoved,
+                collectionsReversed: plan.collections.length,
+                paymentsReversed: plan.paymentsToReverse,
+                amountReversed: plan.amountToReverse,
+              };
+              if (deps.auditInTx) {
+                for (const c of plan.collections) {
+                  await deps.auditInTx(db, {
+                    actionType: 'collection_reversal',
+                    actionTitle: 'Fee Collection Reversed',
+                    module: 'Collections',
+                    description: `Reversed collection ${c.collectionNo} (${c.paymentCount} payment(s)) because bank statement "${plan.filename}" was deleted.`,
+                    targetId: c.collectionNo,
+                    targetLabel: c.collectionNo,
+                    amount: c.totalAmount,
+                    metadata: { collectionId: c.id, uploadId, reason: 'bank_statement_delete' },
+                  });
+                }
+                const fines = payments.reduce((s: number, p: any) => s + (p.fineAdded || 0), 0);
+                if (fines > 0) {
+                  await deps.auditInTx(db, {
+                    actionType: 'fine_modification',
+                    actionTitle: 'Collection Late Fines Reverted',
+                    module: 'Collections',
+                    description: `Reverted ${fines} in late fines while deleting bank statement "${plan.filename}".`,
+                    targetId: uploadId,
+                    amount: fines,
+                    metadata: { uploadId, finesReverted: fines },
+                  });
+                }
+                await deps.auditInTx(db, {
+                  actionType: 'bank_statement_delete',
+                  actionTitle: 'Bank Statement Upload Deleted',
+                  module: 'Collections',
+                  description: `Deleted bank statement "${plan.filename}" (${plan.feeMonth}): ${plan.transactions} transactions, ${plan.paymentsToReverse} payment(s) reversed.`,
+                  targetId: uploadId,
+                  targetLabel: plan.filename,
+                  month: plan.feeMonth,
+                  metadata: { uploadId, collectionsReversed: plan.collections.length, amountReversed: plan.amountToReverse },
+                });
+              }
+            },
+          },
+          result: null,
+        };
+      });
+      return outcome;
+    } catch (err: any) {
+      if (err instanceof DryRun) return err.plan;
+      if (err?.code === RETRY && attempt < 2) continue;
+      if (err?.code === RETRY) throw new HttpError(409, 'This statement changed while it was being deleted. Nothing was changed; please try again.');
+      throw err;
+    }
+  }
 }
 
 export type TxFilter = 'open' | 'all' | StatementTxStatus;
@@ -433,6 +726,19 @@ async function readTx(db: Queryable, institutionId: string, txId: string): Promi
 }
 
 const EDITABLE = new Set(['pending', 'assigned']);
+
+/** Saves the operator's choice of how this bank credit is recorded (Bank Deposit / Online Transfer). */
+export async function setPaymentMode(deps: ServiceDeps, institutionId: string, actor: Actor, txId: string, mode: string): Promise<StatementTxRow> {
+  if (!PAYMENT_MODES.has(mode)) throw new HttpError(400, 'Unknown payment method.');
+  return deps.withTx(async (db) => {
+    const t = await lockTx(db, institutionId, txId);
+    if (!EDITABLE.has(t.status)) throw new HttpError(409, `This transaction is already ${t.status}; its payment method can no longer be changed.`);
+    const before = effectivePaymentMode(t);
+    await db.query(`UPDATE bank_statement_transactions SET payment_mode = $1 WHERE id = $2 AND institution_id = $3`, [mode, txId, institutionId]);
+    await event(db, institutionId, actor, { uploadId: t.upload_id, txnId: txId, action: 'payment_mode', detail: { from: before, to: mode } });
+    return readTx(db, institutionId, txId);
+  });
+}
 
 export async function assignStudent(
   deps: ServiceDeps,
@@ -781,11 +1087,21 @@ export async function previewApply(db: Queryable, institutionId: string, uploadI
       duesAmount,
       fineAmount,
       excess,
+      paymentMode: effectivePaymentMode(r),
       ready: blocked === null,
       blockedReason: blocked,
     };
   });
   const ready = out.filter((r) => r.ready);
+  const money = (n: number) => Math.round(n * 100) / 100;
+  const totals = {
+    duesTotal: money(ready.reduce((n, r) => n + r.duesAmount, 0)),
+    fineTotal: money(ready.reduce((n, r) => n + r.fineAmount, 0)),
+    fineCount: ready.filter((r) => r.fineAmount > 0).length,
+    excessTotal: money(ready.reduce((n, r) => n + r.excess, 0)),
+    excessCount: ready.filter((r) => r.excess > 0).length,
+    partialCount: ready.filter((r) => r.excess <= 0 && r.outstanding !== null && r.duesAmount < r.outstanding).length,
+  };
   return {
     feeMonth: upload.feeMonth,
     monthLocked,
@@ -793,6 +1109,7 @@ export async function previewApply(db: Queryable, institutionId: string, uploadI
     readyCount: ready.length,
     blockedCount: out.length - ready.length,
     readyTotal: Math.round(ready.reduce((s, r) => s + r.amount, 0) * 100) / 100,
+    totals,
   };
 }
 
@@ -801,7 +1118,7 @@ export async function applyAssigned(
   institutionId: string,
   actor: Actor,
   uploadId: string,
-  opts: { txIds?: string[]; paymentMode?: PaymentModeChoice } = {}
+  opts: { txIds?: string[] } = {}
 ): Promise<ApplyResult> {
   if (!deps.receivePayments) throw new Error('Bank statements: receivePayments is not wired.');
   const upload = await getUpload(deps.pool, institutionId, uploadId);
@@ -815,14 +1132,13 @@ export async function applyAssigned(
     throw new HttpError(409, preview.rows.length === 0 ? 'No assigned transactions to apply.' : `Nothing is ready to apply. ${skipped[0]?.reason || ''}`.trim());
   }
 
-  const mode = opts.paymentMode && opts.paymentMode !== 'auto' ? opts.paymentMode : null;
   const rowsById = new Map(ready.map((r) => [r.txId, r]));
   const payments = ready.map((r) => ({
     id: `txn-bs-${r.txId}`,
     voucherId: r.voucherId as string,
     amount: r.amount,
     fineAdded: r.fineAmount > 0 ? r.fineAmount : undefined,
-    paymentMode: mode || inferPaymentMode(r.description),
+    paymentMode: r.paymentMode, // each row's own method: the operator's choice, else the guess from the narration
     referenceNo: undefined as string | undefined,
     notes: `Bank statement ${upload.filename}: ${r.description.slice(0, 160)}`,
     date: r.date,
@@ -847,6 +1163,11 @@ export async function applyAssigned(
       // Runs inside the SAME database transaction as the voucher/collection writes: either the payments are
       // recorded AND the bank rows are marked applied, or neither happens.
       afterWrites: async (db, res) => {
+        // Serialise with a delete of this statement (which reverses its collections): whoever locks the upload first wins.
+        const alive = await db.query(`SELECT 1 FROM bank_statement_uploads WHERE institution_id = $1 AND id = $2 FOR UPDATE`, [institutionId, uploadId]);
+        if (alive.rows.length === 0) {
+          throw new HttpError(409, 'This statement was deleted while the payments were being posted. Nothing was recorded.');
+        }
         const ids = ready.map((r) => r.txId);
         const upd = await db.query(
           `UPDATE bank_statement_transactions t

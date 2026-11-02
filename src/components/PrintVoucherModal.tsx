@@ -3,6 +3,13 @@ import { useApp } from '../context/AppContext';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { FeeVoucher, ParticularKind, VoucherCopyType, VoucherItem } from '../types';
 import { formatCurrency, formatMonthName, getAppliedFineAmount, getEffectiveMultiple, getCurrencyCode } from '../utils/feeMath';
+import {
+  VOUCHER_HEX,
+  VOUCHER_FONT_PX,
+  VOUCHER_COPY_TITLES,
+  VOUCHER_STUDENT_ROWS,
+  formatLineItemAmount,
+} from '../utils/voucherTheme';
 import { exportSingleFeeVoucherPdf, printFeeVoucherPdf } from '../utils/pdfGenerator';
 import {
   CheckCircle,
@@ -42,13 +49,20 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
   const schoolClass = classes.find((c) => c.id === voucher.classId);
   const activeBank = bankAccounts.find((b) => b.active && b.isDefault) || bankAccounts.find((b) => b.active);
 
-  const copyDefinitions: Record<
-    VoucherCopyType,
-    { title: string; tagColor: string; shortTitle: string; type: VoucherCopyType }
-  > = {
-    bank: { title: 'BANK COPY', tagColor: 'bg-indigo-700 text-white', shortTitle: 'Bank', type: 'bank' },
-    institute: { title: 'INSTITUTE COPY', tagColor: 'bg-teal-700 text-white', shortTitle: 'Institute', type: 'institute' },
-    student: { title: 'STUDENT COPY', tagColor: 'bg-slate-800 text-white', shortTitle: 'Student', type: 'student' },
+  const copyDefinitions: Record<VoucherCopyType, { title: string; type: VoucherCopyType }> = {
+    bank: { title: VOUCHER_COPY_TITLES.bank, type: 'bank' },
+    institute: { title: VOUCHER_COPY_TITLES.institute, type: 'institute' },
+    student: { title: VOUCHER_COPY_TITLES.student, type: 'student' },
+  };
+
+  const T = VOUCHER_HEX;
+  const F = VOUCHER_FONT_PX;
+  const rule = `1px solid ${T.border}`;
+  const studentValues: Record<string, string> = {
+    name: student?.name || 'Unknown',
+    father: student?.fatherName || 'N/A',
+    regNo: student?.regNo || 'N/A',
+    class: schoolClass?.name || 'N/A',
   };
 
   const effectiveOrder = voucherCopyOrder && voucherCopyOrder.length > 0
@@ -274,111 +288,100 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
 
         {/* Printable Dynamic Copies Grid - Strict 3-column layout so 1 or 2 copies maintain exact standard 3-copy dimensions */}
         <div className="grid grid-cols-3 print:grid-cols-3 gap-3 print:gap-2 print:p-0 overflow-x-auto min-w-[760px] md:min-w-0">
-          {activeRenderCopies.map((copy) => {
+          {activeRenderCopies.map((copy, copyIdx) => {
             return (
               <div
                 key={copy.title}
-                className="border-2 border-dashed border-slate-300 p-3 rounded-xl bg-white text-[11px] text-slate-800 space-y-2 relative shadow-2xs print:border-solid print:border-slate-800 print:shadow-none print:p-2"
+                className="p-3 bg-white relative print:p-2"
+                style={{ border: rule, color: T.ink, fontSize: F.body, fontFamily: 'Helvetica, Arial, sans-serif', background: T.paper }}
               >
-                {/* Copy Badge Header */}
-                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${copy.tagColor}`}>
+                {copyIdx > 0 && (
+                  <div
+                    aria-hidden
+                    className="absolute"
+                    style={{ left: -7, top: -6, bottom: -6, borderLeft: `1px dashed ${T.tear}` }}
+                  />
+                )}
+                {/* Copy badge: no background, black text */}
+                <div className="flex items-center justify-between pb-1.5">
+                  <span className="font-bold px-2 py-0.5" style={{ border: rule, fontSize: F.body }}>
                     {copy.title}
                   </span>
-                  <span className="font-mono font-bold text-slate-900 text-[10px]">
+                  <span className="font-mono font-bold" style={{ fontSize: F.body }}>
                     {voucher.voucherNo}
                   </span>
                 </div>
 
-                {/* Institute Header */}
-                <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                {/* Institute header (logo unchanged) */}
+                <div className="flex items-center gap-2 pb-2" style={{ borderBottom: rule }}>
                   {institute.logoUrl ? (
                     <img
                       src={institute.logoUrl}
                       alt={institute.name}
-                      className="w-8 h-8 object-contain rounded-md border border-slate-200 shrink-0 bg-white"
+                      className="w-8 h-8 object-contain shrink-0 bg-white"
                     />
                   ) : (
-                    <div className="w-8 h-8 rounded-md bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold text-xs shrink-0">
+                    <div
+                      className="w-8 h-8 flex items-center justify-center font-bold shrink-0"
+                      style={{ border: rule, fontSize: F.title }}
+                    >
                       {institute.name ? institute.name.charAt(0) : 'S'}
                     </div>
                   )}
                   <div className="flex-1 min-w-0 text-center">
-                    <h4 className="font-bold text-xs uppercase text-slate-900 tracking-tight truncate">
+                    <h4 className="font-bold uppercase truncate" style={{ fontSize: F.title }}>
                       {institute.name}
                     </h4>
-                    <p className="text-[8.5px] text-slate-500 leading-tight truncate">{institute.address}</p>
-                    <p className="text-[9px] font-bold text-teal-800">
+                    <p className="truncate leading-tight" style={{ fontSize: F.small, color: T.muted }}>{institute.address}</p>
+                    <p className="font-bold" style={{ fontSize: F.body }}>
                       FEE VOUCHER &bull; {formatMonthName(voucher.month).toUpperCase()}
                     </p>
                   </div>
                 </div>
 
-                {/* Student Metadata */}
-                <div className="grid grid-cols-2 gap-1 bg-slate-50/60 p-2 rounded border border-slate-100 text-[10px]">
-                  <div>
-                    <span className="text-slate-400 block text-[9px]">Student Name:</span>
-                    <span className="font-bold text-slate-900 truncate block">{student?.name}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[9px]">Registration No.:</span>
-                    <span className="font-mono font-bold text-slate-900 truncate block">
-                      {student?.regNo}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[9px]">Class:</span>
-                    <span className="font-bold text-slate-900">{schoolClass?.name}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[9px]">Father Name:</span>
-                    <span className="font-bold text-slate-900 truncate block">
-                      {student?.fatherName}
-                    </span>
-                  </div>
+                {/* Student particulars: heading followed by value */}
+                <div className="mt-2 p-2 grid gap-x-1.5 gap-y-0.5" style={{ background: T.fill, border: rule, gridTemplateColumns: 'max-content minmax(0, 1fr)' }}>
+                  {VOUCHER_STUDENT_ROWS.map((row) => (
+                    <React.Fragment key={row.key}>
+                      <span style={{ color: T.muted }}>{row.heading}</span>
+                      <span className="font-bold truncate">{studentValues[row.key]}</span>
+                    </React.Fragment>
+                  ))}
                 </div>
 
-                {/* Issue Date & Due Date Info */}
-                <div className="flex justify-between items-center text-[10px] bg-amber-50 p-1.5 rounded border border-amber-200/60 font-bold text-amber-900">
+                {/* Issue / due dates: no background */}
+                <div className="mt-2 flex justify-between items-center p-1.5 font-bold" style={{ border: rule }}>
                   <span>Issue Date: {voucher.issueDate}</span>
                   <span>Due Date: {voucher.dueDate}</span>
                 </div>
 
-                {/* Itemized Particulars */}
-                <div className="border border-slate-200 rounded overflow-hidden">
-                  <table data-no-resize className="w-full text-left text-[10px]">
-                    <thead className="bg-slate-100 font-bold text-slate-700 border-b border-slate-200">
+                {/* Itemized particulars */}
+                <div className="mt-2" style={{ border: rule }}>
+                  <table data-no-resize className="w-full text-left" style={{ fontSize: F.body }}>
+                    <thead style={{ background: T.fill, borderBottom: rule }}>
                       <tr>
-                        <th className="p-1">Particulars</th>
-                        <th className="p-1 text-right">Amount ({getCurrencyCode()})</th>
+                        <th className="p-1 font-bold">Particulars</th>
+                        <th className="p-1 text-right font-bold">Amount ({getCurrencyCode()})</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody>
                       {itemsToRender.map((item, pIdx) => (
-                        <tr key={pIdx}>
-                          <td className="p-1 font-medium text-slate-800">{item.label}</td>
-                          <td
-                            className={`p-1 text-right font-bold ${
-                              item.amount < 0 ? 'text-emerald-700' : 'text-slate-900'
-                            }`}
-                          >
-                            {formatCurrency(item.amount)}
-                          </td>
+                        <tr key={pIdx} style={{ borderBottom: `1px solid ${T.itemRule}` }}>
+                          <td className="p-1">{item.label}</td>
+                          <td className="p-1 text-right">{formatLineItemAmount(item.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot className="divide-y divide-slate-200">
-                      <tr className="bg-slate-100 font-bold text-slate-800 border-t border-slate-300">
-                        <td className="p-1">
-                          NET DUE AMOUNT:
-                        </td>
-                        <td className="p-1 text-right text-teal-700 font-bold">
+                    <tfoot>
+                      <tr className="font-bold" style={{ background: T.fill }}>
+                        <td className="p-1">NET DUE AMOUNT:</td>
+                        <td className="p-1 text-right" style={{ fontSize: F.title }}>
                           {formatCurrency(voucher.netDue)}
                         </td>
                       </tr>
-                      <tr className="bg-rose-50 font-bold text-rose-900 border-t border-rose-200">
-                        <td className="p-1 text-[9.5px]">PAYABLE AFTER DUE DATE:</td>
-                        <td className="p-1 text-right text-rose-700 font-bold">
+                      <tr className="font-bold" style={{ borderTop: rule }}>
+                        <td className="p-1">PAYABLE AFTER DUE DATE:</td>
+                        <td className="p-1 text-right">
                           {formatCurrency(voucher.netDue + getAppliedFineAmount(voucher, roundingMultiple))}
                         </td>
                       </tr>
@@ -386,51 +389,44 @@ export const PrintVoucherModal: React.FC<PrintVoucherModalProps> = ({ voucher, o
                   </table>
                 </div>
 
-                {/* Bank Account Details & Instructions */}
-                <div className="bg-slate-50 p-2 rounded border border-slate-200 text-[10px] space-y-1">
+                {/* Bank details: no color */}
+                <div className="mt-2 p-2 space-y-1" style={{ border: rule }}>
                   {activeBank ? (
                     <>
-                      <div className="flex justify-between items-center">
-                        <p className="font-bold text-slate-900">{activeBank.bankName}</p>
-                        <p className="font-mono font-semibold text-slate-700 text-[9px]">A/C: {activeBank.accountNumber}</p>
+                      <div className="flex justify-between items-center font-bold">
+                        <p>{activeBank.bankName}</p>
+                        <p>A/C: {activeBank.accountNumber}</p>
                       </div>
-                      <div className="flex justify-between items-center text-[9px] text-slate-500">
-                        <span className="truncate">{activeBank.title}</span>
+                      <div className="flex justify-between items-center" style={{ fontSize: F.small, color: T.muted }}>
+                        <span className="truncate">Title: {activeBank.title}</span>
                         {activeBank.branchCode && <span>Branch: {activeBank.branchCode}</span>}
                       </div>
-
-                      {/* LTR Instructions (English) */}
                       {(activeBank.instructionsLtr || activeBank.instructionsLine1) && (
-                        <div
-                          className="pt-1 border-t border-slate-200/80 text-[8.5px] text-slate-700 text-left leading-tight"
-                          dir="ltr"
-                        >
+                        <div className="pt-1 text-left leading-tight" dir="ltr" style={{ borderTop: rule, fontSize: F.small }}>
                           {activeBank.instructionsLtr || activeBank.instructionsLine1}
                         </div>
                       )}
-
-                      {/* RTL Instructions */}
                       {(activeBank.instructionsRtl || activeBank.instructionsLine2) && (
                         <div
-                          className="text-[9.5px] text-slate-800 text-right leading-tight font-medium"
+                          className="text-right leading-tight"
                           dir="rtl"
-                          style={{ fontFamily: "'Noto Sans Arabic', 'Noto Sans Hebrew', sans-serif" }}
+                          style={{ fontSize: F.body, fontFamily: "'Noto Sans Arabic', 'Noto Sans Hebrew', sans-serif" }}
                         >
                           {activeBank.instructionsRtl || activeBank.instructionsLine2}
                         </div>
                       )}
                     </>
                   ) : (
-                    <p className="italic text-slate-500 text-center">
+                    <p className="italic text-center" style={{ fontSize: F.small, color: T.muted }}>
                       Payment can be made at the institute accounts office
                     </p>
                   )}
                 </div>
 
                 {/* Signatures */}
-                <div className="pt-3 flex justify-between items-end text-[9px] text-slate-400 font-medium">
-                  <span className="border-t border-slate-300 pt-0.5 px-2">Bank Stamp</span>
-                  <span className="border-t border-slate-300 pt-0.5 px-2">Accounts Office</span>
+                <div className="pt-3 flex justify-between items-end" style={{ fontSize: F.small, color: T.muted }}>
+                  <span className="pt-0.5 px-2" style={{ borderTop: rule }}>Bank Stamp</span>
+                  <span className="pt-0.5 px-2" style={{ borderTop: rule }}>Accounts Office</span>
                 </div>
               </div>
             );
