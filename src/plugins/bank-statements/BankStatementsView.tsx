@@ -405,6 +405,7 @@ export const BankStatementsView: React.FC = () => {
   };
 
   useEscapeKey(() => setPickerTx(null), !!pickerTx);
+  useEscapeKey(() => setIgnoreTx(null), !!ignoreTx);
 
   // ------------------------------------------------------------------ apply
   const openApply = async () => {

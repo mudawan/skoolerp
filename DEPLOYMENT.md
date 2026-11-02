@@ -189,20 +189,8 @@ it in the app. Schools can still export their own data and restore it from **Set
 
 ---
 
-## Upgrading an existing database (announced offline deploy)
+## Upgrading
 
-New installs create the full schema on first start. An older database is brought up to date by running the SQL files in
-`db/migrations/` once, in date order. The app does **not** run migrations by itself, and it will refuse to start (with a message naming the file
-to run) when its schema is out of date, so a mismatch cannot cause confusing errors later.
-
-Procedure for each upgrade:
-1. **Announce** the maintenance window to the schools.
-2. **Take the server offline**: `sudo systemctl stop skooler` (or `docker compose stop app`).
-3. **Back up**: run `scripts/backup.sh` once more.
-4. **Run the SQL** in DBeaver (or `psql`) as a script. Step 1 of each file only previews; step 2 applies the change in one transaction; step 3 checks the result. Every file is safe to run twice.
-   - `db/migrations/2026-10-integrity.sql`: row versions, foreign keys, `vouchers.fine_since_payment`.
-   - `db/migrations/2026-11-platform.sql`: forced password change, platform-locked accounts and school suspension columns. If a school is already marked `suspended` it will be refused at sign-in afterwards; reactivate it first if that is not intended.
-5. **Recompile and deploy**: `npm install && npm run build`, then `sudo systemctl start skooler` (or `docker compose up -d --build`).
-6. **Check**: open `/platform`, look at Overview and Database, and sign in to one school.
-
-If a file has already been applied, step 1 shows nothing left to change and step 2 changes nothing.
+The app creates and updates its own database tables on start, so an upgrade is: announce the maintenance window, take the server offline
+(`sudo systemctl stop skooler` or `docker compose stop app`), run `scripts/backup.sh` once more, then `npm install && npm run build` and start it
+again (`sudo systemctl start skooler` or `docker compose up -d --build`). Afterwards open `/platform`, look at Overview and Database, and sign in to one school.

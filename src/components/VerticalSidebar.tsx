@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { getMonthPickerWindow, mergeWithDataMonths } from '../utils/feeMath';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
 import { MonthPicker } from './MonthPicker';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 import {
   AlertTriangle,
   BarChart3,
@@ -51,6 +52,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
   mobileOpen,
   setMobileOpen,
 }) => {
+  useEscapeKey(() => setMobileOpen(false), mobileOpen);
   const {
     institute,
     currentInstitution,

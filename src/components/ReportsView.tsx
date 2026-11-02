@@ -48,6 +48,7 @@ import {
   ArrowDown,
 } from 'lucide-react';
 import { THEME_COLOR_PRESETS } from '../utils/themeConfig';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 export interface ReportsViewProps {
   initialReportType?: 'feeCollection' | 'studentLedger' | 'outstanding';
@@ -142,6 +143,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState<string>('');
   const [isStudentDropdownOpen, setIsStudentDropdownOpen] = useState(false);
+  useEscapeKey(() => setIsStudentDropdownOpen(false), isStudentDropdownOpen);
 
   // Closed (locked) history loads on demand: whole-history views fetch it all,
   // a single student's view fetches just that student.

@@ -1,5 +1,4 @@
 // Tables owned by the Bank Statement Collections Loader. Idempotent: safe on every start.
-// The same SQL is shipped as db/migrations/2026-12-bank-statements.sql for people who run migrations by hand.
 
 export const BANK_STATEMENT_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS bank_statement_files (

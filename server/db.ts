@@ -643,11 +643,6 @@ class DatabaseService {
         return;
       } catch (err: any) {
         lastErr = err;
-        if (err?.schemaOutOfDate) {
-          // Retrying cannot fix this; stop with the instructions.
-          console.error(`[DB] ${err.message}`);
-          process.exit(1);
-        }
         console.error(`[DB] PostgreSQL connection attempt ${attempt} failed:`, err?.message || err);
         if (attempt < maxRetries) {
           const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 3000);
@@ -1149,50 +1144,11 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_student_account_history_student ON student_account_history(institution_id, student_id);
       `);
 
-      await this.assertSchemaCurrent(client);
     } finally {
       client.release();
     }
   }
 
-
-  /**
-   * The schema above is the only definition. A database created before the row
-   * versions, foreign keys and vouchers.fine_since_payment existed must be brought up
-   * once with db/migrations/2026-10-integrity.sql; this check stops the server with a
-   * clear message instead of failing later with a confusing SQL error.
-   */
-  private async assertSchemaCurrent(client: any): Promise<void> {
-    const cols = await client.query(
-      `SELECT table_name, column_name FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND ((column_name = 'version' AND table_name = ANY($1)) OR (table_name = 'vouchers' AND column_name = 'fine_since_payment'))`,
-      [['classes', 'families', 'students', 'buses', 'stops', 'transport_assignments', 'fee_templates', 'bank_accounts']]
-    );
-    const fks = await client.query(`SELECT conname FROM pg_constraint WHERE conname LIKE 'fk\\_%'`);
-    const missing: string[] = [];
-    const files: string[] = [];
-    if (cols.rowCount < 9) missing.push('version / fine_since_payment columns');
-    if (fks.rowCount < 8) missing.push('foreign keys');
-    if (missing.length > 0) files.push('db/migrations/2026-10-integrity.sql');
-    const plat = await client.query(
-      `SELECT table_name || '.' || column_name AS c FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND ((table_name = 'users' AND column_name IN ('must_change_password', 'temp_password_expires_at', 'platform_locked'))
-           OR (table_name = 'institutions' AND column_name IN ('suspended_at', 'suspended_by', 'suspend_reason')))`
-    );
-    if (plat.rowCount < 6) {
-      missing.push('platform support columns (users / institutions)');
-      files.push('db/migrations/2026-11-platform.sql');
-    }
-    if (missing.length > 0) {
-      const err: any = new Error(
-        `Database schema is out of date (missing: ${missing.join(', ')}). Run ${files.join(' and ')} once, then start the server again.`
-      );
-      err.schemaOutOfDate = true;
-      throw err;
-    }
-  }
 
   /** Counts of rows whose parent is missing, per relationship (read-only). */
   private async orphanCounts(client: { query: (sql: string, params?: any[]) => Promise<any> }, tenantId?: string): Promise<Record<string, number>> {

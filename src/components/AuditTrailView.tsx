@@ -42,6 +42,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface AuditTrailViewProps {
   initialFilter?: 'all' | 'fines' | 'bulk' | 'reversals' | 'security';
@@ -80,6 +81,7 @@ export const AuditTrailView: React.FC<AuditTrailViewProps> = ({ initialFilter = 
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'fines' | 'bulk' | 'reversals' | 'security'>(initialFilter);
   const [selectedLogForDetails, setSelectedLogForDetails] = useState<AuditLogEntry | null>(null);
+  useEscapeKey(() => setSelectedLogForDetails(null), !!selectedLogForDetails);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Sorting

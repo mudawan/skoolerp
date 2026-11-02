@@ -183,8 +183,12 @@ export const TransportView: React.FC = () => {
     } else if (showBusModal || editingBus) {
       setShowBusModal(false);
       setEditingBus(null);
+    } else if (showCopyModal) {
+      setShowCopyModal(false);
+      setCopyRows([]);
     }
   }, !!(
+    showCopyModal ||
     isStudentComboOpen ||
     showBulkStopsModal ||
     showBulkCsvModal ||

@@ -19,6 +19,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
 } from 'lucide-react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export const DatabaseBackupsPanel: React.FC = () => {
   const {
@@ -86,6 +87,7 @@ export const DatabaseBackupsPanel: React.FC = () => {
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreSuccess, setRestoreSuccess] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  useEscapeKey(() => setShowRestoreConfirm(false), showRestoreConfirm && !isRestoring);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

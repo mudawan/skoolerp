@@ -30,6 +30,7 @@ import {
   UserX,
   X,
 } from 'lucide-react';
+import { useEscapeKey } from '../hooks/useEscapeKey';
 
 interface StudentAccountHistoryViewProps {
   student: Student;
@@ -59,6 +60,7 @@ export const StudentAccountHistoryView: React.FC<StudentAccountHistoryViewProps>
 
   // Status Change Dialog state
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
+  useEscapeKey(() => setIsStatusDialogOpen(false), isStatusDialogOpen);
   const [targetStatus, setTargetStatus] = useState<StudentStatus>(student.status);
   const [statusReason, setStatusReason] = useState('');
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);

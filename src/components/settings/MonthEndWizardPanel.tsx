@@ -374,6 +374,7 @@ export const MonthEndWizardPanel: React.FC<MonthEndWizardPanelProps> = ({
   const [advanceActiveMonth, setAdvanceActiveMonth] = useState(true);
   const [isLocking, setIsLocking] = useState(false);
   const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false);
+  useEscapeKey(() => { setUnlockConfirmOpen(false); setUnlockReason(''); }, unlockConfirmOpen);
   const [unlockReason, setUnlockReason] = useState('');
 
   // Execute Carry Forward

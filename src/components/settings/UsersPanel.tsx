@@ -25,6 +25,7 @@ import {
   ArrowUp,
   ArrowDown,
 } from 'lucide-react';
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 
 export interface UsersPanelProps {
   handleOpenUserModal: (user?: User, initialTab?: 'profile' | 'permissions') => void;
@@ -50,6 +51,7 @@ export const UsersPanel: React.FC<UsersPanelProps> = ({
   } = useApp();
 
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  useEscapeKey(() => setIsInviteModalOpen(false), isInviteModalOpen);
   const [inviteFullName, setInviteFullName] = useState('');
   const [inviteRole, setInviteRole] = useState<'Accountant' | 'Viewer' | 'Admin'>('Accountant');
   const [customInviteCode, setCustomInviteCode] = useState('');
